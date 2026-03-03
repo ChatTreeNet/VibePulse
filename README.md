@@ -7,7 +7,7 @@ Real-time dashboard for monitoring and managing OpenCode sessions.
 - **Real-time sync** — Automatically syncs OpenCode sessions via SSE
 - **4-column board** — Idle, Busy, Review, Done
 - **Drag & drop** — Reorder cards within columns
-- **IDE integration** — Click to open workspace in VSCode / Cursor
+- **IDE integration** — Click to open workspace in VSCode / Antigravity
 - **Auto-generated cards** — No manual card creation needed
 
 ## Tech Stack
@@ -62,8 +62,8 @@ Open [http://localhost:3000](http://localhost:3000)
 - Check that the SDK can connect (port conflicts)
 
 ### IDE doesn't open
-- Make sure VSCode / Cursor is installed
-- Check that `vscode://` or `cursor://` protocol handler is registered
+- Make sure VSCode / Antigravity is installed
+- Check that the corresponding protocol handler is registered (e.g. `vscode://`)
 
 ### Prevent VSCode from replacing an existing window
 
