@@ -1,0 +1,74 @@
+// Core types
+export type KanbanColumn = 'idle' | 'busy' | 'review' | 'done';
+
+export interface KanbanCard {
+  id: string;
+  sessionSlug: string;
+  title: string;
+  directory: string;
+  projectName: string;
+  branch?: string;
+  agents: string[];
+  messageCount: number;
+  status: KanbanColumn;
+  opencodeStatus: OpencodeStatus;
+  waitingForUser: boolean;
+  todosTotal: number;
+  todosCompleted: number;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt?: number;
+  sortOrder: number;
+}
+
+// OpenCode event types
+export interface OpencodeSession {
+  id: string;
+  slug: string;
+  title?: string;
+  directory: string;
+  projectName?: string;
+  branch?: string;
+  parentID?: string;  // 用于过滤 subagent
+  time: {
+    created: number;
+    updated: number;
+    archived?: number;
+  };
+  messageCount?: number;
+  hasTodos?: boolean;
+  hasTranscript?: boolean;
+  realTimeStatus?: 'idle' | 'busy' | 'retry';  // 实时状态
+  waitingForUser?: boolean;
+}
+
+export type OpencodeEventType =
+  | 'session.status'
+  | 'session.updated'
+  | 'session.created'
+  | 'session.deleted'
+  | 'session.archived'
+  | 'question.asked'
+  | 'permission.asked'
+  | 'question.replied'
+  | 'question.rejected'
+  | 'permission.replied'
+  | 'todo.updated';
+
+export interface OpencodeEvent {
+  type: OpencodeEventType;
+  properties?: Record<string, any>;
+  timestamp: number;
+}
+
+// Status mapping
+export type OpencodeStatus = 'idle' | 'busy' | 'retry';
+
+// Type guards
+export function isKanbanColumn(value: string): value is KanbanColumn {
+  return ['idle', 'busy', 'review', 'done'].includes(value);
+}
+
+export function isOpencodeStatus(value: string): value is OpencodeStatus {
+  return ['idle', 'busy', 'retry'].includes(value);
+}
