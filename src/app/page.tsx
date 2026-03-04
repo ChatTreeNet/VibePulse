@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { KanbanBoard } from "@/components/KanbanBoard";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useOpencodeSync } from "@/hooks/useOpencodeSync";
-import { isMuted, setMuted } from "@/lib/notificationSound";
+import { isMuted, setMuted, unlockAudio } from "@/lib/notificationSound";
 
 const DATE_FILTERS = [
     { label: '1d', days: 1 },
@@ -21,9 +21,17 @@ export default function Home() {
 
     useEffect(() => {
         setMutedState(isMuted());
+        // Unlock AudioContext on first user interaction
+        const unlock = () => {
+            unlockAudio();
+            document.removeEventListener('click', unlock);
+        };
+        document.addEventListener('click', unlock);
+        return () => document.removeEventListener('click', unlock);
     }, []);
 
     const toggleMute = () => {
+        unlockAudio();
         const newMuted = !muted;
         setMutedState(newMuted);
         setMuted(newMuted);
