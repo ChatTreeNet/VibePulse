@@ -17,9 +17,42 @@ type SessionLike = {
 };
 
 const CHILD_ACTIVE_WINDOW_MS = 30 * 60 * 1000;
+const CHILD_STATUS_MESSAGE_CHECK_LIMIT = 50;
+
+type ChildEntry = {
+  id: string;
+  slug?: string;
+  title?: string;
+  directory?: string;
+  parentID?: string;
+  time?: { created: number; updated: number };
+  realTimeStatus: string;
+  waitingForUser: boolean;
+};
+
+type EnrichedSession = SessionLike & {
+  projectName: string;
+  branch: string | null;
+  realTimeStatus: 'idle' | 'busy' | 'retry';
+  waitingForUser: boolean;
+  children: ChildEntry[];
+};
 
 function getUpdatedAt(session: { time?: { updated?: number; created?: number } }): number {
   return session.time?.updated || session.time?.created || 0;
+}
+
+function toChildEntry(child: SessionLike, status: 'idle' | 'busy' | 'retry'): ChildEntry {
+  return {
+    id: child.id,
+    slug: child.slug,
+    title: child.title,
+    directory: child.directory,
+    parentID: child.parentID,
+    time: child.time,
+    realTimeStatus: status,
+    waitingForUser: false,
+  };
 }
 // Get project name from directory path
 function getProjectName(directory: string): string {
@@ -73,19 +106,25 @@ export async function GET() {
       const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
       const sessionsResult = await client.session.list();
       const statusResult = await client.session.status().catch(() => ({ data: {} }));
-      return { client, sessions: sessionsResult.data || [], status: statusResult.data || {} };
+      return { port, client, sessions: sessionsResult.data || [], status: statusResult.data || {} };
     }));
 
     const allSessions: SessionLike[] = [];
     const statusMap: Record<string, { type: 'idle' | 'busy' | 'retry' }> = {};
-    const clientMap: Record<number, ReturnType<typeof createOpencodeClient>> = {};
+    const clientByPort: Record<number, ReturnType<typeof createOpencodeClient>> = {};
+    const sessionPortMap: Record<string, number> = {};
 
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
       if (r.status !== 'fulfilled') continue;
       allSessions.push(...r.value.sessions);
       Object.assign(statusMap, r.value.status);
-      clientMap[i] = r.value.client;
+      clientByPort[r.value.port] = r.value.client;
+      for (const session of r.value.sessions as SessionLike[]) {
+        if (!(session.id in sessionPortMap)) {
+          sessionPortMap[session.id] = r.value.port;
+        }
+      }
     }
 
     // Deduplicate by session.id
@@ -105,7 +144,7 @@ export async function GET() {
     );
 
     // Enrich parent sessions
-    const enrichedSessions = parentSessions.map((session) => {
+    const enrichedSessions: EnrichedSession[] = parentSessions.map((session) => {
       const projectName = getProjectName(session.directory);
       const branch = getGitBranch(session.directory);
       return {
@@ -114,11 +153,14 @@ export async function GET() {
         branch,
         realTimeStatus: statusMap[session.id]?.type || 'idle',
         waitingForUser: false,
-        children: [] as Array<{ id: string; slug?: string; title?: string; directory?: string; realTimeStatus: string; waitingForUser: boolean; time?: { created: number; updated: number }; parentID?: string }>,
+        children: [],
       };
     });
 
+    const parentById = new Map(enrichedSessions.map((session) => [session.id, session]));
+
     const now = Date.now();
+    const unresolvedChildren: Array<{ parentId: string; child: SessionLike; isRecent: boolean; parentActive: boolean }> = [];
 
     // Enrich and nest child sessions under parents
     for (const child of childSessions) {
@@ -148,27 +190,82 @@ export async function GET() {
       const isRecent = childUpdatedAt > 0 && now - childUpdatedAt <= CHILD_ACTIVE_WINDOW_MS;
       const parentActive = parent.realTimeStatus === 'busy' || parent.realTimeStatus === 'retry';
 
-      let childStatus: 'idle' | 'busy' | 'retry';
       if (statusFromMap) {
-        childStatus = statusFromMap;
+        if (statusFromMap !== 'idle') {
+          parent.children.push(toChildEntry(child, statusFromMap));
+        }
       } else if (parentActive && isRecent) {
-        childStatus = 'busy';
+        if (unresolvedChildren.length < CHILD_STATUS_MESSAGE_CHECK_LIMIT) {
+          unresolvedChildren.push({ parentId: parent.id, child, isRecent, parentActive });
+        }
       } else {
-        childStatus = 'idle';
+        continue;
       }
+    }
 
-      if (childStatus === 'idle') continue;
+    if (unresolvedChildren.length > 0) {
+      const unresolvedChecks = await Promise.allSettled(
+        unresolvedChildren.map(async ({ parentId, child, isRecent, parentActive }) => {
+          const port = sessionPortMap[child.id] ?? sessionPortMap[parentId];
+          const client = port ? clientByPort[port] : undefined;
+          if (!client) {
+            return {
+              parentId,
+              child,
+              childStatus: parentActive && isRecent ? 'busy' as const : 'idle' as const,
+            };
+          }
 
-      parent.children.push({
-        id: child.id,
-        slug: child.slug,
-        title: child.title,
-        directory: child.directory,
-        parentID: child.parentID,
-        time: child.time,
-        realTimeStatus: childStatus,
-        waitingForUser: false,
-      });
+          try {
+            const messagesResult = await client.session.messages({
+              path: { id: child.id },
+              query: { limit: 3 },
+            });
+            const messages = messagesResult.data || [];
+            const partStatuses: string[] = [];
+
+            for (const message of messages) {
+              for (const part of message.parts || []) {
+                if (part && typeof part === 'object' && 'state' in part) {
+                  const maybeState = (part as { state?: { status?: unknown } }).state;
+                  if (maybeState?.status && typeof maybeState.status === 'string') {
+                    partStatuses.push(maybeState.status);
+                  }
+                }
+              }
+            }
+
+            const hasActiveState = partStatuses.some((status) => status === 'pending' || status === 'running');
+            const hasCompletedState = partStatuses.length > 0 && partStatuses.every((status) => status === 'completed');
+
+            return {
+              parentId,
+              child,
+              childStatus: hasActiveState
+                ? 'busy' as const
+                : hasCompletedState
+                  ? 'idle' as const
+                  : parentActive && isRecent
+                    ? 'busy' as const
+                    : 'idle' as const,
+            };
+          } catch {
+            return {
+              parentId,
+              child,
+              childStatus: parentActive && isRecent ? 'busy' as const : 'idle' as const,
+            };
+          }
+        })
+      );
+
+      for (const check of unresolvedChecks) {
+        if (check.status !== 'fulfilled') continue;
+        if (check.value.childStatus === 'idle') continue;
+        const parent = parentById.get(check.value.parentId);
+        if (!parent) continue;
+        parent.children.push(toChildEntry(check.value.child, check.value.childStatus));
+      }
     }
 
     // Sort children for each parent: active first, then by updated time
@@ -192,37 +289,38 @@ export async function GET() {
     // Check busy sessions for pending permissions/questions
     const busySessions = enrichedSessions.filter((s) => s.realTimeStatus === 'busy');
     if (busySessions.length > 0) {
-      const client = Object.values(clientMap)[0];
-      if (client) {
-        const pendingChecks = await Promise.allSettled(
-          busySessions.map(async (session) => {
-            try {
-              const messagesResult = await client.session.messages({
-                path: { id: session.id },
-                query: { limit: 3 },
-              });
-              const messages = messagesResult.data || [];
-              for (const msg of messages) {
-                for (const part of (msg.parts || [])) {
-                  if ('state' in part && part.state &&
-                      'status' in part.state &&
-                      part.state.status === 'pending') {
-                    return { sessionId: session.id, waiting: true };
-                  }
+      const pendingChecks = await Promise.allSettled(
+        busySessions.map(async (session) => {
+          const port = sessionPortMap[session.id];
+          const client = port ? clientByPort[port] : undefined;
+          if (!client) {
+            return { sessionId: session.id, waiting: false };
+          }
+
+          try {
+            const messagesResult = await client.session.messages({
+              path: { id: session.id },
+              query: { limit: 3 },
+            });
+            const messages = messagesResult.data || [];
+            for (const msg of messages) {
+              for (const part of msg.parts || []) {
+                if ('state' in part && part.state && 'status' in part.state && part.state.status === 'pending') {
+                  return { sessionId: session.id, waiting: true };
                 }
               }
-              return { sessionId: session.id, waiting: false };
-            } catch {
-              return { sessionId: session.id, waiting: false };
             }
-          })
-        );
-
-        for (const result of pendingChecks) {
-          if (result.status === 'fulfilled' && result.value.waiting) {
-            const session = enrichedSessions.find((s) => s.id === result.value.sessionId);
-            if (session) session.waitingForUser = true;
+            return { sessionId: session.id, waiting: false };
+          } catch {
+            return { sessionId: session.id, waiting: false };
           }
+        })
+      );
+
+      for (const result of pendingChecks) {
+        if (result.status === 'fulfilled' && result.value.waiting) {
+          const session = enrichedSessions.find((s) => s.id === result.value.sessionId);
+          if (session) session.waitingForUser = true;
         }
       }
     }

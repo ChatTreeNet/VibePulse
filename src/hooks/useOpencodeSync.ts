@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { OpencodeEvent, OpencodeSession } from '@/types';
-import { playAttentionSound, playAlertSound } from '@/lib/notificationSound';
+import { playAttentionSound, playAlertSound, playCompleteSound } from '@/lib/notificationSound';
 
 const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
 
@@ -194,8 +194,17 @@ export function useOpencodeSync() {
                             case 'session.status': {
                                 const statusType = event.properties?.status?.type as 'idle' | 'busy' | 'retry' | undefined;
                                 if (!statusType) return s;
+                                const previousStatus = s.realTimeStatus;
                                 if (statusType === 'retry' && !initialLoadRef.current) {
                                     playAlertSound();
+                                }
+                                if (
+                                    statusType === 'idle' &&
+                                    !initialLoadRef.current &&
+                                    !s.parentID &&
+                                    (previousStatus === 'busy' || previousStatus === 'retry')
+                                ) {
+                                    playCompleteSound();
                                 }
                                 if (statusType === 'idle') {
                                     persistWaiting(s.id, false);
