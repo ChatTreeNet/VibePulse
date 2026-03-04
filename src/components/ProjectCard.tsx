@@ -134,7 +134,7 @@ function SessionRow({ card, isLast }: { card: KanbanCard; isLast: boolean }) {
                 title={`${card.title || 'Untitled Session'}\nActive ${formatRelativeTime(card.updatedAt)} ago · Started ${formatRelativeTime(card.createdAt)} ago`}
             >
                 {/* Expand toggle or spacer */}
-                {hasChildren ? (
+                {hasChildren && (
                     <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
@@ -148,8 +148,6 @@ function SessionRow({ card, isLast }: { card: KanbanCard; isLast: boolean }) {
                             <path d="M1 1l4 4-4 4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
                     </button>
-                ) : (
-                    <span className="w-3 flex-shrink-0" />
                 )}
                 <StatusDot status={card.opencodeStatus} waitingForUser={card.waitingForUser} />
                 <span className="text-sm text-gray-700 dark:text-gray-300 truncate flex-1 min-w-0">
