@@ -180,7 +180,7 @@ export async function GET() {
                 for (const part of (msg.parts || [])) {
                   if ('state' in part && part.state &&
                       'status' in part.state &&
-                      (part.state.status === 'pending' || part.state.status === 'running')) {
+                      part.state.status === 'pending') {
                     return { sessionId: session.id, waiting: true };
                   }
                 }
