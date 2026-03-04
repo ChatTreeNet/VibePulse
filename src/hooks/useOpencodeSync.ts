@@ -85,18 +85,27 @@ export function useOpencodeSync() {
                 case 'session.created': {
                     const info = event.properties?.info as OpencodeSession | undefined;
                     if (!info) { scheduleRefetch(); return old; }
+                    // Filter out subagent sessions
+                    if (info.parentID) {
+                        return old;
+                    }
                     const existing = old.sessions.find(s => s.id === info.id);
-                    const merged = existing ? { 
+                    if (!existing) {
+                        // New session — let server-side handle filtering & enrichment
+                        scheduleRefetch();
+                        return old;
+                    }
+                    const merged = { 
                         ...info, 
                         projectName: existing.projectName, 
                         branch: existing.branch, 
                         realTimeStatus: existing.realTimeStatus, 
                         waitingForUser: existing.waitingForUser 
-                    } : info;
-                    const sessions = existing
-                        ? old.sessions.map(s => (s.id === info.id ? merged : s))
-                        : [merged, ...old.sessions];
-                    return { ...old, sessions };
+                    };
+                    return {
+                        ...old,
+                        sessions: old.sessions.map(s => (s.id === info.id ? merged : s)),
+                    };
                 }
                 case 'session.deleted': {
                     const info = event.properties?.info as OpencodeSession | undefined;
