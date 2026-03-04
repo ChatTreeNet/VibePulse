@@ -19,6 +19,12 @@ export interface KanbanCard {
   updatedAt: number;
   archivedAt?: number;
   sortOrder: number;
+  children?: {
+    id: string;
+    title?: string;
+    realTimeStatus: string;
+    waitingForUser: boolean;
+  }[];
 }
 
 // OpenCode event types
@@ -40,6 +46,7 @@ export interface OpencodeSession {
   hasTranscript?: boolean;
   realTimeStatus?: 'idle' | 'busy' | 'retry';  // Real-time status
   waitingForUser?: boolean;
+  children?: OpencodeSession[];
 }
 
 export type OpencodeEventType =

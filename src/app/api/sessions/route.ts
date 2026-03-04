@@ -87,36 +87,73 @@ export async function GET() {
       return true;
     });
 
-    // 3. Merge data and filter subagents
-    const enrichedSessions = sessions
-      .filter(session => !session.parentID && !(session.title || '').toLowerCase().includes('subagent'))  // Filter out subagents
-      .map(session => {
-        const projectName = getProjectName(session.directory);
-        const branch = getGitBranch(session.directory);
-        return {
-          ...session,
-          projectName,
-          branch,
-          realTimeStatus: statusMap[session.id]?.type || 'idle',
-          waitingForUser: false,
-        };
-      });
+    // 3. Separate parent and child sessions
+    const parentSessions = sessions.filter(
+      (s: { parentID?: string; title?: string }) => !s.parentID && !(s.title || '').toLowerCase().includes('subagent')
+    );
+    const childSessions = sessions.filter(
+      (s: { parentID?: string; title?: string }) => s.parentID || (s.title || '').toLowerCase().includes('subagent')
+    );
+
+    // Enrich parent sessions
+    const enrichedSessions = parentSessions.map((session: { id: string; directory: string }) => {
+      const projectName = getProjectName(session.directory);
+      const branch = getGitBranch(session.directory);
+      return {
+        ...session,
+        projectName,
+        branch,
+        realTimeStatus: statusMap[session.id]?.type || 'idle',
+        waitingForUser: false,
+        children: [] as Array<{ id: string; title?: string; realTimeStatus: string; waitingForUser: boolean; time?: { created: number; updated: number }; parentID?: string }>,
+      };
+    });
+
+    // Enrich and nest child sessions under parents
+    for (const child of childSessions) {
+      const enrichedChild = {
+        id: child.id,
+        slug: child.slug,
+        title: child.title,
+        directory: child.directory,
+        parentID: child.parentID,
+        time: child.time,
+        realTimeStatus: statusMap[child.id]?.type || 'idle',
+        waitingForUser: false,
+      };
+
+      // Find parent by parentID
+      let parent = child.parentID
+        ? enrichedSessions.find((s: { id: string }) => s.id === child.parentID)
+        : null;
+
+      // Fallback: match by directory for subagents without parentID
+      if (!parent) {
+        parent = enrichedSessions.find(
+          (s: { directory: string; realTimeStatus: string }) =>
+            s.directory === child.directory && s.realTimeStatus === 'busy'
+        );
+      }
+
+      if (parent) {
+        parent.children.push(enrichedChild);
+      }
+      // If no parent found, drop the orphan subagent
+    }
 
     // Check busy sessions for pending permissions/questions
-    const busySessions = enrichedSessions.filter(s => s.realTimeStatus === 'busy');
+    const busySessions = enrichedSessions.filter((s: { realTimeStatus: string }) => s.realTimeStatus === 'busy');
     if (busySessions.length > 0) {
-      // Use the first available client to check messages
       const client = Object.values(clientMap)[0];
       if (client) {
         const pendingChecks = await Promise.allSettled(
-          busySessions.map(async (session) => {
+          busySessions.map(async (session: { id: string }) => {
             try {
               const messagesResult = await client.session.messages({
                 path: { id: session.id },
                 query: { limit: 3 },
               });
               const messages = messagesResult.data || [];
-              // Check last message parts for pending tool states
               for (const msg of messages) {
                 for (const part of (msg.parts || [])) {
                   if ('state' in part && part.state &&
@@ -135,7 +172,7 @@ export async function GET() {
 
         for (const result of pendingChecks) {
           if (result.status === 'fulfilled' && result.value.waiting) {
-            const session = enrichedSessions.find(s => s.id === result.value.sessionId);
+            const session = enrichedSessions.find((s: { id: string }) => s.id === result.value.sessionId);
             if (session) session.waitingForUser = true;
           }
         }

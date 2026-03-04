@@ -122,6 +122,79 @@ function RowActionMenu({ cardId }: { cardId: string }) {
     );
 }
 
+// Session row with expandable subagent children
+function SessionRow({ card, isLast }: { card: KanbanCard; isLast: boolean }) {
+    const [expanded, setExpanded] = useState(false);
+    const hasChildren = (card.children?.length ?? 0) > 0;
+
+    return (
+        <div className={!isLast ? 'border-b border-gray-50 dark:border-zinc-700/30' : ''}>
+            <div
+                className="group/row flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 dark:hover:bg-zinc-700/30 transition-colors"
+                title={`${card.title || 'Untitled Session'}\nActive ${formatRelativeTime(card.updatedAt)} ago · Started ${formatRelativeTime(card.createdAt)} ago`}
+            >
+                {/* Expand toggle or spacer */}
+                {hasChildren ? (
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+                        className="w-3 h-3 flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 flex-shrink-0 transition-transform"
+                        title={expanded ? 'Collapse subagents' : 'Expand subagents'}
+                    >
+                        <svg
+                            className={`w-2.5 h-2.5 transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`}
+                            viewBox="0 0 6 10" fill="currentColor"
+                        >
+                            <path d="M1 1l4 4-4 4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                    </button>
+                ) : (
+                    <span className="w-3 flex-shrink-0" />
+                )}
+                <StatusDot status={card.opencodeStatus} waitingForUser={card.waitingForUser} />
+                <span className="text-sm text-gray-700 dark:text-gray-300 truncate flex-1 min-w-0">
+                    {card.title || 'Untitled Session'}
+                </span>
+                {/* Child count badge */}
+                {hasChildren && !expanded && (
+                    <span className="text-[9px] font-medium text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-zinc-700 px-1 py-0.5 rounded flex-shrink-0">
+                        {card.children!.length} sub
+                    </span>
+                )}
+                {/* Time: visible by default, hidden on hover */}
+                <span className="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0 tabular-nums group-hover/row:hidden">
+                    {formatRelativeTime(card.updatedAt)}
+                </span>
+                {/* Action menu: hidden by default, visible on hover */}
+                <div className="hidden group-hover/row:flex flex-shrink-0">
+                    <RowActionMenu cardId={card.id} />
+                </div>
+            </div>
+            {/* Subagent children */}
+            {hasChildren && expanded && (
+                <div className="bg-gray-50/50 dark:bg-zinc-800/30">
+                    {card.children!.map((child, i) => (
+                        <div
+                            key={child.id}
+                            className="flex items-center gap-2 pl-8 pr-3 py-1.5 hover:bg-gray-100/50 dark:hover:bg-zinc-700/20 transition-colors"
+                            title={child.title || 'Subagent'}
+                        >
+                            {/* Tree connector */}
+                            <span className="text-gray-300 dark:text-zinc-600 text-xs flex-shrink-0 font-mono leading-none">
+                                {i === card.children!.length - 1 ? '└' : '├'}
+                            </span>
+                            <StatusDot status={child.realTimeStatus} waitingForUser={child.waitingForUser} />
+                            <span className="text-xs text-gray-500 dark:text-gray-400 truncate flex-1 min-w-0">
+                                {child.title || 'Subagent'}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
 export function ProjectCard({ projectName, branch, cards }: ProjectCardProps) {
     const [openTool, setOpenTool] = useState('vscode');
     const [remoteSshHost, setRemoteSshHost] = useState('');
@@ -183,26 +256,11 @@ export function ProjectCard({ projectName, branch, cards }: ProjectCardProps) {
             {/* Session rows */}
             <div className="border-t border-gray-100 dark:border-zinc-700/50">
                 {cards.map((card, index) => (
-                    <div
+                    <SessionRow
                         key={card.id}
-                        className={`group/row flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 dark:hover:bg-zinc-700/30 transition-colors ${
-                            index < cards.length - 1 ? 'border-b border-gray-50 dark:border-zinc-700/30' : ''
-                        }`}
-                        title={`${card.title || 'Untitled Session'}\nActive ${formatRelativeTime(card.updatedAt)} ago · Started ${formatRelativeTime(card.createdAt)} ago`}
-                    >
-                        <StatusDot status={card.opencodeStatus} waitingForUser={card.waitingForUser} />
-                        <span className="text-sm text-gray-700 dark:text-gray-300 truncate flex-1 min-w-0">
-                            {card.title || 'Untitled Session'}
-                        </span>
-                        {/* Time: visible by default, hidden on hover */}
-                        <span className="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0 tabular-nums group-hover/row:hidden">
-                            {formatRelativeTime(card.updatedAt)}
-                        </span>
-                        {/* Action menu: hidden by default, visible on hover */}
-                        <div className="hidden group-hover/row:flex flex-shrink-0">
-                            <RowActionMenu cardId={card.id} />
-                        </div>
-                    </div>
+                        card={card}
+                        isLast={index === cards.length - 1}
+                    />
                 ))}
             </div>
 

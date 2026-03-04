@@ -42,6 +42,12 @@ export function transformSession(session: EnrichedSession): KanbanCard {
         updatedAt: session.time.updated,
         archivedAt: session.time.archived,
         sortOrder: 0,
+        children: (session.children || []).map(c => ({
+            id: c.id,
+            title: c.title,
+            realTimeStatus: c.realTimeStatus || 'idle',
+            waitingForUser: c.waitingForUser || false,
+        })),
     };
 }
 

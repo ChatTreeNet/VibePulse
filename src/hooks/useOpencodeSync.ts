@@ -85,10 +85,13 @@ export function useOpencodeSync() {
                 case 'session.created': {
                     const info = event.properties?.info as OpencodeSession | undefined;
                     if (!info) { scheduleRefetch(); return old; }
-                    // Filter out subagent sessions
+                    
+                    // Subagent session — refetch to let server nest it under parent
                     if (info.parentID) {
+                        scheduleRefetch();
                         return old;
                     }
+                    
                     const existing = old.sessions.find(s => s.id === info.id);
                     if (!existing) {
                         // New session — let server-side handle filtering & enrichment
@@ -100,7 +103,8 @@ export function useOpencodeSync() {
                         projectName: existing.projectName, 
                         branch: existing.branch, 
                         realTimeStatus: existing.realTimeStatus, 
-                        waitingForUser: existing.waitingForUser 
+                        waitingForUser: existing.waitingForUser,
+                        children: existing.children,
                     };
                     return {
                         ...old,
