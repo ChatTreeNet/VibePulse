@@ -65,7 +65,14 @@ export type OpencodeEventType =
 
 export interface OpencodeEvent {
   type: OpencodeEventType;
-  properties?: Record<string, any>;
+  properties?: {
+    sessionID?: string;
+    info?: OpencodeSession;
+    status?: {
+      type?: OpencodeStatus;
+    };
+    [key: string]: unknown;
+  };
   timestamp: number;
 }
 

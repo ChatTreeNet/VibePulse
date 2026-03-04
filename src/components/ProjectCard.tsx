@@ -96,7 +96,7 @@ function RowActionMenu({ cardId }: { cardId: string }) {
                 onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
                 title="Actions"
             >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                     <path d="M5 10a2 2 0 110 4 2 2 0 010-4zm7 0a2 2 0 110 4 2 2 0 010-4zm7 0a2 2 0 110 4 2 2 0 010-4z" />
                 </svg>
             </button>
@@ -125,7 +125,10 @@ function RowActionMenu({ cardId }: { cardId: string }) {
 // Session row with expandable subagent children
 function SessionRow({ card, isLast }: { card: KanbanCard; isLast: boolean }) {
     const [expanded, setExpanded] = useState(false);
-    const hasChildren = (card.children?.length ?? 0) > 0;
+    const visibleChildren = (card.children || []).filter(
+        (child) => child.realTimeStatus !== 'idle' || child.waitingForUser
+    );
+    const hasChildren = visibleChildren.length > 0;
 
     return (
         <div className={!isLast ? 'border-b border-gray-50 dark:border-zinc-700/30' : ''}>
@@ -144,6 +147,7 @@ function SessionRow({ card, isLast }: { card: KanbanCard; isLast: boolean }) {
                         <svg
                             className={`w-2.5 h-2.5 transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`}
                             viewBox="0 0 6 10" fill="currentColor"
+                            aria-hidden="true"
                         >
                             <path d="M1 1l4 4-4 4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
@@ -156,7 +160,7 @@ function SessionRow({ card, isLast }: { card: KanbanCard; isLast: boolean }) {
                 {/* Child count badge */}
                 {hasChildren && !expanded && (
                     <span className="text-[9px] font-medium text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-zinc-700 px-1 py-0.5 rounded flex-shrink-0">
-                        {card.children!.length} sub
+                        {visibleChildren.length} sub
                     </span>
                 )}
                 {/* Time: visible by default, hidden on hover */}
@@ -171,7 +175,7 @@ function SessionRow({ card, isLast }: { card: KanbanCard; isLast: boolean }) {
             {/* Subagent children */}
             {hasChildren && expanded && (
                 <div className="bg-gray-50/50 dark:bg-zinc-800/30">
-                    {card.children!.map((child, i) => (
+                    {visibleChildren.map((child, i) => (
                         <div
                             key={child.id}
                             className="flex items-center gap-2 pl-8 pr-3 py-1.5 hover:bg-gray-100/50 dark:hover:bg-zinc-700/20 transition-colors"
@@ -179,7 +183,7 @@ function SessionRow({ card, isLast }: { card: KanbanCard; isLast: boolean }) {
                         >
                             {/* Tree connector */}
                             <span className="text-gray-300 dark:text-zinc-600 text-xs flex-shrink-0 font-mono leading-none">
-                                {i === card.children!.length - 1 ? '└' : '├'}
+                                {i === visibleChildren.length - 1 ? '└' : '├'}
                             </span>
                             <StatusDot status={child.realTimeStatus} waitingForUser={child.waitingForUser} />
                             <span className="text-xs text-gray-500 dark:text-gray-400 truncate flex-1 min-w-0">
@@ -194,23 +198,20 @@ function SessionRow({ card, isLast }: { card: KanbanCard; isLast: boolean }) {
 }
 
 export function ProjectCard({ projectName, branch, cards }: ProjectCardProps) {
-    const [openTool, setOpenTool] = useState('vscode');
-    const [remoteSshHost, setRemoteSshHost] = useState('');
-
-    useEffect(() => {
-        const storedTool = window.localStorage.getItem('vibepulse:open-tool');
-        if (storedTool) setOpenTool(storedTool);
+    const [openTool, setOpenTool] = useState(() => {
+        if (typeof window === 'undefined') return 'vscode';
+        return window.localStorage.getItem('vibepulse:open-tool') || 'vscode';
+    });
+    const [remoteSshHost] = useState(() => {
+        if (typeof window === 'undefined') return '';
         const storedHost = window.localStorage.getItem('vibepulse:ssh-host');
-        if (storedHost) {
-            setRemoteSshHost(storedHost);
-        } else {
-            const hostname = window.location.hostname;
-            if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
-                setRemoteSshHost(hostname);
-                window.localStorage.setItem('vibepulse:ssh-host', hostname);
-            }
+        if (storedHost) return storedHost;
+        const hostname = window.location.hostname;
+        if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+            return hostname;
         }
-    }, []);
+        return '';
+    });
 
     const buildVsCodeUri = (directory: string) => {
         const encodedPath = encodeURI(directory.replace(/\\/g, '/'));
@@ -233,7 +234,7 @@ export function ProjectCard({ projectName, branch, cards }: ProjectCardProps) {
         <article className="w-full bg-white dark:bg-zinc-800 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-700 hover:shadow-lg hover:border-gray-300 dark:hover:border-zinc-600 transition-all duration-200 overflow-hidden">
             {/* Header */}
             <div className="flex items-center gap-2 px-3 py-2.5">
-                <svg className="w-4 h-4 text-blue-500 dark:text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 text-blue-500 dark:text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
                 </svg>
                 <span className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate flex-1">
@@ -283,7 +284,7 @@ export function ProjectCard({ projectName, branch, cards }: ProjectCardProps) {
                     className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:text-gray-400 dark:hover:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
                     title="Open project"
                 >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                     </svg>
                     Open

@@ -2,6 +2,8 @@
 
 Real-time dashboard for monitoring and managing OpenCode sessions.
 
+![VibePulse README cover](./public/readme-cover.png)
+
 ## Features
 
 - **Real-time sync** — Automatically syncs OpenCode sessions via SSE

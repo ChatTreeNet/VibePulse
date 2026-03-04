@@ -9,18 +9,6 @@ interface SessionCardProps {
     card: KanbanCard;
 }
 
-function formatDuration(createdAt: number, updatedAt: number): string {
-    const diffMs = updatedAt - createdAt;
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    if (diffDays > 0) return `${diffDays}d`;
-    if (diffHours > 0) return `${diffHours}h`;
-    if (diffMins > 0) return `${diffMins}m`;
-    return '<1m';
-}
-
 function formatRelativeTime(timestamp: number): string {
     const diffMs = Date.now() - timestamp;
     const diffMins = Math.floor(diffMs / (1000 * 60));

@@ -1,16 +1,4 @@
-import { createOpencodeClient } from '@opencode-ai/sdk';
-import { execSync } from 'child_process';
-
-function discoverOpencodePorts(): number[] {
-    try {
-        const psOutput = execSync('ps aux | grep "opencode.*--port" | grep -v grep', { encoding: 'utf-8' });
-        const matches = [...psOutput.matchAll(/--port\s+(\d+)/g)];
-        const ports = matches.map((match) => parseInt(match[1], 10)).filter((port) => Number.isFinite(port));
-        return Array.from(new Set(ports)).sort((a, b) => a - b);
-    } catch {
-        return [];
-    }
-}
+import { discoverOpencodePorts } from '@/lib/opencodeDiscovery';
 
 export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
     const { id: sessionId } = await params;
@@ -24,7 +12,6 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
     for (const port of ports) {
         try {
             const baseUrl = `http://localhost:${port}`;
-            createOpencodeClient({ baseUrl });
             const response = await fetch(`${baseUrl}/session/${sessionId}`, {
                 method: 'PATCH',
                 headers: {

@@ -5,7 +5,9 @@ import { KanbanColumn, KanbanCard } from '@/types';
 import { ProjectCard } from './ProjectCard';
 import { transformSessions } from '@/lib/transform';
 import { LoadingState } from './LoadingState';
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
+
+const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
 
 const COLUMNS: { id: KanbanColumn; title: string }[] = [
     { id: 'idle', title: 'Idle' },
@@ -19,7 +21,7 @@ interface KanbanBoardProps {
 }
 
 export function KanbanBoard({ filterDays }: KanbanBoardProps) {
-    const { data, isLoading, error } = useQuery({
+    const { data, isLoading, error, dataUpdatedAt } = useQuery({
         queryKey: ['sessions'],
         queryFn: async () => {
             const res = await fetch('/api/sessions');
@@ -28,32 +30,51 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
             }
             return res.json();
         },
+        refetchInterval: 5000,
+        refetchIntervalInBackground: true,
+        refetchOnReconnect: true,
     });
 
-    const [cards, setCards] = useState<KanbanCard[]>([]);
+    const enrichedSessions = useMemo(() => {
+        if (!data?.sessions) return [];
 
-    useEffect(() => {
-        if (data?.sessions) {
-            // Merge persisted waitingForUser state from localStorage
-            let persistedWaiting: Record<string, boolean> = {};
+        let persistedWaiting: Record<string, boolean> = {};
+        if (typeof window !== 'undefined') {
             try {
-                persistedWaiting = JSON.parse(localStorage.getItem('vibepulse:waiting-sessions') || '{}');
-            } catch { /* ignore */ }
-
-            const enrichedSessions = data.sessions.map((s: { id: string; waitingForUser?: boolean }) => ({
-                ...s,
-                waitingForUser: s.waitingForUser || !!persistedWaiting[s.id],
-            }));
-
-            const allCards = transformSessions(enrichedSessions);
-            if (filterDays === 0) {
-                setCards(allCards);
-            } else {
-                const cutoff = Date.now() - filterDays * 24 * 60 * 60 * 1000;
-                setCards(allCards.filter(c => c.updatedAt >= cutoff));
+                persistedWaiting = JSON.parse(localStorage.getItem(WAITING_STORAGE_KEY) || '{}');
+            } catch {
+                persistedWaiting = {};
             }
         }
-    }, [data, filterDays]);
+
+        return data.sessions.map((s: { id: string; waitingForUser?: boolean; realTimeStatus?: 'idle' | 'busy' | 'retry' }) => {
+            const persisted = !!persistedWaiting[s.id];
+            return {
+                ...s,
+                waitingForUser: !!s.waitingForUser || (s.realTimeStatus !== 'idle' && persisted),
+            };
+        });
+    }, [data?.sessions]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const nextPersistedWaiting: Record<string, boolean> = {};
+        for (const session of enrichedSessions as Array<{ id: string; waitingForUser?: boolean }>) {
+            if (session.waitingForUser) {
+                nextPersistedWaiting[session.id] = true;
+            }
+        }
+        localStorage.setItem(WAITING_STORAGE_KEY, JSON.stringify(nextPersistedWaiting));
+    }, [enrichedSessions]);
+
+    const cards: KanbanCard[] = useMemo(() => {
+        const allCards = transformSessions(enrichedSessions);
+        if (filterDays === 0) {
+            return allCards;
+        }
+        const cutoff = dataUpdatedAt - filterDays * 24 * 60 * 60 * 1000;
+        return allCards.filter((card) => card.updatedAt >= cutoff);
+    }, [dataUpdatedAt, enrichedSessions, filterDays]);
 
     if (isLoading) {
         return <LoadingState />;
@@ -69,6 +90,7 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
+                            aria-hidden="true"
                         >
                             <path
                                 strokeLinecap="round"
@@ -99,6 +121,7 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
+                            aria-hidden="true"
                         >
                             <path
                                 strokeLinecap="round"

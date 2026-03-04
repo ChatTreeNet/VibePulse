@@ -1,16 +1,5 @@
 import { createOpencodeClient } from '@opencode-ai/sdk';
-import { execSync } from 'child_process';
-
-function discoverOpencodePorts(): number[] {
-  try {
-    const psOutput = execSync('ps aux | grep "opencode.*--port" | grep -v grep', { encoding: 'utf-8' });
-    const matches = [...psOutput.matchAll(/--port\s+(\d+)/g)];
-    const ports = matches.map(m => parseInt(m[1], 10)).filter(n => Number.isFinite(n));
-    return Array.from(new Set(ports)).sort((a, b) => a - b);
-  } catch {
-    return [];
-  }
-}
+import { discoverOpencodePorts } from '@/lib/opencodeDiscovery';
 
 export async function GET(
     _: Request,

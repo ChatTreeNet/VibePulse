@@ -1,16 +1,25 @@
 import { createOpencodeClient } from '@opencode-ai/sdk';
 import { execSync } from 'child_process';
 import path from 'path';
+import { discoverOpencodePorts } from '@/lib/opencodeDiscovery';
 
-function discoverOpencodePorts(): number[] {
-  try {
-    const psOutput = execSync('ps aux | grep "opencode.*--port" | grep -v grep', { encoding: 'utf-8' });
-    const matches = [...psOutput.matchAll(/--port\s+(\d+)/g)];
-    const ports = matches.map(m => parseInt(m[1], 10)).filter(n => Number.isFinite(n));
-    return Array.from(new Set(ports)).sort((a, b) => a - b);
-  } catch {
-    return [];
-  }
+type SessionLike = {
+  id: string;
+  slug?: string;
+  title?: string;
+  directory: string;
+  parentID?: string;
+  time?: {
+    created: number;
+    updated: number;
+    archived?: number;
+  };
+};
+
+const CHILD_ACTIVE_WINDOW_MS = 30 * 60 * 1000;
+
+function getUpdatedAt(session: { time?: { updated?: number; created?: number } }): number {
+  return session.time?.updated || session.time?.created || 0;
 }
 // Get project name from directory path
 function getProjectName(directory: string): string {
@@ -67,7 +76,7 @@ export async function GET() {
       return { client, sessions: sessionsResult.data || [], status: statusResult.data || {} };
     }));
 
-    const allSessions: any[] = [];
+    const allSessions: SessionLike[] = [];
     const statusMap: Record<string, { type: 'idle' | 'busy' | 'retry' }> = {};
     const clientMap: Record<number, ReturnType<typeof createOpencodeClient>> = {};
 
@@ -89,14 +98,14 @@ export async function GET() {
 
     // 3. Separate parent and child sessions
     const parentSessions = sessions.filter(
-      (s: { parentID?: string; title?: string }) => !s.parentID && !(s.title || '').toLowerCase().includes('subagent')
+      (s) => !s.parentID && !(s.title || '').toLowerCase().includes('subagent')
     );
     const childSessions = sessions.filter(
-      (s: { parentID?: string; title?: string }) => s.parentID || (s.title || '').toLowerCase().includes('subagent')
+      (s) => s.parentID || (s.title || '').toLowerCase().includes('subagent')
     );
 
     // Enrich parent sessions
-    const enrichedSessions = parentSessions.map((session: { id: string; directory: string }) => {
+    const enrichedSessions = parentSessions.map((session) => {
       const projectName = getProjectName(session.directory);
       const branch = getGitBranch(session.directory);
       return {
@@ -105,19 +114,52 @@ export async function GET() {
         branch,
         realTimeStatus: statusMap[session.id]?.type || 'idle',
         waitingForUser: false,
-        children: [] as Array<{ id: string; title?: string; realTimeStatus: string; waitingForUser: boolean; time?: { created: number; updated: number }; parentID?: string }>,
+        children: [] as Array<{ id: string; slug?: string; title?: string; directory?: string; realTimeStatus: string; waitingForUser: boolean; time?: { created: number; updated: number }; parentID?: string }>,
       };
     });
+
+    const now = Date.now();
 
     // Enrich and nest child sessions under parents
     for (const child of childSessions) {
       if (child.time?.archived) continue;
 
-      const childStatus = statusMap[child.id]?.type || 'idle';
-      // Hide inactive subagents based on user request
+      // Find parent by parentID
+      let parent = child.parentID
+        ? enrichedSessions.find((s) => s.id === child.parentID)
+        : null;
+
+      if (!parent) {
+        const candidates = enrichedSessions
+          .filter((s) => s.directory === child.directory)
+          .sort((a, b) => getUpdatedAt(b) - getUpdatedAt(a));
+
+        parent =
+          candidates.find((s) => s.realTimeStatus === 'busy' || s.realTimeStatus === 'retry') ||
+          candidates[0];
+      }
+
+      if (!parent) {
+        continue;
+      }
+
+      const statusFromMap = statusMap[child.id]?.type;
+      const childUpdatedAt = getUpdatedAt(child);
+      const isRecent = childUpdatedAt > 0 && now - childUpdatedAt <= CHILD_ACTIVE_WINDOW_MS;
+      const parentActive = parent.realTimeStatus === 'busy' || parent.realTimeStatus === 'retry';
+
+      let childStatus: 'idle' | 'busy' | 'retry';
+      if (statusFromMap) {
+        childStatus = statusFromMap;
+      } else if (parentActive && isRecent) {
+        childStatus = 'busy';
+      } else {
+        childStatus = 'idle';
+      }
+
       if (childStatus === 'idle') continue;
 
-      const enrichedChild = {
+      parent.children.push({
         id: child.id,
         slug: child.slug,
         title: child.title,
@@ -126,25 +168,7 @@ export async function GET() {
         time: child.time,
         realTimeStatus: childStatus,
         waitingForUser: false,
-      };
-
-      // Find parent by parentID
-      let parent = child.parentID
-        ? enrichedSessions.find((s: { id: string }) => s.id === child.parentID)
-        : null;
-
-      // Fallback: match by directory for subagents without parentID
-      if (!parent) {
-        parent = enrichedSessions.find(
-          (s: { directory: string; realTimeStatus: string }) =>
-            s.directory === child.directory && s.realTimeStatus === 'busy'
-        );
-      }
-
-      if (parent) {
-        parent.children.push(enrichedChild);
-      }
-      // If no parent found, drop the orphan subagent
+      });
     }
 
     // Sort children for each parent: active first, then by updated time
@@ -166,12 +190,12 @@ export async function GET() {
     }
 
     // Check busy sessions for pending permissions/questions
-    const busySessions = enrichedSessions.filter((s: { realTimeStatus: string }) => s.realTimeStatus === 'busy');
+    const busySessions = enrichedSessions.filter((s) => s.realTimeStatus === 'busy');
     if (busySessions.length > 0) {
       const client = Object.values(clientMap)[0];
       if (client) {
         const pendingChecks = await Promise.allSettled(
-          busySessions.map(async (session: { id: string }) => {
+          busySessions.map(async (session) => {
             try {
               const messagesResult = await client.session.messages({
                 path: { id: session.id },
@@ -196,7 +220,7 @@ export async function GET() {
 
         for (const result of pendingChecks) {
           if (result.status === 'fulfilled' && result.value.waiting) {
-            const session = enrichedSessions.find((s: { id: string }) => s.id === result.value.sessionId);
+            const session = enrichedSessions.find((s) => s.id === result.value.sessionId);
             if (session) session.waitingForUser = true;
           }
         }

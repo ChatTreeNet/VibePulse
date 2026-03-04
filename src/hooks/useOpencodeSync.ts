@@ -27,15 +27,41 @@ function persistWaiting(sessionId: string, waiting: boolean) {
     localStorage.setItem(WAITING_STORAGE_KEY, JSON.stringify(state));
 }
 
+function inferProjectName(directory?: string): string {
+    if (!directory) return 'Unknown Project';
+    const normalized = directory.replace(/\\/g, '/');
+    const parts = normalized.split('/').filter(Boolean);
+    return parts[parts.length - 1] || 'Unknown Project';
+}
+
+function buildOptimisticSession(info: OpencodeSession): OpencodeSession {
+    const now = Date.now();
+    return {
+        ...info,
+        slug: info.slug || info.id,
+        title: info.title || 'Untitled Session',
+        directory: info.directory || '',
+        projectName: info.projectName || inferProjectName(info.directory),
+        time: info.time || { created: now, updated: now },
+        realTimeStatus: info.realTimeStatus || 'busy',
+        waitingForUser: !!info.waitingForUser,
+        children: info.children || [],
+    };
+}
+
 export function useOpencodeSync() {
     const queryClient = useQueryClient();
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const reconnectAttemptsRef = useRef(0);
     const refetchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const streamRotateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const rotatingRef = useRef(false);
     const initialLoadRef = useRef(true);
     const initialLoadTimerRef = useRef<NodeJS.Timeout | null>(null);
     const MAX_RECONNECT_ATTEMPTS = 5;
     const BASE_RECONNECT_DELAY = 1000;
+    const STREAM_ROTATE_INTERVAL = 15000;
+    const POLL_REFETCH_INTERVAL = 3000;
 
     const scheduleRefetch = useCallback(() => {
         if (refetchTimeoutRef.current) return;
@@ -86,17 +112,57 @@ export function useOpencodeSync() {
                     const info = event.properties?.info as OpencodeSession | undefined;
                     if (!info) { scheduleRefetch(); return old; }
                     
-                    // Subagent session — refetch to let server nest it under parent
                     if (info.parentID) {
-                        scheduleRefetch();
-                        return old;
+                        let updated = false;
+                        const sessions = old.sessions.map((parent) => {
+                            const hasTargetChild = parent.children?.some((child) => child.id === info.id);
+                            const isTargetParent = parent.id === info.parentID;
+
+                            if (!hasTargetChild && !isTargetParent) {
+                                return parent;
+                            }
+
+                            updated = true;
+                            const children = parent.children || [];
+                            const existingChild = children.find((child) => child.id === info.id);
+                            const child = buildOptimisticSession({
+                                ...existingChild,
+                                ...info,
+                                realTimeStatus: existingChild?.realTimeStatus || info.realTimeStatus || 'busy',
+                                waitingForUser: existingChild?.waitingForUser ?? info.waitingForUser,
+                            } as OpencodeSession);
+
+                            if (existingChild) {
+                                return {
+                                    ...parent,
+                                    children: children.map((entry) => (entry.id === info.id ? child : entry)),
+                                };
+                            }
+
+                            return {
+                                ...parent,
+                                children: [...children, child],
+                            };
+                        });
+
+                        if (!updated) {
+                            scheduleRefetch();
+                            return old;
+                        }
+
+                        return {
+                            ...old,
+                            sessions,
+                        };
                     }
                     
                     const existing = old.sessions.find(s => s.id === info.id);
                     if (!existing) {
-                        // New session — let server-side handle filtering & enrichment
                         scheduleRefetch();
-                        return old;
+                        return {
+                            ...old,
+                            sessions: [buildOptimisticSession(info), ...old.sessions],
+                        };
                     }
                     const merged = { 
                         ...info, 
@@ -123,7 +189,7 @@ export function useOpencodeSync() {
                         return old;
                     }
 
-                    const applyEvent = (s: any) => {
+                    const applyEvent = (s: OpencodeSession): OpencodeSession => {
                         switch (event.type) {
                             case 'session.status': {
                                 const statusType = event.properties?.status?.type as 'idle' | 'busy' | 'retry' | undefined;
@@ -131,13 +197,21 @@ export function useOpencodeSync() {
                                 if (statusType === 'retry' && !initialLoadRef.current) {
                                     playAlertSound();
                                 }
-                                if (statusType === 'idle' && !s.waitingForUser) {
+                                if (statusType === 'idle') {
                                     persistWaiting(s.id, false);
+                                }
+                                if (statusType === 'retry') {
+                                    persistWaiting(s.id, true);
                                 }
                                 return { 
                                     ...s, 
                                     realTimeStatus: statusType, 
-                                    waitingForUser: statusType === 'retry' ? true : s.waitingForUser 
+                                    waitingForUser:
+                                        statusType === 'retry'
+                                            ? true
+                                            : statusType === 'idle'
+                                                ? false
+                                                : s.waitingForUser 
                                 };
                             }
                             case 'question.asked':
@@ -215,7 +289,28 @@ export function useOpencodeSync() {
         let eventSource: EventSource | null = null;
 
         const connect = () => {
+            if (reconnectTimeoutRef.current) {
+                clearTimeout(reconnectTimeoutRef.current);
+                reconnectTimeoutRef.current = null;
+            }
+            if (streamRotateTimeoutRef.current) {
+                clearTimeout(streamRotateTimeoutRef.current);
+                streamRotateTimeoutRef.current = null;
+            }
+
             eventSource = new EventSource('/api/opencode-events');
+
+            eventSource.onopen = () => {
+                reconnectAttemptsRef.current = 0;
+                rotatingRef.current = false;
+                streamRotateTimeoutRef.current = setTimeout(() => {
+                    if (!eventSource) return;
+                    rotatingRef.current = true;
+                    eventSource.close();
+                    scheduleRefetch();
+                    connect();
+                }, STREAM_ROTATE_INTERVAL);
+            };
 
             eventSource.onmessage = (event) => {
                 try {
@@ -229,6 +324,16 @@ export function useOpencodeSync() {
 
             eventSource.onerror = () => {
                 eventSource?.close();
+
+                if (streamRotateTimeoutRef.current) {
+                    clearTimeout(streamRotateTimeoutRef.current);
+                    streamRotateTimeoutRef.current = null;
+                }
+
+                if (rotatingRef.current) {
+                    rotatingRef.current = false;
+                    return;
+                }
 
                 if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
                     const delay = BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current);
@@ -246,7 +351,22 @@ export function useOpencodeSync() {
             eventSource?.close();
             if (reconnectTimeoutRef.current) {
                 clearTimeout(reconnectTimeoutRef.current);
+                reconnectTimeoutRef.current = null;
+            }
+            if (streamRotateTimeoutRef.current) {
+                clearTimeout(streamRotateTimeoutRef.current);
+                streamRotateTimeoutRef.current = null;
             }
         };
-    }, [handleEvent]);
+    }, [handleEvent, scheduleRefetch]);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        }, POLL_REFETCH_INTERVAL);
+
+        return () => {
+            clearInterval(interval);
+        };
+    }, [queryClient]);
 }
