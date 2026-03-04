@@ -51,7 +51,7 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
             const persisted = !!persistedWaiting[s.id];
             return {
                 ...s,
-                waitingForUser: !!s.waitingForUser || (s.realTimeStatus !== 'idle' && persisted),
+                waitingForUser: !!s.waitingForUser || (s.realTimeStatus === 'retry' && persisted),
             };
         });
     }, [data?.sessions]);

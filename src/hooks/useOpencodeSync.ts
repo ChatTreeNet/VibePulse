@@ -195,6 +195,7 @@ export function useOpencodeSync() {
                                 const statusType = event.properties?.status?.type as 'idle' | 'busy' | 'retry' | undefined;
                                 if (!statusType) return s;
                                 const previousStatus = s.realTimeStatus;
+                                const isParentSession = !s.parentID;
                                 if (statusType === 'retry' && !initialLoadRef.current) {
                                     playAlertSound();
                                 }
@@ -212,6 +213,9 @@ export function useOpencodeSync() {
                                 if (statusType === 'retry') {
                                     persistWaiting(s.id, true);
                                 }
+                                if (statusType === 'idle' && isParentSession && (s.children?.length || 0) > 0) {
+                                    scheduleRefetch();
+                                }
                                 return { 
                                     ...s, 
                                     realTimeStatus: statusType, 
@@ -220,7 +224,11 @@ export function useOpencodeSync() {
                                             ? true
                                             : statusType === 'idle'
                                                 ? false
-                                                : s.waitingForUser 
+                                                : s.waitingForUser,
+                                    children:
+                                        statusType === 'idle' && isParentSession
+                                            ? []
+                                            : s.children,
                                 };
                             }
                             case 'question.asked':
