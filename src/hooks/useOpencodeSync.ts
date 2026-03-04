@@ -171,6 +171,15 @@ export function useOpencodeSync() {
                         }
                         if (session.children?.some(c => c.id === sessionId)) {
                             found = true;
+                            // If the event is a status update to 'idle', we should filter the child out
+                            // so it disappears from the UI without needing a full refetch, matching backend logic.
+                            if (event.type === 'session.status' && event.properties?.status?.type === 'idle') {
+                                return {
+                                    ...session,
+                                    children: session.children.filter(c => c.id !== sessionId)
+                                };
+                            }
+                            
                             return {
                                 ...session,
                                 children: session.children.map(c => c.id === sessionId ? applyEvent(c) : c)
