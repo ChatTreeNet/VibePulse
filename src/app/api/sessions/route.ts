@@ -109,8 +109,12 @@ export async function GET() {
       };
     });
 
-    // Enrich and nest child sessions under parents
+    // Enrich and nest active child sessions under parents
     for (const child of childSessions) {
+      const childStatus = statusMap[child.id]?.type || 'idle';
+      // Only include active subagents (busy or retry)
+      if (childStatus === 'idle') continue;
+
       const enrichedChild = {
         id: child.id,
         slug: child.slug,
@@ -118,7 +122,7 @@ export async function GET() {
         directory: child.directory,
         parentID: child.parentID,
         time: child.time,
-        realTimeStatus: statusMap[child.id]?.type || 'idle',
+        realTimeStatus: childStatus,
         waitingForUser: false,
       };
 
