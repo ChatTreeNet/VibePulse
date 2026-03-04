@@ -59,21 +59,24 @@ export async function GET() {
     );
   }
 
-  try {
+   try {
     const results = await Promise.allSettled(ports.map(async (port) => {
       const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
       const sessionsResult = await client.session.list();
       const statusResult = await client.session.status().catch(() => ({ data: {} }));
-      return { sessions: sessionsResult.data || [], status: statusResult.data || {} };
+      return { client, sessions: sessionsResult.data || [], status: statusResult.data || {} };
     }));
 
     const allSessions: any[] = [];
     const statusMap: Record<string, { type: 'idle' | 'busy' | 'retry' }> = {};
+    const clientMap: Record<number, ReturnType<typeof createOpencodeClient>> = {};
 
-    for (const r of results) {
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
       if (r.status !== 'fulfilled') continue;
       allSessions.push(...r.value.sessions);
       Object.assign(statusMap, r.value.status);
+      clientMap[i] = r.value.client;
     }
 
     // Deduplicate by session.id
@@ -94,9 +97,50 @@ export async function GET() {
           ...session,
           projectName,
           branch,
-          realTimeStatus: statusMap[session.id]?.type || 'idle'
+          realTimeStatus: statusMap[session.id]?.type || 'idle',
+          waitingForUser: false,
         };
       });
+
+    // Check busy sessions for pending permissions/questions
+    const busySessions = enrichedSessions.filter(s => s.realTimeStatus === 'busy');
+    if (busySessions.length > 0) {
+      // Use the first available client to check messages
+      const client = Object.values(clientMap)[0];
+      if (client) {
+        const pendingChecks = await Promise.allSettled(
+          busySessions.map(async (session) => {
+            try {
+              const messagesResult = await client.session.messages({
+                path: { id: session.id },
+                query: { limit: 3 },
+              });
+              const messages = messagesResult.data || [];
+              // Check last message parts for pending tool states
+              for (const msg of messages) {
+                for (const part of (msg.parts || [])) {
+                  if ('state' in part && part.state &&
+                      'status' in part.state &&
+                      (part.state.status === 'pending' || part.state.status === 'running')) {
+                    return { sessionId: session.id, waiting: true };
+                  }
+                }
+              }
+              return { sessionId: session.id, waiting: false };
+            } catch {
+              return { sessionId: session.id, waiting: false };
+            }
+          })
+        );
+
+        for (const result of pendingChecks) {
+          if (result.status === 'fulfilled' && result.value.waiting) {
+            const session = enrichedSessions.find(s => s.id === result.value.sessionId);
+            if (session) session.waitingForUser = true;
+          }
+        }
+      }
+    }
 
     return Response.json({ sessions: enrichedSessions });
   } catch (error) {

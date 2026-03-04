@@ -3,12 +3,37 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { OpencodeEvent, OpencodeSession } from '@/types';
+import { playAttentionSound, playAlertSound } from '@/lib/notificationSound';
+
+const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
+
+function getPersistedWaiting(): Record<string, boolean> {
+    if (typeof window === 'undefined') return {};
+    try {
+        return JSON.parse(localStorage.getItem(WAITING_STORAGE_KEY) || '{}');
+    } catch {
+        return {};
+    }
+}
+
+function persistWaiting(sessionId: string, waiting: boolean) {
+    if (typeof window === 'undefined') return;
+    const state = getPersistedWaiting();
+    if (waiting) {
+        state[sessionId] = true;
+    } else {
+        delete state[sessionId];
+    }
+    localStorage.setItem(WAITING_STORAGE_KEY, JSON.stringify(state));
+}
 
 export function useOpencodeSync() {
     const queryClient = useQueryClient();
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const reconnectAttemptsRef = useRef(0);
     const refetchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const initialLoadRef = useRef(true);
+    const initialLoadTimerRef = useRef<NodeJS.Timeout | null>(null);
     const MAX_RECONNECT_ATTEMPTS = 5;
     const BASE_RECONNECT_DELAY = 1000;
 
@@ -20,7 +45,13 @@ export function useOpencodeSync() {
         }, 500);
     }, [queryClient]);
 
-    const handleEvent = useCallback((event: OpencodeEvent) => {
+    const handleEvent = useCallback((rawEvent: OpencodeEvent | { payload: OpencodeEvent; directory: string }) => {
+        // Unwrap GlobalEvent wrapper if present
+        const event: OpencodeEvent = 'payload' in rawEvent ? rawEvent.payload as OpencodeEvent : rawEvent;
+        if (!event?.type) {
+            scheduleRefetch();
+            return;
+        }
         const sessionId = event.properties?.sessionID;
         
         const handledEvents = [
@@ -30,6 +61,7 @@ export function useOpencodeSync() {
             'session.deleted',
             'question.asked',
             'permission.asked',
+            'permission.updated',
             'question.replied',
             'question.rejected',
             'permission.replied',
@@ -86,18 +118,31 @@ export function useOpencodeSync() {
                                 case 'session.status': {
                                     const statusType = event.properties?.status?.type as 'idle' | 'busy' | 'retry' | undefined;
                                     if (!statusType) return session;
+                                    if (statusType === 'retry' && !initialLoadRef.current) {
+                                        playAlertSound();
+                                    }
+                                    // When session becomes idle and is not waiting for user, clear persisted state
+                                    if (statusType === 'idle' && !session.waitingForUser) {
+                                        persistWaiting(session.id, false);
+                                    }
                                     return { 
                                         ...session, 
                                         realTimeStatus: statusType, 
-                                        waitingForUser: statusType === 'retry' 
+                                        waitingForUser: statusType === 'retry' ? true : session.waitingForUser 
                                     };
                                 }
                                 case 'question.asked':
                                 case 'permission.asked':
+                                case 'permission.updated':
+                                    if (!initialLoadRef.current) {
+                                        playAttentionSound();
+                                    }
+                                    persistWaiting(sessionId!, true);
                                     return { ...session, waitingForUser: true };
                                 case 'question.replied':
                                 case 'question.rejected':
                                 case 'permission.replied':
+                                    persistWaiting(sessionId!, false);
                                     return { ...session, waitingForUser: false };
                                 case 'session.archived':
                                     return { 
@@ -113,6 +158,18 @@ export function useOpencodeSync() {
             }
         });
     }, [queryClient, scheduleRefetch]);
+
+    // After initial connection, mark as no longer initial load after 3 seconds
+    useEffect(() => {
+        initialLoadTimerRef.current = setTimeout(() => {
+            initialLoadRef.current = false;
+        }, 3000);
+        return () => {
+            if (initialLoadTimerRef.current) {
+                clearTimeout(initialLoadTimerRef.current);
+            }
+        };
+    }, []);
 
     useEffect(() => {
         let eventSource: EventSource | null = null;

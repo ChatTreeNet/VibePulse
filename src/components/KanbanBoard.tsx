@@ -34,7 +34,18 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
 
     useEffect(() => {
         if (data?.sessions) {
-            const allCards = transformSessions(data.sessions);
+            // Merge persisted waitingForUser state from localStorage
+            let persistedWaiting: Record<string, boolean> = {};
+            try {
+                persistedWaiting = JSON.parse(localStorage.getItem('vibepulse:waiting-sessions') || '{}');
+            } catch { /* ignore */ }
+
+            const enrichedSessions = data.sessions.map((s: { id: string; waitingForUser?: boolean }) => ({
+                ...s,
+                waitingForUser: s.waitingForUser || !!persistedWaiting[s.id],
+            }));
+
+            const allCards = transformSessions(enrichedSessions);
             if (filterDays === 0) {
                 setCards(allCards);
             } else {

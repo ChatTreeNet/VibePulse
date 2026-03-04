@@ -50,6 +50,7 @@ export type OpencodeEventType =
   | 'session.archived'
   | 'question.asked'
   | 'permission.asked'
+  | 'permission.updated'
   | 'question.replied'
   | 'question.rejected'
   | 'permission.replied'
