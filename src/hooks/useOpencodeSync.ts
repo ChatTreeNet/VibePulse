@@ -232,12 +232,14 @@ export function useOpencodeSync() {
                             }
                             case 'question.asked':
                             case 'permission.asked':
-                            case 'permission.updated':
                                 if (!initialLoadRef.current) {
                                     playAttentionSound();
                                 }
                                 persistWaiting(sessionId!, true);
                                 return { ...s, waitingForUser: true };
+                            case 'permission.updated':
+                                scheduleRefetch();
+                                return s;
                             case 'question.replied':
                             case 'question.rejected':
                             case 'permission.replied':

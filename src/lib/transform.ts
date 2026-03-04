@@ -11,15 +11,16 @@ export function transformSession(session: EnrichedSession): KanbanCard {
     let status: KanbanColumn;
     
     const realTimeStatus = session.realTimeStatus || 'idle';
-    const waitingForUser = session.waitingForUser || false;
+    const waitingForUser =
+        realTimeStatus === 'retry' ||
+        (realTimeStatus !== 'idle' && !!session.waitingForUser);
     
-    // Priority: waitingForUser > retry > busy > idle
-    if (waitingForUser || realTimeStatus === 'retry') {
+    if (session.time?.archived) {
+        status = 'done';
+    } else if (waitingForUser) {
         status = 'review';  // Needs Attention
     } else if (realTimeStatus === 'busy') {
         status = 'busy';
-    } else if (session.time?.archived) {
-        status = 'done';
     } else {
         status = 'idle';
     }
@@ -35,7 +36,7 @@ export function transformSession(session: EnrichedSession): KanbanCard {
         messageCount: session.messageCount || 0,
         status: status,
         opencodeStatus: realTimeStatus,
-        waitingForUser: realTimeStatus === 'retry' || !!session.waitingForUser,
+        waitingForUser,
         todosTotal: 0,
         todosCompleted: 0,
         createdAt: session.time.created,
@@ -46,7 +47,9 @@ export function transformSession(session: EnrichedSession): KanbanCard {
             id: c.id,
             title: c.title,
             realTimeStatus: c.realTimeStatus || 'idle',
-            waitingForUser: c.waitingForUser || false,
+            waitingForUser:
+                (c.realTimeStatus || 'idle') === 'retry' ||
+                ((c.realTimeStatus || 'idle') !== 'idle' && !!c.waitingForUser),
         })),
     };
 }
