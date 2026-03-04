@@ -42,7 +42,7 @@ function StatusIndicator({ status, waitingForUser }: { status: string; waitingFo
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
                 </span>
-                <span className="text-xs font-medium">等待用户</span>
+                <span className="text-xs font-medium">Waiting</span>
             </div>
         );
     }
@@ -54,7 +54,7 @@ function StatusIndicator({ status, waitingForUser }: { status: string; waitingFo
                         <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
                     </span>
-                    <span className="text-xs font-medium">运行中</span>
+                    <span className="text-xs font-medium">Running</span>
                 </div>
             );
         case 'retry':
@@ -64,7 +64,7 @@ function StatusIndicator({ status, waitingForUser }: { status: string; waitingFo
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
                     </span>
-                    <span className="text-xs font-medium">出错重试</span>
+                    <span className="text-xs font-medium">Retrying</span>
                 </div>
             );
         case 'idle':
@@ -72,7 +72,7 @@ function StatusIndicator({ status, waitingForUser }: { status: string; waitingFo
             return (
                 <div className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
                     <span className="inline-flex rounded-full h-2.5 w-2.5 bg-gray-400"></span>
-                    <span className="text-xs font-medium">空闲</span>
+                    <span className="text-xs font-medium">Idle</span>
                 </div>
             );
     }
@@ -107,7 +107,7 @@ export function SessionCard({ card }: SessionCardProps) {
         }
     }, []);
 
-    // 点击空白处关闭下拉菜单
+    // Close dropdown on outside click
     useEffect(() => {
         if (!actionOpen) return;
         const handleClickOutside = (e: MouseEvent) => {

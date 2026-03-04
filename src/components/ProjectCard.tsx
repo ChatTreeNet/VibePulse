@@ -25,7 +25,7 @@ function formatRelativeTime(timestamp: number): string {
 function StatusDot({ status, waitingForUser }: { status: string; waitingForUser: boolean }) {
     if (waitingForUser) {
         return (
-            <span className="relative flex h-2 w-2 flex-shrink-0" title="等待用户">
+            <span className="relative flex h-2 w-2 flex-shrink-0" title="Waiting">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
             </span>
@@ -34,20 +34,20 @@ function StatusDot({ status, waitingForUser }: { status: string; waitingForUser:
     switch (status) {
         case 'busy':
             return (
-                <span className="relative flex h-2 w-2 flex-shrink-0" title="运行中">
+                <span className="relative flex h-2 w-2 flex-shrink-0" title="Running">
                     <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
             );
         case 'retry':
             return (
-                <span className="relative flex h-2 w-2 flex-shrink-0" title="出错重试">
+                <span className="relative flex h-2 w-2 flex-shrink-0" title="Retrying">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
                 </span>
             );
         default:
-            return <span className="inline-flex rounded-full h-2 w-2 bg-gray-400 flex-shrink-0" title="空闲"></span>;
+            return <span className="inline-flex rounded-full h-2 w-2 bg-gray-400 flex-shrink-0" title="Idle"></span>;
     }
 }
 
@@ -94,7 +94,7 @@ function RowActionMenu({ cardId }: { cardId: string }) {
                 type="button"
                 className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-gray-200 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-zinc-600 transition-colors"
                 onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-                title="操作"
+                title="Actions"
             >
                 <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M5 10a2 2 0 110 4 2 2 0 010-4zm7 0a2 2 0 110 4 2 2 0 010-4zm7 0a2 2 0 110 4 2 2 0 010-4z" />
@@ -216,7 +216,7 @@ export function ProjectCard({ projectName, branch, cards }: ProjectCardProps) {
                         setOpenTool(e.target.value);
                         window.localStorage.setItem('vibepulse:open-tool', e.target.value);
                     }}
-                    title="选择打开工具"
+                    title="Select open tool"
                 >
                     <option value="vscode">VSCode</option>
                     <option value="antigravity">Antigravity</option>
@@ -225,7 +225,7 @@ export function ProjectCard({ projectName, branch, cards }: ProjectCardProps) {
                     type="button"
                     onClick={handleOpenProject}
                     className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:text-gray-400 dark:hover:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
-                    title="打开项目"
+                    title="Open project"
                 >
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />

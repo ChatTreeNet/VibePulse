@@ -111,7 +111,7 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
         );
     }
 
-    // 将卡片按项目分组
+    // Group cards by project
     const groupByProject = (columnCards: KanbanCard[]) => {
         const groups = new Map<string, KanbanCard[]>();
         for (const card of columnCards) {

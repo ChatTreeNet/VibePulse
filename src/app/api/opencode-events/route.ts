@@ -70,7 +70,7 @@ export async function GET() {
                     try {
                         controller.close();
                     } catch {
-                        // 可能已经关闭了
+                        // Connection may already be closed
                     }
                 }
             },

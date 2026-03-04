@@ -13,7 +13,7 @@ export function transformSession(session: EnrichedSession): KanbanCard {
     const realTimeStatus = session.realTimeStatus || 'idle';
     const waitingForUser = session.waitingForUser || false;
     
-    // 优先级：waitingForUser > retry > busy > idle
+    // Priority: waitingForUser > retry > busy > idle
     if (waitingForUser || realTimeStatus === 'retry') {
         status = 'review';  // Needs Attention
     } else if (realTimeStatus === 'busy') {

@@ -29,7 +29,7 @@ export interface OpencodeSession {
   directory: string;
   projectName?: string;
   branch?: string;
-  parentID?: string;  // 用于过滤 subagent
+  parentID?: string;  // Used to filter subagents
   time: {
     created: number;
     updated: number;
@@ -38,7 +38,7 @@ export interface OpencodeSession {
   messageCount?: number;
   hasTodos?: boolean;
   hasTranscript?: boolean;
-  realTimeStatus?: 'idle' | 'busy' | 'retry';  // 实时状态
+  realTimeStatus?: 'idle' | 'busy' | 'retry';  // Real-time status
   waitingForUser?: boolean;
 }
 

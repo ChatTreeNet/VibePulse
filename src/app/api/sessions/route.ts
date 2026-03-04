@@ -12,12 +12,12 @@ function discoverOpencodePorts(): number[] {
     return [];
   }
 }
-// 从目录路径获取项目名
+// Get project name from directory path
 function getProjectName(directory: string): string {
   return path.basename(directory);
 }
 
-// 判断是否是 git 仓库
+// Check if directory is a git repository
 function isGitRepo(directory: string): boolean {
   try {
     const result = execSync('git rev-parse --is-inside-work-tree', {
@@ -31,7 +31,7 @@ function isGitRepo(directory: string): boolean {
   }
 }
 
-// 获取 git 分支名
+// Get git branch name
 function getGitBranch(directory: string): string | null {
   if (!isGitRepo(directory)) return null;
   try {
@@ -76,7 +76,7 @@ export async function GET() {
       Object.assign(statusMap, r.value.status);
     }
 
-    // 去重 session.id
+    // Deduplicate by session.id
     const seen = new Set<string>();
     const sessions = allSessions.filter(s => {
       if (seen.has(s.id)) return false;
@@ -84,9 +84,9 @@ export async function GET() {
       return true;
     });
 
-    // 3. 合并数据并过滤 subagent
+    // 3. Merge data and filter subagents
     const enrichedSessions = sessions
-      .filter(session => !session.parentID)  // 过滤 subagent
+      .filter(session => !session.parentID)  // Filter out subagents
       .map(session => {
         const projectName = getProjectName(session.directory);
         const branch = getGitBranch(session.directory);

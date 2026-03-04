@@ -38,7 +38,7 @@ export async function GET(
                     return Response.json({ session: result.data });
                 }
             } catch {
-                // 尝试下一个端口
+                // Try next port
             }
         }
         return Response.json({ error: 'Session not found' }, { status: 404 });
