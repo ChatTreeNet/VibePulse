@@ -6,7 +6,7 @@ import { ProjectCard } from './ProjectCard';
 import { transformSessions } from '@/lib/transform';
 import { LoadingState } from './LoadingState';
 import { playAttentionSound } from '@/lib/notificationSound';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
 
@@ -21,23 +21,72 @@ interface KanbanBoardProps {
     filterDays: number;
 }
 
+type SessionsFetchError = Error & {
+    kind?: 'opencode_unavailable' | 'request_failed';
+    hint?: string;
+    status?: number;
+};
+
 export function KanbanBoard({ filterDays }: KanbanBoardProps) {
     const waitingStateRef = useRef<Record<string, boolean>>({});
     const waitingInitRef = useRef(false);
+    const [copyFeedback, setCopyFeedback] = useState<'idle' | 'copied' | 'failed'>('idle');
 
-    const { data, isLoading, error, dataUpdatedAt } = useQuery({
+    const { data, isLoading, error, dataUpdatedAt, refetch, isFetching } = useQuery({
         queryKey: ['sessions'],
         queryFn: async () => {
-            const res = await fetch('/api/sessions');
-            if (!res.ok) {
-                throw new Error(`Failed to load sessions: ${res.statusText}`);
+            try {
+                const res = await fetch('/api/sessions');
+                if (!res.ok) {
+                    let payload: { error?: string; hint?: string } | null = null;
+                    try {
+                        payload = await res.json();
+                    } catch {
+                        payload = null;
+                    }
+
+                    const isUnavailable =
+                        res.status === 503 && payload?.error === 'OpenCode server not found';
+                    const fetchError = new Error(
+                        isUnavailable
+                            ? payload?.error || 'OpenCode server not found'
+                            : payload?.error || `Failed to load sessions (${res.status})`
+                    ) as SessionsFetchError;
+
+                    fetchError.kind = isUnavailable ? 'opencode_unavailable' : 'request_failed';
+                    fetchError.hint = payload?.hint;
+                    fetchError.status = res.status;
+                    throw fetchError;
+                }
+
+                return res.json();
+            } catch (error) {
+                if (error instanceof Error && (error as SessionsFetchError).kind) {
+                    throw error;
+                }
+
+                const fetchError = new Error('Unable to connect to session service') as SessionsFetchError;
+                fetchError.kind = 'request_failed';
+                throw fetchError;
             }
-            return res.json();
         },
         refetchInterval: 5000,
         refetchIntervalInBackground: true,
         refetchOnReconnect: true,
     });
+
+    const activeError = error as SessionsFetchError | null;
+
+    const handleCopyStartCommand = async () => {
+        try {
+            await navigator.clipboard.writeText('opencode --port 3044');
+            setCopyFeedback('copied');
+            setTimeout(() => setCopyFeedback('idle'), 1500);
+        } catch {
+            setCopyFeedback('failed');
+            setTimeout(() => setCopyFeedback('idle'), 2000);
+        }
+    };
 
     const enrichedSessions = useMemo(() => {
         if (!data?.sessions) return [];
@@ -110,6 +159,12 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
     }
 
     if (error) {
+        const isOpencodeUnavailable = activeError?.kind === 'opencode_unavailable';
+        const title = isOpencodeUnavailable ? 'OpenCode is not running' : 'Failed to load sessions';
+        const description = isOpencodeUnavailable
+            ? activeError?.hint || 'Run `opencode --port 3044` and keep it running.'
+            : activeError?.message || 'An error occurred while loading sessions';
+
         return (
             <div className="flex-1 flex items-center justify-center p-8">
                 <div className="max-w-md w-full text-center">
@@ -130,11 +185,34 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
                         </svg>
                     </div>
                     <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                        Failed to load sessions
+                        {title}
                     </h2>
-                    <p className="text-gray-600 dark:text-gray-400">
-                        {error instanceof Error ? error.message : 'An error occurred while loading sessions'}
+                    <p className="text-gray-600 dark:text-gray-400 mb-4">
+                        {description}
                     </p>
+                    <div className="flex items-center justify-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => refetch()}
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={isFetching}
+                        >
+                            {isFetching ? 'Retrying...' : 'Retry'}
+                        </button>
+                        {isOpencodeUnavailable ? (
+                            <button
+                                type="button"
+                                onClick={handleCopyStartCommand}
+                                className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-md transition-colors"
+                            >
+                                {copyFeedback === 'copied'
+                                    ? 'Copied'
+                                    : copyFeedback === 'failed'
+                                        ? 'Copy Failed'
+                                        : 'Copy Start Command'}
+                            </button>
+                        ) : null}
+                    </div>
                 </div>
             </div>
         );
@@ -161,13 +239,13 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
                         </svg>
                     </div>
                     <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                        No sessions found
+                        No sessions yet
                     </h2>
                     <p className="text-gray-600 dark:text-gray-400 mb-4">
-                        OpenCode is not running or no sessions exist yet.
+                        OpenCode is running, but no sessions are available.
                     </p>
                     <p className="text-sm text-gray-500 dark:text-gray-500">
-                        Start a conversation in OpenCode to see it here.
+                        Start a conversation in OpenCode and this board will update automatically.
                     </p>
                 </div>
             </div>
