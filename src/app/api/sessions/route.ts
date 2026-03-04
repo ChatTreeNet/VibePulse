@@ -136,13 +136,8 @@ export async function GET() {
       return true;
     });
 
-    // 3. Separate parent and child sessions
-    const parentSessions = sessions.filter(
-      (s) => !s.parentID && !(s.title || '').toLowerCase().includes('subagent')
-    );
-    const childSessions = sessions.filter(
-      (s) => s.parentID || (s.title || '').toLowerCase().includes('subagent')
-    );
+    const parentSessions = sessions.filter((s) => !s.parentID);
+    const childSessions = sessions.filter((s) => !!s.parentID);
 
     // Enrich parent sessions
     const enrichedSessions: EnrichedSession[] = parentSessions.map((session) => {
