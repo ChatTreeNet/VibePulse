@@ -17,6 +17,7 @@ type SessionLike = {
 };
 
 const CHILD_ACTIVE_WINDOW_MS = 30 * 60 * 1000;
+const CHILD_UNKNOWN_STATE_BUSY_WINDOW_MS = 2 * 60 * 1000;
 const CHILD_STATUS_MESSAGE_CHECK_LIMIT = 50;
 
 type ChildEntry = {
@@ -160,7 +161,7 @@ export async function GET() {
     const parentById = new Map(enrichedSessions.map((session) => [session.id, session]));
 
     const now = Date.now();
-    const unresolvedChildren: Array<{ parentId: string; child: SessionLike; isRecent: boolean; parentActive: boolean }> = [];
+    const unresolvedChildren: Array<{ parentId: string; child: SessionLike; parentActive: boolean; childUpdatedAt: number }> = [];
 
     // Enrich and nest child sessions under parents
     for (const child of childSessions) {
@@ -196,7 +197,7 @@ export async function GET() {
         }
       } else if (parentActive && isRecent) {
         if (unresolvedChildren.length < CHILD_STATUS_MESSAGE_CHECK_LIMIT) {
-          unresolvedChildren.push({ parentId: parent.id, child, isRecent, parentActive });
+          unresolvedChildren.push({ parentId: parent.id, child, parentActive, childUpdatedAt });
         }
       } else {
         continue;
@@ -205,14 +206,15 @@ export async function GET() {
 
     if (unresolvedChildren.length > 0) {
       const unresolvedChecks = await Promise.allSettled(
-        unresolvedChildren.map(async ({ parentId, child, isRecent, parentActive }) => {
+        unresolvedChildren.map(async ({ parentId, child, parentActive, childUpdatedAt }) => {
           const port = sessionPortMap[child.id] ?? sessionPortMap[parentId];
           const client = port ? clientByPort[port] : undefined;
+          const assumeBusyForUnknown = parentActive && childUpdatedAt > 0 && now - childUpdatedAt <= CHILD_UNKNOWN_STATE_BUSY_WINDOW_MS;
           if (!client) {
             return {
               parentId,
               child,
-              childStatus: parentActive && isRecent ? 'busy' as const : 'idle' as const,
+              childStatus: assumeBusyForUnknown ? 'busy' as const : 'idle' as const,
             };
           }
 
@@ -245,7 +247,7 @@ export async function GET() {
                 ? 'busy' as const
                 : hasCompletedState
                   ? 'idle' as const
-                  : parentActive && isRecent
+                  : assumeBusyForUnknown
                     ? 'busy' as const
                     : 'idle' as const,
             };
@@ -253,7 +255,7 @@ export async function GET() {
             return {
               parentId,
               child,
-              childStatus: parentActive && isRecent ? 'busy' as const : 'idle' as const,
+              childStatus: assumeBusyForUnknown ? 'busy' as const : 'idle' as const,
             };
           }
         })
@@ -303,24 +305,42 @@ export async function GET() {
               query: { limit: 3 },
             });
             const messages = messagesResult.data || [];
+            const partStatuses: string[] = [];
             for (const msg of messages) {
               for (const part of msg.parts || []) {
-                if ('state' in part && part.state && 'status' in part.state && part.state.status === 'pending') {
-                  return { sessionId: session.id, waiting: true };
+                if ('state' in part && part.state && 'status' in part.state && typeof part.state.status === 'string') {
+                  partStatuses.push(part.state.status);
                 }
               }
             }
-            return { sessionId: session.id, waiting: false };
+
+            const hasPending = partStatuses.some((status) => status === 'pending');
+            const hasRunning = partStatuses.some((status) => status === 'running');
+            const completedOnly = partStatuses.length > 0 && partStatuses.every((status) => status === 'completed');
+            const hasActiveChildren = session.children.some((child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry');
+
+            return {
+              sessionId: session.id,
+              waiting: hasPending,
+              forceIdle: !hasPending && !hasRunning && completedOnly && !hasActiveChildren,
+            };
           } catch {
-            return { sessionId: session.id, waiting: false };
+            return { sessionId: session.id, waiting: false, forceIdle: false };
           }
         })
       );
 
       for (const result of pendingChecks) {
-        if (result.status === 'fulfilled' && result.value.waiting) {
+        if (result.status === 'fulfilled') {
           const session = enrichedSessions.find((s) => s.id === result.value.sessionId);
-          if (session) session.waitingForUser = true;
+          if (!session) continue;
+          if (result.value.waiting) {
+            session.waitingForUser = true;
+          }
+          if (result.value.forceIdle) {
+            session.realTimeStatus = 'idle';
+            session.children = [];
+          }
         }
       }
     }

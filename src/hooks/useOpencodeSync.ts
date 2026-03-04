@@ -61,7 +61,6 @@ export function useOpencodeSync() {
     const MAX_RECONNECT_ATTEMPTS = 5;
     const BASE_RECONNECT_DELAY = 1000;
     const STREAM_ROTATE_INTERVAL = 15000;
-    const POLL_REFETCH_INTERVAL = 3000;
 
     const scheduleRefetch = useCallback(() => {
         if (refetchTimeoutRef.current) return;
@@ -128,8 +127,8 @@ export function useOpencodeSync() {
                             const child = buildOptimisticSession({
                                 ...existingChild,
                                 ...info,
-                                realTimeStatus: existingChild?.realTimeStatus || info.realTimeStatus || 'busy',
-                                waitingForUser: existingChild?.waitingForUser ?? info.waitingForUser,
+                                realTimeStatus: info.realTimeStatus ?? existingChild?.realTimeStatus ?? 'busy',
+                                waitingForUser: info.waitingForUser ?? existingChild?.waitingForUser,
                             } as OpencodeSession);
 
                             if (existingChild) {
@@ -168,8 +167,8 @@ export function useOpencodeSync() {
                         ...info, 
                         projectName: existing.projectName, 
                         branch: existing.branch, 
-                        realTimeStatus: existing.realTimeStatus, 
-                        waitingForUser: existing.waitingForUser,
+                        realTimeStatus: info.realTimeStatus ?? existing.realTimeStatus, 
+                        waitingForUser: info.waitingForUser ?? existing.waitingForUser,
                         children: existing.children,
                     };
                     return {
@@ -377,13 +376,4 @@ export function useOpencodeSync() {
         };
     }, [handleEvent, scheduleRefetch]);
 
-    useEffect(() => {
-        const interval = setInterval(() => {
-            queryClient.invalidateQueries({ queryKey: ['sessions'] });
-        }, POLL_REFETCH_INTERVAL);
-
-        return () => {
-            clearInterval(interval);
-        };
-    }, [queryClient]);
 }
