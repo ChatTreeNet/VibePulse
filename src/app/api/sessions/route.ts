@@ -329,11 +329,14 @@ export async function GET() {
       }
     }
 
-    // Check busy sessions for pending permissions/questions
-    const busySessions = enrichedSessions.filter((s) => s.realTimeStatus === 'busy');
-    if (busySessions.length > 0) {
+    const sessionsForInteractionChecks = enrichedSessions.filter(
+      (s) =>
+        s.realTimeStatus === 'busy' ||
+        s.children.some((child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry')
+    );
+    if (sessionsForInteractionChecks.length > 0) {
       const pendingChecks = await Promise.allSettled(
-        busySessions.map(async (session) => {
+        sessionsForInteractionChecks.map(async (session) => {
           const port = sessionPortMap[session.id];
           const client = port ? clientByPort[port] : undefined;
           if (!client) {

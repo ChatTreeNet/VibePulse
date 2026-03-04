@@ -224,10 +224,7 @@ export function useOpencodeSync() {
                                             : statusType === 'idle'
                                                 ? false
                                                 : s.waitingForUser,
-                                    children:
-                                        statusType === 'idle' && isParentSession
-                                            ? []
-                                            : s.children,
+                                    children: s.children,
                                 };
                             }
                             case 'question.asked':

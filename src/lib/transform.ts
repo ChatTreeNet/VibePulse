@@ -11,19 +11,29 @@ export function transformSession(session: EnrichedSession): KanbanCard {
     let status: KanbanColumn;
     
     const realTimeStatus = session.realTimeStatus || 'idle';
+    const hasActiveChildren = (session.children || []).some((child) => {
+        const childStatus = child.realTimeStatus || 'idle';
+        return childStatus === 'busy' || childStatus === 'retry';
+    });
+    const effectiveStatus =
+        realTimeStatus === 'retry'
+            ? 'retry'
+            : (realTimeStatus === 'busy' || hasActiveChildren)
+                ? 'busy'
+                : 'idle';
     const hasWaitingChildren = (session.children || []).some((child) => {
         const childStatus = child.realTimeStatus || 'idle';
         return childStatus === 'retry' || (childStatus !== 'idle' && !!child.waitingForUser);
     });
     const waitingForUser =
-        realTimeStatus === 'retry' ||
-        (realTimeStatus === 'busy' && (!!session.waitingForUser || hasWaitingChildren));
+        effectiveStatus === 'retry' ||
+        (effectiveStatus === 'busy' && (!!session.waitingForUser || hasWaitingChildren));
     
     if (session.time?.archived) {
         status = 'done';
     } else if (waitingForUser) {
         status = 'review';  // Needs Attention
-    } else if (realTimeStatus === 'busy') {
+    } else if (effectiveStatus === 'busy') {
         status = 'busy';
     } else {
         status = 'idle';
@@ -39,7 +49,7 @@ export function transformSession(session: EnrichedSession): KanbanCard {
         agents: extractAgents(session.slug),
         messageCount: session.messageCount || 0,
         status: status,
-        opencodeStatus: realTimeStatus,
+        opencodeStatus: effectiveStatus,
         waitingForUser,
         todosTotal: 0,
         todosCompleted: 0,
