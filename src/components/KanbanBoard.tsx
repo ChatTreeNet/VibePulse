@@ -5,7 +5,8 @@ import { KanbanColumn, KanbanCard } from '@/types';
 import { ProjectCard } from './ProjectCard';
 import { transformSessions } from '@/lib/transform';
 import { LoadingState } from './LoadingState';
-import { useEffect, useMemo } from 'react';
+import { playAttentionSound } from '@/lib/notificationSound';
+import { useEffect, useMemo, useRef } from 'react';
 
 const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
 
@@ -21,6 +22,9 @@ interface KanbanBoardProps {
 }
 
 export function KanbanBoard({ filterDays }: KanbanBoardProps) {
+    const waitingStateRef = useRef<Record<string, boolean>>({});
+    const waitingInitRef = useRef(false);
+
     const { data, isLoading, error, dataUpdatedAt } = useQuery({
         queryKey: ['sessions'],
         queryFn: async () => {
@@ -65,6 +69,31 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
             }
         }
         localStorage.setItem(WAITING_STORAGE_KEY, JSON.stringify(nextPersistedWaiting));
+    }, [enrichedSessions]);
+
+    useEffect(() => {
+        const nextWaiting: Record<string, boolean> = {};
+        let shouldPlayAttention = false;
+
+        for (const session of enrichedSessions as Array<{ id: string; waitingForUser?: boolean }>) {
+            const waiting = !!session.waitingForUser;
+            nextWaiting[session.id] = waiting;
+
+            if (waitingInitRef.current && waiting && !waitingStateRef.current[session.id]) {
+                shouldPlayAttention = true;
+            }
+        }
+
+        waitingStateRef.current = nextWaiting;
+
+        if (!waitingInitRef.current) {
+            waitingInitRef.current = true;
+            return;
+        }
+
+        if (shouldPlayAttention) {
+            playAttentionSound();
+        }
     }, [enrichedSessions]);
 
     const cards: KanbanCard[] = useMemo(() => {

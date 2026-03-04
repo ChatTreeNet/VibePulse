@@ -124,7 +124,7 @@ function RowActionMenu({ cardId }: { cardId: string }) {
 
 // Session row with expandable subagent children
 function SessionRow({ card, isLast }: { card: KanbanCard; isLast: boolean }) {
-    const [expanded, setExpanded] = useState(false);
+    const [expanded, setExpanded] = useState(true);
     const visibleChildren = (card.children || []).filter(
         (child) => child.realTimeStatus !== 'idle' || child.waitingForUser
     );

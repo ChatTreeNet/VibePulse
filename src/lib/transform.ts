@@ -11,9 +11,13 @@ export function transformSession(session: EnrichedSession): KanbanCard {
     let status: KanbanColumn;
     
     const realTimeStatus = session.realTimeStatus || 'idle';
+    const hasWaitingChildren = (session.children || []).some((child) => {
+        const childStatus = child.realTimeStatus || 'idle';
+        return childStatus === 'retry' || (childStatus !== 'idle' && !!child.waitingForUser);
+    });
     const waitingForUser =
         realTimeStatus === 'retry' ||
-        (realTimeStatus !== 'idle' && !!session.waitingForUser);
+        (realTimeStatus === 'busy' && (!!session.waitingForUser || hasWaitingChildren));
     
     if (session.time?.archived) {
         status = 'done';
@@ -49,7 +53,7 @@ export function transformSession(session: EnrichedSession): KanbanCard {
             realTimeStatus: c.realTimeStatus || 'idle',
             waitingForUser:
                 (c.realTimeStatus || 'idle') === 'retry' ||
-                ((c.realTimeStatus || 'idle') !== 'idle' && !!c.waitingForUser),
+                ((c.realTimeStatus || 'idle') === 'busy' && !!c.waitingForUser),
         })),
     };
 }

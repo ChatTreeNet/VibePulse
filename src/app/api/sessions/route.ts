@@ -39,11 +39,72 @@ type EnrichedSession = SessionLike & {
   children: ChildEntry[];
 };
 
+type MessageStateStatus = string;
+
+type MessagePart = {
+  state?: {
+    status?: unknown;
+  };
+};
+
+const WAITING_PART_STATUSES = new Set<string>([
+  'awaiting-input',
+  'awaiting_input',
+  'input-required',
+  'input_required',
+  'requires-input',
+  'requires_input',
+  'blocked',
+  'paused',
+]);
+
+function normalizePartStatus(status: string): string {
+  return status.trim().toLowerCase();
+}
+
+function isWaitingPartStatus(status: string): boolean {
+  return WAITING_PART_STATUSES.has(normalizePartStatus(status));
+}
+
+function collectPartStatuses(messages: Array<{ parts?: MessagePart[] }>): MessageStateStatus[] {
+  const partStatuses: MessageStateStatus[] = [];
+
+  for (const message of messages) {
+    for (const part of message.parts || []) {
+      const status = part?.state?.status;
+      if (typeof status === 'string') {
+        const normalized = normalizePartStatus(status);
+        if (normalized) {
+          partStatuses.push(normalized);
+        }
+      }
+    }
+  }
+
+  return partStatuses;
+}
+
+async function fetchPartStatuses(
+  client: ReturnType<typeof createOpencodeClient>,
+  sessionId: string
+): Promise<MessageStateStatus[]> {
+  const messagesResult = await client.session.messages({
+    path: { id: sessionId },
+    query: { limit: 3 },
+  });
+  const messages = (messagesResult.data || []) as Array<{ parts?: MessagePart[] }>;
+  return collectPartStatuses(messages);
+}
+
 function getUpdatedAt(session: { time?: { updated?: number; created?: number } }): number {
   return session.time?.updated || session.time?.created || 0;
 }
 
-function toChildEntry(child: SessionLike, status: 'idle' | 'busy' | 'retry'): ChildEntry {
+function toChildEntry(
+  child: SessionLike,
+  status: 'idle' | 'busy' | 'retry',
+  waitingForUser = false
+): ChildEntry {
   return {
     id: child.id,
     slug: child.slug,
@@ -52,7 +113,7 @@ function toChildEntry(child: SessionLike, status: 'idle' | 'busy' | 'retry'): Ch
     parentID: child.parentID,
     time: child.time,
     realTimeStatus: status,
-    waitingForUser: false,
+    waitingForUser,
   };
 }
 // Get project name from directory path
@@ -186,10 +247,8 @@ export async function GET() {
       const isRecent = childUpdatedAt > 0 && now - childUpdatedAt <= CHILD_ACTIVE_WINDOW_MS;
       const parentActive = parent.realTimeStatus === 'busy' || parent.realTimeStatus === 'retry';
 
-      if (statusFromMap) {
-        if (statusFromMap !== 'idle') {
-          parent.children.push(toChildEntry(child, statusFromMap));
-        }
+      if (statusFromMap && statusFromMap !== 'idle') {
+        parent.children.push(toChildEntry(child, statusFromMap));
       } else if (parentActive && isRecent) {
         if (unresolvedChildren.length < CHILD_STATUS_MESSAGE_CHECK_LIMIT) {
           unresolvedChildren.push({ parentId: parent.id, child, parentActive, childUpdatedAt });
@@ -214,30 +273,16 @@ export async function GET() {
           }
 
           try {
-            const messagesResult = await client.session.messages({
-              path: { id: child.id },
-              query: { limit: 3 },
-            });
-            const messages = messagesResult.data || [];
-            const partStatuses: string[] = [];
-
-            for (const message of messages) {
-              for (const part of message.parts || []) {
-                if (part && typeof part === 'object' && 'state' in part) {
-                  const maybeState = (part as { state?: { status?: unknown } }).state;
-                  if (maybeState?.status && typeof maybeState.status === 'string') {
-                    partStatuses.push(maybeState.status);
-                  }
-                }
-              }
-            }
-
-            const hasActiveState = partStatuses.some((status) => status === 'pending' || status === 'running');
+            const partStatuses = await fetchPartStatuses(client, child.id);
+            const hasRunningState = partStatuses.some((status) => status === 'running');
+            const hasWaitingState = !hasRunningState && partStatuses.some(isWaitingPartStatus);
+            const hasActiveState = hasWaitingState || hasRunningState;
             const hasCompletedState = partStatuses.length > 0 && partStatuses.every((status) => status === 'completed');
 
             return {
               parentId,
               child,
+              childWaitingForUser: hasWaitingState,
               childStatus: hasActiveState
                 ? 'busy' as const
                 : hasCompletedState
@@ -250,6 +295,7 @@ export async function GET() {
             return {
               parentId,
               child,
+              childWaitingForUser: false,
               childStatus: assumeBusyForUnknown ? 'busy' as const : 'idle' as const,
             };
           }
@@ -261,7 +307,7 @@ export async function GET() {
         if (check.value.childStatus === 'idle') continue;
         const parent = parentById.get(check.value.parentId);
         if (!parent) continue;
-        parent.children.push(toChildEntry(check.value.child, check.value.childStatus));
+        parent.children.push(toChildEntry(check.value.child, check.value.childStatus, check.value.childWaitingForUser));
       }
     }
 
@@ -291,36 +337,54 @@ export async function GET() {
           const port = sessionPortMap[session.id];
           const client = port ? clientByPort[port] : undefined;
           if (!client) {
-            return { sessionId: session.id, waiting: false };
+            return { sessionId: session.id, waiting: false, waitingChildIds: new Set<string>() };
           }
 
           try {
-            const messagesResult = await client.session.messages({
-              path: { id: session.id },
-              query: { limit: 3 },
-            });
-            const messages = messagesResult.data || [];
-            const partStatuses: string[] = [];
-            for (const msg of messages) {
-              for (const part of msg.parts || []) {
-                if ('state' in part && part.state && 'status' in part.state && typeof part.state.status === 'string') {
-                  partStatuses.push(part.state.status);
-                }
-              }
-            }
-
-            const hasPending = partStatuses.some((status) => status === 'pending');
+            const partStatuses = await fetchPartStatuses(client, session.id);
             const hasRunning = partStatuses.some((status) => status === 'running');
-            const completedOnly = partStatuses.length > 0 && partStatuses.every((status) => status === 'completed');
-            const hasActiveChildren = session.children.some((child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry');
+            const hasInteractionWait = !hasRunning && partStatuses.some(isWaitingPartStatus);
+
+            const childStateChecks = await Promise.allSettled(
+              session.children
+                .filter((child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry')
+                .map(async (child) => {
+                  const childPort = sessionPortMap[child.id] ?? sessionPortMap[session.id];
+                  const childClient = childPort ? clientByPort[childPort] : undefined;
+                  if (!childClient) {
+                    return { childId: child.id, waiting: false };
+                  }
+                  try {
+                    const childStatuses = await fetchPartStatuses(childClient, child.id);
+                    const childHasRunning = childStatuses.some((status) => status === 'running');
+                    return {
+                      childId: child.id,
+                      waiting: !childHasRunning && childStatuses.some(isWaitingPartStatus),
+                    };
+                  } catch {
+                    return { childId: child.id, waiting: false };
+                  }
+                })
+            );
+
+            const waitingChildIds = new Set(
+              childStateChecks
+                .filter((result): result is PromiseFulfilledResult<{ childId: string; waiting: boolean }> => result.status === 'fulfilled')
+                .filter((result) => result.value.waiting)
+                .map((result) => result.value.childId)
+            );
+
+            const hasWaitingChildren =
+              waitingChildIds.size > 0 ||
+              session.children.some((child) => child.waitingForUser || child.realTimeStatus === 'retry');
 
             return {
               sessionId: session.id,
-              waiting: hasPending,
-              forceIdle: !hasPending && !hasRunning && completedOnly && !hasActiveChildren,
+              waiting: hasInteractionWait || hasWaitingChildren,
+              waitingChildIds,
             };
           } catch {
-            return { sessionId: session.id, waiting: false, forceIdle: false };
+            return { sessionId: session.id, waiting: false, waitingChildIds: new Set<string>() };
           }
         })
       );
@@ -329,12 +393,13 @@ export async function GET() {
         if (result.status === 'fulfilled') {
           const session = enrichedSessions.find((s) => s.id === result.value.sessionId);
           if (!session) continue;
+          for (const child of session.children) {
+            if (result.value.waitingChildIds.has(child.id)) {
+              child.waitingForUser = true;
+            }
+          }
           if (result.value.waiting) {
             session.waitingForUser = true;
-          }
-          if (result.value.forceIdle) {
-            session.realTimeStatus = 'idle';
-            session.children = [];
           }
         }
       }
