@@ -109,11 +109,11 @@ export async function GET() {
       };
     });
 
-    // Enrich and nest active child sessions under parents
+    // Enrich and nest child sessions under parents
     for (const child of childSessions) {
+      if (child.time?.archived) continue;
+
       const childStatus = statusMap[child.id]?.type || 'idle';
-      // Only include active subagents (busy or retry)
-      if (childStatus === 'idle') continue;
 
       const enrichedChild = {
         id: child.id,
@@ -143,6 +143,24 @@ export async function GET() {
         parent.children.push(enrichedChild);
       }
       // If no parent found, drop the orphan subagent
+    }
+
+    // Sort children for each parent: active first, then by updated time
+    for (const session of enrichedSessions) {
+      if (session.children.length > 0) {
+        session.children.sort((a, b) => {
+          const aActive = a.realTimeStatus === 'busy' || a.realTimeStatus === 'retry';
+          const bActive = b.realTimeStatus === 'busy' || b.realTimeStatus === 'retry';
+          
+          if (aActive && !bActive) return -1;
+          if (!aActive && bActive) return 1;
+          
+          // Both active or both idle: sort by update time (newest first)
+          const aTime = a.time?.updated || a.time?.created || 0;
+          const bTime = b.time?.updated || b.time?.created || 0;
+          return bTime - aTime;
+        });
+      }
     }
 
     // Check busy sessions for pending permissions/questions
