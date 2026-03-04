@@ -114,6 +114,8 @@ export async function GET() {
       if (child.time?.archived) continue;
 
       const childStatus = statusMap[child.id]?.type || 'idle';
+      // Hide inactive subagents based on user request
+      if (childStatus === 'idle') continue;
 
       const enrichedChild = {
         id: child.id,
