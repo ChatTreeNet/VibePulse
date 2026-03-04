@@ -89,7 +89,7 @@ export async function GET() {
 
     // 3. Merge data and filter subagents
     const enrichedSessions = sessions
-      .filter(session => !session.parentID)  // Filter out subagents
+      .filter(session => !session.parentID && !(session.title || '').toLowerCase().includes('subagent'))  // Filter out subagents
       .map(session => {
         const projectName = getProjectName(session.directory);
         const branch = getGitBranch(session.directory);
