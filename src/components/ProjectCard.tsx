@@ -8,6 +8,7 @@ interface ProjectCardProps {
     projectName: string;
     branch?: string;
     cards: KanbanCard[];
+    readOnly?: boolean;
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -52,7 +53,7 @@ function StatusDot({ status, waitingForUser }: { status: string; waitingForUser:
 }
 
 // Hover-reveal action menu for each session row
-function RowActionMenu({ cardId }: { cardId: string }) {
+function RowActionMenu({ cardId, archived }: { cardId: string; archived: boolean }) {
     const queryClient = useQueryClient();
     const [open, setOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
@@ -102,13 +103,15 @@ function RowActionMenu({ cardId }: { cardId: string }) {
             </button>
             {open && (
                 <div className="absolute right-0 top-6 w-28 rounded-md border border-gray-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900 z-20">
-                    <button
-                        type="button"
-                        className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-zinc-800"
-                        onClick={handleArchive}
-                    >
-                        Archive
-                    </button>
+                    {!archived ? (
+                        <button
+                            type="button"
+                            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-zinc-800"
+                            onClick={handleArchive}
+                        >
+                            Archive
+                        </button>
+                    ) : null}
                     <button
                         type="button"
                         className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
@@ -123,7 +126,7 @@ function RowActionMenu({ cardId }: { cardId: string }) {
 }
 
 // Session row with expandable subagent children
-function SessionRow({ card, isLast }: { card: KanbanCard; isLast: boolean }) {
+function SessionRow({ card, isLast, readOnly = false }: { card: KanbanCard; isLast: boolean; readOnly?: boolean }) {
     const [expanded, setExpanded] = useState(true);
     const visibleChildren = (card.children || []).filter(
         (child) => child.realTimeStatus !== 'idle' || child.waitingForUser
@@ -168,9 +171,11 @@ function SessionRow({ card, isLast }: { card: KanbanCard; isLast: boolean }) {
                     {formatRelativeTime(card.updatedAt)}
                 </span>
                 {/* Action menu: hidden by default, visible on hover */}
-                <div className="hidden group-hover/row:flex flex-shrink-0">
-                    <RowActionMenu cardId={card.id} />
-                </div>
+                {!readOnly ? (
+                    <div className="hidden group-hover/row:flex flex-shrink-0">
+                        <RowActionMenu cardId={card.id} archived={card.status === 'done'} />
+                    </div>
+                ) : null}
             </div>
             {/* Subagent children */}
             {hasChildren && expanded && (
@@ -197,7 +202,7 @@ function SessionRow({ card, isLast }: { card: KanbanCard; isLast: boolean }) {
     );
 }
 
-export function ProjectCard({ projectName, branch, cards }: ProjectCardProps) {
+export function ProjectCard({ projectName, branch, cards, readOnly = false }: ProjectCardProps) {
     const [openTool, setOpenTool] = useState(() => {
         if (typeof window === 'undefined') return 'vscode';
         return window.localStorage.getItem('vibepulse:open-tool') || 'vscode';
@@ -231,7 +236,7 @@ export function ProjectCard({ projectName, branch, cards }: ProjectCardProps) {
     };
 
     return (
-        <article className="w-full bg-white dark:bg-zinc-800 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-700 hover:shadow-lg hover:border-gray-300 dark:hover:border-zinc-600 transition-all duration-200 overflow-hidden">
+        <article className="w-full bg-white dark:bg-zinc-800 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-700 hover:shadow-lg hover:border-gray-300 dark:hover:border-zinc-600 transition-all duration-200 overflow-visible">
             {/* Header */}
             <div className="flex items-center gap-2 px-3 py-2.5">
                 <svg className="w-4 h-4 text-blue-500 dark:text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -259,6 +264,7 @@ export function ProjectCard({ projectName, branch, cards }: ProjectCardProps) {
                         key={card.id}
                         card={card}
                         isLast={index === cards.length - 1}
+                        readOnly={readOnly}
                     />
                 ))}
             </div>

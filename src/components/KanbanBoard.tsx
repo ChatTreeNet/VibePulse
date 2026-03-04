@@ -9,6 +9,7 @@ import { playAttentionSound } from '@/lib/notificationSound';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
+const SNAPSHOT_STORAGE_KEY = 'vibepulse:last-sessions-snapshot';
 
 const COLUMNS: { id: KanbanColumn; title: string }[] = [
     { id: 'idle', title: 'Idle' },
@@ -27,10 +28,16 @@ type SessionsFetchError = Error & {
     status?: number;
 };
 
+type SessionSnapshot = {
+    savedAt: number;
+    sessions: Array<Record<string, unknown>>;
+};
+
 export function KanbanBoard({ filterDays }: KanbanBoardProps) {
     const waitingStateRef = useRef<Record<string, boolean>>({});
     const waitingInitRef = useRef(false);
     const [copyFeedback, setCopyFeedback] = useState<'idle' | 'copied' | 'failed'>('idle');
+    const [staleSnapshot, setStaleSnapshot] = useState<SessionSnapshot | null>(null);
 
     const { data, isLoading, error, dataUpdatedAt, refetch, isFetching } = useQuery({
         queryKey: ['sessions'],
@@ -77,6 +84,39 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
 
     const activeError = error as SessionsFetchError | null;
 
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            const raw = localStorage.getItem(SNAPSHOT_STORAGE_KEY);
+            if (!raw) return;
+            const parsed = JSON.parse(raw) as SessionSnapshot;
+            if (!parsed || !Array.isArray(parsed.sessions) || typeof parsed.savedAt !== 'number') {
+                return;
+            }
+            if (parsed.sessions.length === 0) return;
+            setStaleSnapshot(parsed);
+        } catch {
+            setStaleSnapshot(null);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        if (!data?.sessions || data.sessions.length === 0) return;
+
+        const snapshot: SessionSnapshot = {
+            savedAt: Date.now(),
+            sessions: data.sessions as Array<Record<string, unknown>>,
+        };
+
+        try {
+            localStorage.setItem(SNAPSHOT_STORAGE_KEY, JSON.stringify(snapshot));
+            setStaleSnapshot(snapshot);
+        } catch {
+            setStaleSnapshot(snapshot);
+        }
+    }, [data?.sessions]);
+
     const handleCopyStartCommand = async () => {
         try {
             await navigator.clipboard.writeText('opencode --port 3044');
@@ -88,8 +128,18 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
         }
     };
 
+    const sourceSessions = useMemo(() => {
+        if (data?.sessions) return data.sessions;
+        if (activeError && staleSnapshot?.sessions?.length) {
+            return staleSnapshot.sessions;
+        }
+        return [];
+    }, [activeError, data?.sessions, staleSnapshot?.sessions]);
+
+    const isShowingStaleData = !!activeError && !data?.sessions && !!staleSnapshot?.sessions?.length;
+
     const enrichedSessions = useMemo(() => {
-        if (!data?.sessions) return [];
+        if (!sourceSessions.length) return [];
 
         let persistedWaiting: Record<string, boolean> = {};
         if (typeof window !== 'undefined') {
@@ -100,14 +150,14 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
             }
         }
 
-        return data.sessions.map((s: { id: string; waitingForUser?: boolean; realTimeStatus?: 'idle' | 'busy' | 'retry' }) => {
+        return sourceSessions.map((s: { id: string; waitingForUser?: boolean; realTimeStatus?: 'idle' | 'busy' | 'retry' }) => {
             const persisted = !!persistedWaiting[s.id];
             return {
                 ...s,
                 waitingForUser: !!s.waitingForUser || (s.realTimeStatus === 'retry' && persisted),
             };
         });
-    }, [data?.sessions]);
+    }, [sourceSessions]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -158,7 +208,7 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
         return <LoadingState />;
     }
 
-    if (error) {
+    if (error && !isShowingStaleData) {
         const isOpencodeUnavailable = activeError?.kind === 'opencode_unavailable';
         const title = isOpencodeUnavailable ? 'OpenCode is not running' : 'Failed to load sessions';
         const description = isOpencodeUnavailable
@@ -265,6 +315,21 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
 
     return (
         <div className="flex-1 overflow-x-auto scrollbar-thin scroll-smooth">
+            {isShowingStaleData ? (
+                <div className="px-4 pt-4 pb-0">
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
+                        <div className="flex items-center gap-2 text-xs font-medium">
+                            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] uppercase tracking-wide dark:bg-amber-900/40">
+                                Stale Data
+                            </span>
+                            <span>
+                                Last seen at {staleSnapshot ? new Date(staleSnapshot.savedAt).toLocaleString() : '--'}
+                            </span>
+                            <span className="text-amber-700/80 dark:text-amber-300/80">Read-only snapshot while OpenCode is unreachable.</span>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
             <div className="flex gap-6 h-full min-w-max p-4">
                 {COLUMNS.map((column) => {
                     const columnCards = cards
@@ -293,6 +358,7 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
                                             projectName={projectName}
                                             branch={groupCards[0].branch}
                                             cards={groupCards}
+                                            readOnly={isShowingStaleData}
                                         />
                                     ))}
                                 </div>
