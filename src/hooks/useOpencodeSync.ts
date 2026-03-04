@@ -122,51 +122,69 @@ export function useOpencodeSync() {
                         scheduleRefetch();
                         return old;
                     }
-                    return {
-                        ...old,
-                        sessions: old.sessions.map((session: OpencodeSession) => {
-                            if (session.id !== sessionId) return session;
 
-                            switch (event.type) {
-                                case 'session.status': {
-                                    const statusType = event.properties?.status?.type as 'idle' | 'busy' | 'retry' | undefined;
-                                    if (!statusType) return session;
-                                    if (statusType === 'retry' && !initialLoadRef.current) {
-                                        playAlertSound();
-                                    }
-                                    // When session becomes idle and is not waiting for user, clear persisted state
-                                    if (statusType === 'idle' && !session.waitingForUser) {
-                                        persistWaiting(session.id, false);
-                                    }
-                                    return { 
-                                        ...session, 
-                                        realTimeStatus: statusType, 
-                                        waitingForUser: statusType === 'retry' ? true : session.waitingForUser 
-                                    };
+                    const applyEvent = (s: any) => {
+                        switch (event.type) {
+                            case 'session.status': {
+                                const statusType = event.properties?.status?.type as 'idle' | 'busy' | 'retry' | undefined;
+                                if (!statusType) return s;
+                                if (statusType === 'retry' && !initialLoadRef.current) {
+                                    playAlertSound();
                                 }
-                                case 'question.asked':
-                                case 'permission.asked':
-                                case 'permission.updated':
-                                    if (!initialLoadRef.current) {
-                                        playAttentionSound();
-                                    }
-                                    persistWaiting(sessionId!, true);
-                                    return { ...session, waitingForUser: true };
-                                case 'question.replied':
-                                case 'question.rejected':
-                                case 'permission.replied':
-                                    persistWaiting(sessionId!, false);
-                                    return { ...session, waitingForUser: false };
-                                case 'session.archived':
-                                    return { 
-                                        ...session, 
-                                        time: { ...session.time, archived: Date.now() } 
-                                    };
-                                default:
-                                    return session;
+                                if (statusType === 'idle' && !s.waitingForUser) {
+                                    persistWaiting(s.id, false);
+                                }
+                                return { 
+                                    ...s, 
+                                    realTimeStatus: statusType, 
+                                    waitingForUser: statusType === 'retry' ? true : s.waitingForUser 
+                                };
                             }
-                        }),
+                            case 'question.asked':
+                            case 'permission.asked':
+                            case 'permission.updated':
+                                if (!initialLoadRef.current) {
+                                    playAttentionSound();
+                                }
+                                persistWaiting(sessionId!, true);
+                                return { ...s, waitingForUser: true };
+                            case 'question.replied':
+                            case 'question.rejected':
+                            case 'permission.replied':
+                                persistWaiting(sessionId!, false);
+                                return { ...s, waitingForUser: false };
+                            case 'session.archived':
+                                return { 
+                                    ...s, 
+                                    time: { ...(s.time || {}), archived: Date.now() } 
+                                };
+                            default:
+                                return s;
+                        }
                     };
+
+                    let found = false;
+                    const newSessions = old.sessions.map((session: OpencodeSession) => {
+                        if (session.id === sessionId) {
+                            found = true;
+                            return applyEvent(session);
+                        }
+                        if (session.children?.some(c => c.id === sessionId)) {
+                            found = true;
+                            return {
+                                ...session,
+                                children: session.children.map(c => c.id === sessionId ? applyEvent(c) : c)
+                            };
+                        }
+                        return session;
+                    });
+
+                    if (!found) {
+                        scheduleRefetch();
+                        return old;
+                    }
+
+                    return { ...old, sessions: newSessions };
                 }
             }
         });
