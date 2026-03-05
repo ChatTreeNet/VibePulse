@@ -217,7 +217,7 @@ export async function GET() {
     const parentById = new Map(enrichedSessions.map((session) => [session.id, session]));
 
     const now = Date.now();
-    const unresolvedChildren: Array<{ parentId: string; child: SessionLike; parentActive: boolean; childUpdatedAt: number }> = [];
+    const unresolvedChildren: Array<{ parentId: string; child: SessionLike; childUpdatedAt: number }> = [];
 
     // Enrich and nest child sessions under parents
     for (const child of childSessions) {
@@ -245,13 +245,12 @@ export async function GET() {
       const statusFromMap = statusMap[child.id]?.type;
       const childUpdatedAt = getUpdatedAt(child);
       const isRecent = childUpdatedAt > 0 && now - childUpdatedAt <= CHILD_ACTIVE_WINDOW_MS;
-      const parentActive = parent.realTimeStatus === 'busy' || parent.realTimeStatus === 'retry';
 
       if (statusFromMap && statusFromMap !== 'idle') {
         parent.children.push(toChildEntry(child, statusFromMap));
-      } else if (parentActive && isRecent) {
+      } else if (isRecent) {
         if (unresolvedChildren.length < CHILD_STATUS_MESSAGE_CHECK_LIMIT) {
-          unresolvedChildren.push({ parentId: parent.id, child, parentActive, childUpdatedAt });
+          unresolvedChildren.push({ parentId: parent.id, child, childUpdatedAt });
         }
       } else {
         continue;
@@ -260,10 +259,11 @@ export async function GET() {
 
     if (unresolvedChildren.length > 0) {
       const unresolvedChecks = await Promise.allSettled(
-        unresolvedChildren.map(async ({ parentId, child, parentActive, childUpdatedAt }) => {
+        unresolvedChildren.map(async ({ parentId, child, childUpdatedAt }) => {
           const port = sessionPortMap[child.id] ?? sessionPortMap[parentId];
           const client = port ? clientByPort[port] : undefined;
-          const assumeBusyForUnknown = parentActive && childUpdatedAt > 0 && now - childUpdatedAt <= CHILD_UNKNOWN_STATE_BUSY_WINDOW_MS;
+          const assumeBusyForUnknown =
+            childUpdatedAt > 0 && now - childUpdatedAt <= CHILD_UNKNOWN_STATE_BUSY_WINDOW_MS;
           if (!client) {
             return {
               parentId,
@@ -308,6 +308,73 @@ export async function GET() {
         const parent = parentById.get(check.value.parentId);
         if (!parent) continue;
         parent.children.push(toChildEntry(check.value.child, check.value.childStatus, check.value.childWaitingForUser));
+      }
+    }
+
+    const parentStatusFallbackCandidates = enrichedSessions
+      .filter((session) => {
+        if (session.realTimeStatus !== 'idle') return false;
+        if (session.time?.archived) return false;
+        const updatedAt = getUpdatedAt(session);
+        return updatedAt > 0 && now - updatedAt <= CHILD_ACTIVE_WINDOW_MS;
+      })
+      .sort((a, b) => getUpdatedAt(b) - getUpdatedAt(a))
+      .slice(0, CHILD_STATUS_MESSAGE_CHECK_LIMIT);
+
+    if (parentStatusFallbackCandidates.length > 0) {
+      const parentFallbackChecks = await Promise.allSettled(
+        parentStatusFallbackCandidates.map(async (session) => {
+          const updatedAt = getUpdatedAt(session);
+          const assumeBusyForUnknown =
+            updatedAt > 0 && now - updatedAt <= CHILD_UNKNOWN_STATE_BUSY_WINDOW_MS;
+          const port = sessionPortMap[session.id];
+          const client = port ? clientByPort[port] : undefined;
+
+          if (!client) {
+            return {
+              sessionId: session.id,
+              status: assumeBusyForUnknown ? 'busy' as const : 'idle' as const,
+              waitingForUser: false,
+            };
+          }
+
+          try {
+            const partStatuses = await fetchPartStatuses(client, session.id);
+            const hasRunningState = partStatuses.some((status) => status === 'running');
+            const hasWaitingState = !hasRunningState && partStatuses.some(isWaitingPartStatus);
+            const hasCompletedState =
+              partStatuses.length > 0 && partStatuses.every((status) => status === 'completed');
+
+            return {
+              sessionId: session.id,
+              status: hasRunningState || hasWaitingState
+                ? 'busy' as const
+                : hasCompletedState
+                  ? 'idle' as const
+                  : assumeBusyForUnknown
+                    ? 'busy' as const
+                    : 'idle' as const,
+              waitingForUser: hasWaitingState,
+            };
+          } catch {
+            return {
+              sessionId: session.id,
+              status: assumeBusyForUnknown ? 'busy' as const : 'idle' as const,
+              waitingForUser: false,
+            };
+          }
+        })
+      );
+
+      for (const check of parentFallbackChecks) {
+        if (check.status !== 'fulfilled') continue;
+        if (check.value.status === 'idle') continue;
+        const session = parentById.get(check.value.sessionId);
+        if (!session) continue;
+        session.realTimeStatus = check.value.status;
+        if (check.value.waitingForUser) {
+          session.waitingForUser = true;
+        }
       }
     }
 
