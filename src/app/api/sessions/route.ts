@@ -19,7 +19,8 @@ type SessionLike = {
 const CHILD_ACTIVE_WINDOW_MS = 30 * 60 * 1000;
 const CHILD_UNKNOWN_STATE_BUSY_WINDOW_MS = 2 * 60 * 1000;
 const CHILD_STATUS_MESSAGE_CHECK_LIMIT = 50;
-const STATUS_STICKY_BUSY_WINDOW_MS = 90 * 1000;
+const STATUS_STICKY_BUSY_WINDOW_MS = 25 * 1000;
+const STALL_DETECTION_WINDOW_MS = 30 * 1000;
 const STATUS_STICKY_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 type StableRealtimeStatus = 'idle' | 'busy' | 'retry';
@@ -151,6 +152,12 @@ function pruneStickyState(now: number): void {
       statusStickyState.delete(id);
     }
   }
+}
+
+function hasRecentActivity(session: { time?: { updated?: number } }, now: number): boolean {
+  const updatedAt = session.time?.updated;
+  if (!updatedAt) return false;
+  return now - updatedAt <= STALL_DETECTION_WINDOW_MS;
 }
 
 function toChildEntry(
@@ -419,14 +426,15 @@ export async function GET() {
             const hasWaitingState = !hasRunningState && partStatuses.some(isWaitingPartStatus);
             const hasCompletedState =
               partStatuses.length > 0 && partStatuses.every((status) => status === 'completed');
+            const recentlyActive = hasRecentActivity(session, now);
 
             return {
               sessionId: session.id,
               status: hasRunningState || hasWaitingState
                 ? 'busy' as const
-                : hasCompletedState
+                : hasCompletedState && !recentlyActive
                   ? 'idle' as const
-                  : assumeBusyForUnknown
+                  : assumeBusyForUnknown || recentlyActive
                     ? 'busy' as const
                     : 'idle' as const,
               waitingForUser: hasWaitingState,

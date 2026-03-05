@@ -5,12 +5,13 @@ import { KanbanColumn, KanbanCard, OpencodeSession } from '@/types';
 import { ProjectCard } from './ProjectCard';
 import { transformSessions } from '@/lib/transform';
 import { LoadingState } from './LoadingState';
-import { playAttentionSound } from '@/lib/notificationSound';
+import { playAttentionSound, playCompleteSound } from '@/lib/notificationSound';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
 const SNAPSHOT_STORAGE_KEY = 'vibepulse:last-sessions-snapshot';
 const START_COMMAND_TEMPLATE = 'opencode --port <PORT>';
+const CARD_ANIMATION_DURATION_MS = 250;
 
 const COLUMNS: { id: KanbanColumn; title: string }[] = [
     { id: 'idle', title: 'Idle' },
@@ -51,6 +52,8 @@ type SessionsResponse = {
 export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardProps) {
     const waitingStateRef = useRef<Record<string, boolean>>({});
     const waitingInitRef = useRef(false);
+    const statusStateRef = useRef<Record<string, 'idle' | 'busy' | 'retry'>>({});
+    const statusInitRef = useRef(false);
     const [copyFeedback, setCopyFeedback] = useState<'idle' | 'copied' | 'failed'>('idle');
     const [staleSnapshot, setStaleSnapshot] = useState<SessionSnapshot | null>(null);
 
@@ -224,9 +227,43 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
         }
 
         if (shouldPlayAttention) {
-            playAttentionSound();
+            setTimeout(() => playAttentionSound(), CARD_ANIMATION_DURATION_MS);
         }
     }, [enrichedSessions]);
+
+    useEffect(() => {
+        const nextStatus: Record<string, 'idle' | 'busy' | 'retry'> = {};
+
+        for (const session of enrichedSessions as Array<{ id: string; realTimeStatus?: string }>) {
+            const normalized =
+                session.realTimeStatus === 'busy' || session.realTimeStatus === 'retry'
+                    ? session.realTimeStatus
+                    : 'idle';
+            nextStatus[session.id] = normalized;
+        }
+
+        if (!statusInitRef.current) {
+            statusInitRef.current = true;
+            statusStateRef.current = nextStatus;
+            return;
+        }
+
+        let shouldPlayComplete = false;
+
+        for (const [id, currentStatus] of Object.entries(nextStatus)) {
+            const previousStatus = statusStateRef.current[id];
+            if ((previousStatus === 'busy' || previousStatus === 'retry') && currentStatus === 'idle') {
+                shouldPlayComplete = true;
+                break;
+            }
+        }
+
+        statusStateRef.current = nextStatus;
+
+        if (shouldPlayComplete && !isShowingStaleData) {
+            setTimeout(() => playCompleteSound(), CARD_ANIMATION_DURATION_MS);
+        }
+    }, [enrichedSessions, isShowingStaleData]);
 
     const cards: KanbanCard[] = useMemo(() => {
         const allCards = transformSessions(enrichedSessions);

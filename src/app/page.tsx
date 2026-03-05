@@ -45,13 +45,23 @@ export default function Home() {
         : `${processHintProjects.length} projects have OpenCode processes without exposed API ports.`;
 
     useEffect(() => {
-        // Unlock AudioContext on first user interaction
         const unlock = () => {
             unlockAudio();
             document.removeEventListener('click', unlock);
+            document.removeEventListener('pointerdown', unlock);
+            document.removeEventListener('keydown', unlock);
+            document.removeEventListener('touchstart', unlock);
         };
         document.addEventListener('click', unlock);
-        return () => document.removeEventListener('click', unlock);
+        document.addEventListener('pointerdown', unlock, { passive: true });
+        document.addEventListener('keydown', unlock);
+        document.addEventListener('touchstart', unlock, { passive: true });
+        return () => {
+            document.removeEventListener('click', unlock);
+            document.removeEventListener('pointerdown', unlock);
+            document.removeEventListener('keydown', unlock);
+            document.removeEventListener('touchstart', unlock);
+        };
     }, []);
 
     useEffect(() => {
