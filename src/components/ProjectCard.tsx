@@ -52,6 +52,82 @@ function StatusDot({ status, waitingForUser }: { status: string; waitingForUser:
     }
 }
 
+function HeaderActionMenu({ cards, readOnly = false }: { cards: KanbanCard[]; readOnly?: boolean }) {
+    const queryClient = useQueryClient();
+    const [open, setOpen] = useState(false);
+    const menuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!open) return;
+        const handler = (e: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+                setOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [open]);
+
+    const hasUnarchived = cards.some(c => c.status !== 'done');
+
+    const handleArchiveAll = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        const unarchivedCards = cards.filter(c => c.status !== 'done');
+        await Promise.all(unarchivedCards.map(card =>
+            fetch(`/api/sessions/${card.id}/archive`, { method: 'POST' })
+        ));
+        setOpen(false);
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    };
+
+    const handleDeleteAll = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!confirm(`Delete ${cards.length} session(s)? This cannot be undone.`)) return;
+        await Promise.all(cards.map(card =>
+            fetch(`/api/sessions/${card.id}/delete`, { method: 'POST' })
+        ));
+        setOpen(false);
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    };
+
+    if (readOnly) return null;
+
+    return (
+        <div className="relative" ref={menuRef}>
+            <button
+                type="button"
+                className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-gray-200 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-zinc-600 transition-colors"
+                onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+                title="Batch actions"
+            >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M5 10a2 2 0 110 4 2 2 0 010-4zm7 0a2 2 0 110 4 2 2 0 010-4zm7 0a2 2 0 110 4 2 2 0 010-4z" />
+                </svg>
+            </button>
+            {open && (
+                <div className="absolute right-0 top-6 w-32 rounded-md border border-gray-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900 z-20">
+                    {hasUnarchived && (
+                        <button
+                            type="button"
+                            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-zinc-800"
+                            onClick={handleArchiveAll}
+                        >
+                            Archive all
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+                        onClick={handleDeleteAll}
+                    >
+                        Delete all
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
+
 // Hover-reveal action menu for each session row
 function RowActionMenu({ cardId, archived }: { cardId: string; archived: boolean }) {
     const queryClient = useQueryClient();
@@ -238,7 +314,7 @@ export function ProjectCard({ projectName, branch, cards, readOnly = false }: Pr
     return (
         <article className="w-full bg-white dark:bg-zinc-800 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-700 hover:shadow-lg hover:border-gray-300 dark:hover:border-zinc-600 transition-all duration-200 overflow-visible">
             {/* Header */}
-            <div className="flex items-center gap-2 px-3 py-2.5">
+            <div className="group/header flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-zinc-700/30 transition-colors">
                 <svg className="w-4 h-4 text-blue-500 dark:text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
                 </svg>
@@ -254,6 +330,11 @@ export function ProjectCard({ projectName, branch, cards, readOnly = false }: Pr
                     <span className="text-[10px] text-gray-400 dark:text-gray-500 font-medium bg-gray-100 dark:bg-zinc-700 px-1.5 py-0.5 rounded-full flex-shrink-0">
                         {cards.length}
                     </span>
+                )}
+                {!readOnly && (
+                    <div className="hidden group-hover/header:flex flex-shrink-0">
+                        <HeaderActionMenu cards={cards} readOnly={readOnly} />
+                    </div>
                 )}
             </div>
 
