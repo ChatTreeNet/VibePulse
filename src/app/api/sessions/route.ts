@@ -359,7 +359,7 @@ export async function GET() {
             const hasRunningState = partStatuses.some((status) => status === 'running');
             const hasWaitingState = !hasRunningState && partStatuses.some(isWaitingPartStatus);
             const hasActiveState = hasWaitingState || hasRunningState;
-            const hasCompletedState = partStatuses.length > 0 && partStatuses.every((status) => status === 'completed');
+            const recentlyActive = childUpdatedAt > 0 && now - childUpdatedAt <= 5 * 60 * 1000;
 
             return {
               parentId,
@@ -367,11 +367,9 @@ export async function GET() {
               childWaitingForUser: hasWaitingState,
               childStatus: hasActiveState
                 ? 'busy' as const
-                : hasCompletedState
-                  ? 'idle' as const
-                  : assumeBusyForUnknown
-                    ? 'busy' as const
-                    : 'idle' as const,
+                : recentlyActive || assumeBusyForUnknown
+                  ? 'busy' as const
+                  : 'idle' as const,
             };
           } catch {
             return {
