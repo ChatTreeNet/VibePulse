@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { KanbanColumn, KanbanCard } from '@/types';
+import { KanbanColumn, KanbanCard, OpencodeSession } from '@/types';
 import { ProjectCard } from './ProjectCard';
 import { transformSessions } from '@/lib/transform';
 import { LoadingState } from './LoadingState';
@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
 const SNAPSHOT_STORAGE_KEY = 'vibepulse:last-sessions-snapshot';
+const START_COMMAND_TEMPLATE = 'opencode --port <PORT>';
 
 const COLUMNS: { id: KanbanColumn; title: string }[] = [
     { id: 'idle', title: 'Idle' },
@@ -20,6 +21,7 @@ const COLUMNS: { id: KanbanColumn; title: string }[] = [
 
 interface KanbanBoardProps {
     filterDays: number;
+    onProcessHintsChange?: (hints: ProcessHint[]) => void;
 }
 
 type SessionsFetchError = Error & {
@@ -28,18 +30,31 @@ type SessionsFetchError = Error & {
     status?: number;
 };
 
-type SessionSnapshot = {
-    savedAt: number;
-    sessions: Array<Record<string, unknown>>;
+type ProcessHint = {
+    pid: number;
+    directory: string;
+    projectName: string;
+    reason: 'process_without_api_port';
 };
 
-export function KanbanBoard({ filterDays }: KanbanBoardProps) {
+type SessionSnapshot = {
+    savedAt: number;
+    sessions: OpencodeSession[];
+    processHints: ProcessHint[];
+};
+
+type SessionsResponse = {
+    sessions: OpencodeSession[];
+    processHints?: ProcessHint[];
+};
+
+export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardProps) {
     const waitingStateRef = useRef<Record<string, boolean>>({});
     const waitingInitRef = useRef(false);
     const [copyFeedback, setCopyFeedback] = useState<'idle' | 'copied' | 'failed'>('idle');
     const [staleSnapshot, setStaleSnapshot] = useState<SessionSnapshot | null>(null);
 
-    const { data, isLoading, error, dataUpdatedAt, refetch, isFetching } = useQuery({
+    const { data, isLoading, error, dataUpdatedAt, refetch, isFetching } = useQuery<SessionsResponse>({
         queryKey: ['sessions'],
         queryFn: async () => {
             try {
@@ -93,6 +108,9 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
             if (!parsed || !Array.isArray(parsed.sessions) || typeof parsed.savedAt !== 'number') {
                 return;
             }
+            if (!Array.isArray(parsed.processHints)) {
+                parsed.processHints = [];
+            }
             if (parsed.sessions.length === 0) return;
             setStaleSnapshot(parsed);
         } catch {
@@ -106,7 +124,8 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
 
         const snapshot: SessionSnapshot = {
             savedAt: Date.now(),
-            sessions: data.sessions as Array<Record<string, unknown>>,
+            sessions: data.sessions,
+            processHints: data.processHints ?? [],
         };
 
         try {
@@ -115,11 +134,11 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
         } catch {
             setStaleSnapshot(snapshot);
         }
-    }, [data?.sessions]);
+    }, [data?.processHints, data?.sessions]);
 
     const handleCopyStartCommand = async () => {
         try {
-            await navigator.clipboard.writeText('opencode --port 3044');
+            await navigator.clipboard.writeText(START_COMMAND_TEMPLATE);
             setCopyFeedback('copied');
             setTimeout(() => setCopyFeedback('idle'), 1500);
         } catch {
@@ -138,6 +157,20 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
 
     const isShowingStaleData = !!activeError && !data?.sessions && !!staleSnapshot?.sessions?.length;
 
+    const processHints = useMemo(() => {
+        if (data?.processHints) {
+            return data.processHints;
+        }
+        if (isShowingStaleData && staleSnapshot?.processHints) {
+            return staleSnapshot.processHints;
+        }
+        return [];
+    }, [data?.processHints, isShowingStaleData, staleSnapshot?.processHints]);
+
+    useEffect(() => {
+        onProcessHintsChange?.(processHints);
+    }, [onProcessHintsChange, processHints]);
+
     const enrichedSessions = useMemo(() => {
         if (!sourceSessions.length) return [];
 
@@ -150,7 +183,7 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
             }
         }
 
-        return sourceSessions.map((s: { id: string; waitingForUser?: boolean; realTimeStatus?: 'idle' | 'busy' | 'retry' }) => {
+        return sourceSessions.map((s) => {
             const persisted = !!persistedWaiting[s.id];
             return {
                 ...s,
@@ -212,7 +245,7 @@ export function KanbanBoard({ filterDays }: KanbanBoardProps) {
         const isOpencodeUnavailable = activeError?.kind === 'opencode_unavailable';
         const title = isOpencodeUnavailable ? 'OpenCode is not running' : 'Failed to load sessions';
         const description = isOpencodeUnavailable
-            ? activeError?.hint || 'Run `opencode --port 3044` and keep it running.'
+            ? activeError?.hint || 'Run OpenCode with an exposed API port, for example `opencode --port <PORT>`.'
             : activeError?.message || 'An error occurred while loading sessions';
 
         return (

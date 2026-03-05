@@ -1,6 +1,11 @@
 import { execSync } from 'child_process';
 
-const FALLBACK_PORTS = [4096, 3044];
+const knownPorts = new Set<number>();
+
+export type OpencodeProcessCwd = {
+  pid: number;
+  cwd: string;
+};
 
 function toUniqueSortedPorts(ports: number[]): number[] {
   return Array.from(
@@ -62,9 +67,88 @@ function getPortsFromProcessArgs(): number[] {
 }
 
 export function discoverOpencodePorts(): number[] {
-  return toUniqueSortedPorts([
+  const discoveredPorts = toUniqueSortedPorts([
     ...getPortsFromLsof(),
     ...getPortsFromProcessArgs(),
-    ...FALLBACK_PORTS,
   ]);
+
+  for (const port of discoveredPorts) {
+    knownPorts.add(port);
+  }
+
+  return toUniqueSortedPorts([
+    ...discoveredPorts,
+    ...Array.from(knownPorts),
+  ]);
+}
+
+function getOpencodePidsWithoutPortFlag(): number[] {
+  try {
+    const output = execSync('ps -axo pid=,command=', {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+
+    const pids: number[] = [];
+    const lines = output.split('\n');
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      const match = trimmed.match(/^(\d+)\s+(.+)$/);
+      if (!match) continue;
+
+      const pid = parseInt(match[1], 10);
+      const command = match[2];
+
+      if (!Number.isFinite(pid)) continue;
+      if (!/\bopencode\b/.test(command)) continue;
+      if (/\b--port(?:=|\s+)\d+\b/.test(command)) continue;
+
+      pids.push(pid);
+    }
+
+    return Array.from(new Set(pids));
+  } catch {
+    return [];
+  }
+}
+
+function getCwdForPid(pid: number): string | null {
+  try {
+    const output = execSync(`lsof -nP -a -p ${pid} -d cwd -Fn`, {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+
+    const cwdLine = output
+      .split('\n')
+      .find((line) => line.startsWith('n') && line.length > 1);
+
+    if (!cwdLine) return null;
+    return cwdLine.slice(1);
+  } catch {
+    return null;
+  }
+}
+
+export function discoverOpencodeProcessCwdsWithoutPort(): OpencodeProcessCwd[] {
+  const pids = getOpencodePidsWithoutPortFlag();
+  if (!pids.length) return [];
+
+  const processes: OpencodeProcessCwd[] = [];
+  const seen = new Set<string>();
+
+  for (const pid of pids) {
+    const cwd = getCwdForPid(pid);
+    if (!cwd) continue;
+
+    const key = `${pid}:${cwd}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    processes.push({ pid, cwd });
+  }
+
+  return processes;
 }

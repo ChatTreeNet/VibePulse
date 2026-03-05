@@ -3,6 +3,28 @@
 let audioContext: AudioContext | null = null;
 
 const STORAGE_KEY = 'vibepulse:sound-muted';
+const SOUND_LOG_THROTTLE_MS = 10000;
+const soundLogLastAt = new Map<string, number>();
+
+function shouldLogSound(key: string): boolean {
+    const now = Date.now();
+    const lastAt = soundLogLastAt.get(key) ?? 0;
+    if (now - lastAt < SOUND_LOG_THROTTLE_MS) {
+        return false;
+    }
+    soundLogLastAt.set(key, now);
+    return true;
+}
+
+function logSoundInfo(key: string, message: string): void {
+    if (!shouldLogSound(`info:${key}`)) return;
+    console.info(`[VibePulse sound] ${message}`);
+}
+
+function logSoundWarning(key: string, message: string, error: unknown): void {
+    if (!shouldLogSound(`warn:${key}`)) return;
+    console.warn(`[VibePulse sound] ${message}`, error);
+}
 
 function getAudioContext(): AudioContext {
     if (!audioContext) {
@@ -10,7 +32,9 @@ function getAudioContext(): AudioContext {
     }
     // Resume if suspended (browser autoplay policy)
     if (audioContext.state === 'suspended') {
-        audioContext.resume();
+        void audioContext.resume().catch((error) => {
+            logSoundWarning('resume-audio-context', 'Failed to resume AudioContext in getAudioContext()', error);
+        });
     }
     return audioContext;
 }
@@ -33,7 +57,9 @@ export function unlockAudio(): void {
     try {
         const ctx = getAudioContext();
         if (ctx.state === 'suspended') {
-            ctx.resume();
+            void ctx.resume().catch((error) => {
+                logSoundWarning('unlock-resume', 'Failed to resume AudioContext in unlockAudio()', error);
+            });
         }
         // Play a silent buffer to fully unlock on iOS/Safari
         const buffer = ctx.createBuffer(1, 1, 22050);
@@ -41,8 +67,8 @@ export function unlockAudio(): void {
         source.buffer = buffer;
         source.connect(ctx.destination);
         source.start(0);
-    } catch {
-        // ignore
+    } catch (error) {
+        logSoundWarning('unlock-audio', 'unlockAudio() failed', error);
     }
 }
 
@@ -51,7 +77,10 @@ export function unlockAudio(): void {
  * A gentle, non-alarming notification that user input is needed.
  */
 export function playAttentionSound(): void {
-    if (isMuted()) return;
+    if (isMuted()) {
+        logSoundInfo('play-attention-muted', 'Skipped playAttentionSound() because muted');
+        return;
+    }
     try {
         const ctx = getAudioContext();
         const now = ctx.currentTime;
@@ -91,8 +120,8 @@ export function playAttentionSound(): void {
         gain3.connect(ctx.destination);
         osc3.start(now + 0.3);
         osc3.stop(now + 0.55);
-    } catch {
-        // Audio not available — silently ignore
+    } catch (error) {
+        logSoundWarning('play-attention', 'playAttentionSound() failed', error);
     }
 }
 
@@ -101,7 +130,10 @@ export function playAttentionSound(): void {
  * Slightly more urgent than the attention chime.
  */
 export function playAlertSound(): void {
-    if (isMuted()) return;
+    if (isMuted()) {
+        logSoundInfo('play-alert-muted', 'Skipped playAlertSound() because muted');
+        return;
+    }
     try {
         const ctx = getAudioContext();
         const now = ctx.currentTime;
@@ -131,13 +163,16 @@ export function playAlertSound(): void {
         gain2.connect(ctx.destination);
         osc2.start(now + 0.2);
         osc2.stop(now + 0.5);
-    } catch {
-        // Audio not available — silently ignore
+    } catch (error) {
+        logSoundWarning('play-alert', 'playAlertSound() failed', error);
     }
 }
 
 export function playCompleteSound(): void {
-    if (isMuted()) return;
+    if (isMuted()) {
+        logSoundInfo('play-complete-muted', 'Skipped playCompleteSound() because muted');
+        return;
+    }
     try {
         const ctx = getAudioContext();
         const now = ctx.currentTime;
@@ -165,7 +200,32 @@ export function playCompleteSound(): void {
         gain2.connect(ctx.destination);
         osc2.start(now + 0.12);
         osc2.stop(now + 0.36);
-    } catch {
-        // Audio not available — silently ignore
+    } catch (error) {
+        logSoundWarning('play-complete', 'playCompleteSound() failed', error);
+    }
+}
+
+export function playToggleFeedbackSound(): void {
+    if (isMuted()) {
+        logSoundInfo('play-toggle-muted', 'Skipped playToggleFeedbackSound() because muted');
+        return;
+    }
+    try {
+        const ctx = getAudioContext();
+        const now = ctx.currentTime;
+
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(740, now);
+        osc.frequency.exponentialRampToValueAtTime(880, now + 0.08);
+        gain.gain.setValueAtTime(0.08, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.1);
+    } catch (error) {
+        logSoundWarning('play-toggle-feedback', 'playToggleFeedbackSound() failed', error);
     }
 }

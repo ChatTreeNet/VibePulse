@@ -11,7 +11,7 @@ export async function GET(
         return Response.json(
             {
                 error: 'OpenCode server not found',
-                hint: 'Make sure OpenCode is running. Run: opencode --port 3044'
+    hint: 'Make sure OpenCode is running with an exposed API port. Example: opencode --port <PORT> (VibePulse auto-detects active ports).'
             },
             { status: 503 }
         );
@@ -37,7 +37,7 @@ export async function GET(
             {
                 error: 'Failed to fetch session',
                 details: error instanceof Error ? error.message : String(error),
-                hint: 'Make sure OpenCode is running. Run: opencode --port 3044'
+        hint: 'Make sure OpenCode is running with an exposed API port. Example: opencode --port <PORT> (VibePulse auto-detects active ports).'
             },
             { status: 500 }
         );
