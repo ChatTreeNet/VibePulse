@@ -6,6 +6,9 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useOpencodeSync } from "@/hooks/useOpencodeSync";
 import { isMuted, playToggleFeedbackSound, setMuted, unlockAudio } from "@/lib/notificationSound";
 import { Info } from 'lucide-react';
+import { ConfigButton } from "@/components/opencode-config/ConfigButton";
+import { ConfigPanel } from "@/components/opencode-config/ConfigPanel";
+import { AgentConfigForm } from "@/components/opencode-config/AgentConfigForm";
 
 const DATE_FILTERS = [
     { label: '1d', days: 1 },
@@ -31,6 +34,7 @@ export default function Home() {
     const [processHints, setProcessHints] = useState<ProcessHint[]>([]);
     const [isProcessHintOpen, setIsProcessHintOpen] = useState(false);
     const [copyFeedback, setCopyFeedback] = useState<'idle' | 'copied' | 'failed'>('idle');
+    const [configPanelOpen, setConfigPanelOpen] = useState(false);
     const processHintButtonRef = useRef<HTMLButtonElement | null>(null);
     const processHintPopoverRef = useRef<HTMLDivElement | null>(null);
 
@@ -220,11 +224,20 @@ export default function Home() {
                                 </button>
                             ))}
                         </div>
+                        <ConfigButton onClick={() => setConfigPanelOpen(true)} />
                     </div>
                 </header>
                 <ErrorBoundary>
                     <KanbanBoard filterDays={filterDays} onProcessHintsChange={setProcessHints} />
                 </ErrorBoundary>
+                <ConfigPanel
+                    open={configPanelOpen}
+                    onOpenChange={setConfigPanelOpen}
+                    title="OpenCode Settings"
+                    description="Configure agent models and parameters"
+                >
+                    <AgentConfigForm agentName="default" onSaveSuccess={() => setConfigPanelOpen(false)} />
+                </ConfigPanel>
             </main>
         </div>
     );
