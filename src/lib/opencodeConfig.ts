@@ -1,4 +1,5 @@
-import { readFile, writeFile, access } from 'fs/promises';
+import { readFile, writeFile } from 'fs/promises';
+import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { parse, stringify } from 'comment-json';
@@ -13,9 +14,7 @@ export type OpenCodeConfig = {
 
 export function detectConfig(): boolean {
   try {
-    // Quick existence check using sync method
-    const fs = require('fs');
-    return fs.existsSync(CONFIG_PATH);
+    return existsSync(CONFIG_PATH);
   } catch {
     return false;
   }
@@ -24,7 +23,7 @@ export function detectConfig(): boolean {
 export async function readConfig(): Promise<OpenCodeConfig> {
   try {
     const content = await readFile(CONFIG_PATH, 'utf-8');
-    const config = parse(content, null, true) as OpenCodeConfig;
+    const config = parse(content, null, false) as OpenCodeConfig;
     return config;
   } catch (error) {
     // If file doesn't exist or is invalid, return empty config
@@ -35,9 +34,8 @@ export async function readConfig(): Promise<OpenCodeConfig> {
 export async function writeConfig(config: OpenCodeConfig): Promise<void> {
   try {
     // Ensure config directory exists
-    const fs = require('fs');
-    if (!fs.existsSync(CONFIG_DIR)) {
-      fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    if (!existsSync(CONFIG_DIR)) {
+      mkdirSync(CONFIG_DIR, { recursive: true });
     }
 
     // Convert config to JSONC string with preserved comments
