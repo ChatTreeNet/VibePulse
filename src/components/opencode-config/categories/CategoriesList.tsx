@@ -123,7 +123,6 @@ function CategoryCard({
   const info = getCategoryInfo(categoryKey);
   const hasConfig = !!(config.model || config.variant);
   const isModelInvalid = config.model && availableModels && availableModels.size > 0 && !availableModels.has(config.model);
-  const isModelMissing = !config.model;
   
   // Dynamic border/bg classes based on status
   let cardStateClasses = hasConfig

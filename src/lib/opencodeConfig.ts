@@ -25,7 +25,7 @@ export async function readConfig(configPath: string = CONFIG_PATH): Promise<Open
     const content = await readFile(configPath, 'utf-8');
     const config = parse(content, null, false) as OpenCodeConfig;
     return config;
-  } catch (error) {
+  } catch {
     return {};
   }
 }

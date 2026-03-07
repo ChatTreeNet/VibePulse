@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { readConfig, writeConfig, detectConfig } from './opencodeConfig';
-import { readFile, writeFile, unlink, mkdir } from 'fs/promises';
+import { readConfig, writeConfig } from './opencodeConfig';
+import { writeFile, unlink, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';

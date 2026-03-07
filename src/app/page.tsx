@@ -8,7 +8,6 @@ import { isMuted, playToggleFeedbackSound, setMuted, unlockAudio } from "@/lib/n
 import { Info } from 'lucide-react';
 import { ConfigButton } from "@/components/opencode-config/ConfigButton";
 import { FullscreenConfigPanel } from "@/components/opencode-config/FullscreenConfigPanel";
-import { AgentConfigForm } from "@/components/opencode-config/AgentConfigForm";
 
 const DATE_FILTERS = [
     { label: '1d', days: 1 },

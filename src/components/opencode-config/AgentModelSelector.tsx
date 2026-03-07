@@ -141,16 +141,15 @@ export function AgentModelSelector({
     retry: false,
   });
 
-  const models = data?.models ?? [];
-
   // Ensure the currently selected model is in the list (for echo display)
   const allModels = React.useMemo(() => {
+    const models = data?.models ?? [];
     const modelSet = new Set(models);
     if (value && !modelSet.has(value)) {
       modelSet.add(value);
     }
     return Array.from(modelSet).sort();
-  }, [models, value]);
+  }, [data?.models, value]);
 
   const filteredModels = React.useMemo(() => {
     if (!searchQuery.trim()) return allModels;
