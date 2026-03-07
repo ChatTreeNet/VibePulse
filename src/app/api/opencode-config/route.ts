@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { readConfig, writeConfig } from '@/lib/opencodeConfig';
 
 // Allowed fields to expose in the API
-const ALLOWED_AGENT_FIELDS = ['model', 'temperature', 'top_p'] as const;
+const ALLOWED_AGENT_FIELDS = ['model', 'temperature', 'top_p', 'variant', 'prompt_append'] as const;
 
 /**
  * Filters an agent config to only include allowed fields
@@ -155,22 +155,38 @@ export async function POST(request: NextRequest) {
             );
           }
           validatedConfig[field] = temp;
-        } else if (lowerField === 'top_p') {
-          const topP = Number(value);
-          if (isNaN(topP) || topP < 0 || topP > 1) {
-            return NextResponse.json(
-              { error: `Agent '${agentName}': top_p must be a number between 0 and 1` },
-              { status: 400 }
-            );
-          }
-          validatedConfig[field] = topP;
-        } else {
-          return NextResponse.json(
-            {
-              error: `Agent '${agentName}': unknown field '${field}'. Allowed fields: model, temperature, top_p`
-            },
-            { status: 400 }
-          );
+         } else if (lowerField === 'top_p') {
+           const topP = Number(value);
+           if (isNaN(topP) || topP < 0 || topP > 1) {
+             return NextResponse.json(
+               { error: `Agent '${agentName}': top_p must be a number between 0 and 1` },
+               { status: 400 }
+             );
+           }
+           validatedConfig[field] = topP;
+         } else if (lowerField === 'variant') {
+           if (typeof value !== 'string') {
+             return NextResponse.json(
+               { error: `Agent '${agentName}': variant must be a string` },
+               { status: 400 }
+             );
+           }
+           validatedConfig[field] = value;
+         } else if (lowerField === 'prompt_append') {
+           if (typeof value !== 'string') {
+             return NextResponse.json(
+               { error: `Agent '${agentName}': prompt_append must be a string` },
+               { status: 400 }
+             );
+           }
+           validatedConfig[field] = value;
+         } else {
+           return NextResponse.json(
+             {
+               error: `Agent '${agentName}': unknown field '${field}'. Allowed fields: model, temperature, top_p, variant, prompt_append`
+             },
+             { status: 400 }
+           );
         }
       }
 
