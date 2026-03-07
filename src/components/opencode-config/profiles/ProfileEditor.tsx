@@ -76,22 +76,21 @@ export function ProfileEditor({
     }
   }, [toast]);
 
-  const handleImportFromCurrent = () => {
-    const storedConfig = localStorage.getItem('opencode-config');
-    if (storedConfig) {
-      try {
-        const parsed = JSON.parse(storedConfig);
-        const importedConfig: ProfileConfig = {
-          agents: parsed.agents || {},
-          categories: parsed.categories,
-        };
-        setConfig(importedConfig);
-        setToast({ type: 'success', message: 'Configuration imported successfully' });
-      } catch {
-        setToast({ type: 'error', message: 'Failed to import configuration' });
+  const handleImportFromCurrent = async () => {
+    try {
+      const res = await fetch('/api/opencode-config');
+      if (!res.ok) {
+        throw new Error('Failed to fetch configuration');
       }
-    } else {
-      setToast({ type: 'error', message: 'No configuration found to import' });
+      const parsed = await res.json();
+      const importedConfig: ProfileConfig = {
+        agents: parsed.agents || {},
+        categories: parsed.categories,
+      };
+      setConfig(importedConfig);
+      setToast({ type: 'success', message: 'Configuration imported successfully' });
+    } catch {
+      setToast({ type: 'error', message: 'Failed to import configuration' });
     }
   };
 
