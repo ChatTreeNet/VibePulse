@@ -35,7 +35,7 @@
     "lint": "eslint",
     "test": "vitest",
     "test:run": "vitest run",
-    "build:lib": "tsup src/index.ts --format cjs,esm --dts --clean --outDir dist --external react,react-dom,next"
+    "build:lib": "tsup src/index.ts --format cjs,esm --dts --clean --outDir dist --external react,react-dom,next --tsconfig tsconfig.lib.json"
   },
   "bin": {
     "vibepulse": "./bin/vibepulse.js"
