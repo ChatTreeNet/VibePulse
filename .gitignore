@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# sisyphus agent state
+.sisyphus/
+
+# temp files
+.tmp/
+*.tmp

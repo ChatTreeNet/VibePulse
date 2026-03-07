@@ -12,36 +12,36 @@ export type OpenCodeConfig = {
   [key: string]: unknown;
 };
 
-export function detectConfig(): boolean {
+export function detectConfig(configPath: string = CONFIG_PATH): boolean {
   try {
-    return existsSync(CONFIG_PATH);
+    return existsSync(configPath);
   } catch {
     return false;
   }
 }
 
-export async function readConfig(): Promise<OpenCodeConfig> {
+export async function readConfig(configPath: string = CONFIG_PATH): Promise<OpenCodeConfig> {
   try {
-    const content = await readFile(CONFIG_PATH, 'utf-8');
+    const content = await readFile(configPath, 'utf-8');
     const config = parse(content, null, false) as OpenCodeConfig;
     return config;
   } catch (error) {
-    // If file doesn't exist or is invalid, return empty config
     return {};
   }
 }
 
-export async function writeConfig(config: OpenCodeConfig): Promise<void> {
+export async function writeConfig(
+  config: OpenCodeConfig, 
+  configPath: string = CONFIG_PATH
+): Promise<void> {
   try {
-    // Ensure config directory exists
-    if (!existsSync(CONFIG_DIR)) {
-      mkdirSync(CONFIG_DIR, { recursive: true });
+    const configDir = join(configPath, '..');
+    if (!existsSync(configDir)) {
+      mkdirSync(configDir, { recursive: true });
     }
 
-    // Convert config to JSONC string with preserved comments
     const content = stringify(config, null, 2);
-
-    await writeFile(CONFIG_PATH, content, 'utf-8');
+    await writeFile(configPath, content, 'utf-8');
   } catch (error) {
     throw new Error(`Failed to write config: ${error}`);
   }

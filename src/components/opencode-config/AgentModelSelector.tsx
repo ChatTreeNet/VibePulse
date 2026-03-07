@@ -3,7 +3,7 @@
 import * as React from 'react';
 import * as SelectPrimitive from '@radix-ui/react-select';
 import { useQuery } from '@tanstack/react-query';
-import { Check, ChevronDown, Search } from 'lucide-react';
+import { Check, ChevronDown, Search, AlertCircle, RefreshCw } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -14,6 +14,7 @@ function cn(...inputs: ClassValue[]) {
 interface OpencodeModelsResponse {
   models: string[];
   source: string;
+  error?: string;
 }
 
 interface AgentModelSelectorProps {
@@ -107,9 +108,14 @@ SelectItem.displayName = SelectPrimitive.Item.displayName;
 const SelectValue = SelectPrimitive.Value;
 
 function parseModelName(model: string): { provider: string; model: string } {
-  const parts = model.split('/');
-  if (parts.length === 2) {
-    return { provider: parts[0], model: parts[1] };
+  if (!model) return { provider: 'unknown', model: '' };
+  
+  const slashIndex = model.indexOf('/');
+  if (slashIndex !== -1) {
+    return { 
+      provider: model.substring(0, slashIndex), 
+      model: model.substring(slashIndex + 1) 
+    };
   }
   return { provider: 'unknown', model };
 }
@@ -122,18 +128,20 @@ export function AgentModelSelector({
 }: AgentModelSelectorProps) {
   const [searchQuery, setSearchQuery] = React.useState('');
 
-  const { data, isLoading } = useQuery<OpencodeModelsResponse>({
+  const { data, isLoading, isError, error, refetch } = useQuery<OpencodeModelsResponse>({
     queryKey: ['opencode-models'],
     queryFn: async () => {
       const res = await fetch('/api/opencode-models');
-      if (!res.ok) {
-        throw new Error('Failed to fetch models');
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'Failed to fetch models');
       }
-      return res.json();
+      return data;
     },
+    retry: false,
   });
 
-   const models = data?.models ?? [];
+  const models = data?.models ?? [];
 
   // 确保当前选中的模型在列表中（用于回显）
   const allModels = React.useMemo(() => {
@@ -217,6 +225,33 @@ export function AgentModelSelector({
           {isLoading ? (
             <div className="px-2 py-4 text-center text-sm text-zinc-500">
               Loading models...
+            </div>
+          ) : isError ? (
+            <div className="px-4 py-6 text-center">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                  <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                    Failed to load models
+                  </p>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-[200px]">
+                    {error instanceof Error ? error.message : 'Please check your OpenCode installation'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    refetch();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700 transition-colors"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Retry
+                </button>
+              </div>
             </div>
           ) : filteredModels.length === 0 ? (
             <div className="px-2 py-4 text-center text-sm text-zinc-500">

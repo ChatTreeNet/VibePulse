@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AgentModelSelector } from './AgentModelSelector';
-import { Check, AlertCircle, Loader2 } from 'lucide-react';
+import { Check, AlertCircle, Loader2, AlertTriangle } from 'lucide-react';
 
 interface AgentConfig {
   model?: string;
@@ -14,8 +14,24 @@ interface AgentConfig {
   prompt_append?: string;
 }
 
+interface CategoryConfig {
+  model?: string;
+  variant?: string;
+  temperature?: number;
+  top_p?: number;
+  prompt_append?: string;
+  description?: string;
+}
+
 interface OpencodeConfigResponse {
   agents: Record<string, AgentConfig>;
+  categories?: Record<string, CategoryConfig>;
+  defaultAgent?: AgentConfig;
+}
+
+interface OpencodeModelsResponse {
+  models: string[];
+  source: string;
 }
 
 interface AgentConfigFormData {
@@ -30,6 +46,19 @@ interface AgentConfigFormProps {
   agentName?: string;
   onSaveSuccess?: () => void;
 }
+
+const AGENT_CATEGORY_MAP: Record<string, string> = {
+  prometheus: 'ultrabrain',
+  hephaestus: 'deep',
+  oracle: 'ultrabrain',
+  metis: 'ultrabrain',
+  momus: 'quick',
+  atlas: 'unspecified-high',
+  librarian: 'writing',
+  explore: 'explore',
+  sisyphus: 'unspecified-high',
+  default: 'unspecified-low',
+};
 
 export function AgentConfigForm({ 
   agentName = 'default', 
@@ -66,6 +95,20 @@ export function AgentConfigForm({
     },
   });
 
+
+  const { data: modelsData } = useQuery<OpencodeModelsResponse>({
+    queryKey: ['opencode-models'],
+    queryFn: async () => {
+      const res = await fetch('/api/opencode-models');
+      if (!res.ok) throw new Error('Failed to fetch models');
+      return res.json();
+    },
+  });
+
+  const availableModels = React.useMemo(
+    () => new Set(modelsData?.models ?? []),
+    [modelsData]
+  );
   React.useEffect(() => {
     if (config) {
       const currentAgentConfig = config.agents?.[agentName] || {};
@@ -119,6 +162,18 @@ export function AgentConfigForm({
     saveMutation.mutate(data);
   };
 
+  const currentAgentConfig = config?.agents?.[agentName];
+  const hasPresetConfig = !!currentAgentConfig?.model;
+
+  // Model status checks
+  const currentModel = currentAgentConfig?.model;
+  const isModelInvalid = currentModel && availableModels.size > 0 && !availableModels.has(currentModel);
+  const isModelMissing = !currentModel;
+
+  const targetCategory = AGENT_CATEGORY_MAP[agentName] || 'unspecified-low';
+  const categoryModel = config?.categories?.[targetCategory]?.model;
+  const defaultModel = config?.defaultAgent?.model;
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -130,6 +185,15 @@ export function AgentConfigForm({
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6" aria-label="Agent configuration form">
+      {hasPresetConfig && (
+        <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 dark:bg-blue-900/20 dark:border-blue-800">
+          <p className="text-sm text-blue-800 dark:text-blue-300">
+            <span className="font-medium">Preset applied:</span> This agent is configured with model <span className="font-mono bg-blue-100 dark:bg-blue-800 px-1.5 py-0.5 rounded">{currentAgentConfig.model}</span>
+            {currentAgentConfig.variant && <span> (variant: {currentAgentConfig.variant})</span>}
+          </p>
+        </div>
+      )}
+
       {toast && (
         <div
           role="alert"
@@ -145,6 +209,32 @@ export function AgentConfigForm({
             <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
           )}
           <span>{toast.message}</span>
+        </div>
+      )}
+
+      {isModelMissing && (
+        <div className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/20">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" />
+          <div className="text-sm text-zinc-700 dark:text-zinc-300">
+            <span className="font-medium">Category fallback</span> — this agent will inherit its model from the <code className="rounded bg-zinc-200 px-1 py-0.5 text-xs dark:bg-zinc-800">{targetCategory}</code> category.
+            {categoryModel ? (
+              <span className="ml-1">Currently resolving to model <code className="rounded bg-blue-100 px-1 py-0.5 text-xs text-blue-800 dark:bg-blue-900/50 dark:text-blue-200">{categoryModel}</code>.</span>
+            ) : defaultModel ? (
+              <span className="ml-1">Falling back to Default Agent resolving to <code className="rounded bg-blue-100 px-1 py-0.5 text-xs text-blue-800 dark:bg-blue-900/50 dark:text-blue-200">{defaultModel}</code>.</span>
+            ) : (
+              <span className="ml-1">Resolving to system default model.</span>
+            )}
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Select a model below only if you want to override it.</p>
+          </div>
+        </div>
+      )}
+
+      {isModelInvalid && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-800 dark:bg-amber-900/20">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500 dark:text-amber-400" />
+          <p className="text-sm text-amber-700 dark:text-amber-300">
+            <span className="font-medium">Model unavailable</span> — <code className="rounded bg-amber-100 px-1 py-0.5 text-xs dark:bg-amber-800">{currentModel}</code> is missing from current providers. Please check your provider settings or select a different model.
+          </p>
         </div>
       )}
 

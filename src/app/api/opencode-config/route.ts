@@ -37,7 +37,19 @@ export async function GET() {
       }
     }
 
-    return NextResponse.json({ agents: filteredAgents });
+    const categories = config.categories || {};
+    const filteredCategories: Record<string, Record<string, unknown>> = {};
+    
+    for (const [catName, catConfig] of Object.entries(categories)) {
+      if (typeof catConfig === 'object' && catConfig !== null && !Array.isArray(catConfig)) {
+        filteredCategories[catName] = filterAgentConfig(catConfig as Record<string, unknown>);
+      }
+    }
+
+    return NextResponse.json({ 
+      agents: filteredAgents,
+      categories: filteredCategories
+    });
   } catch (error) {
     console.error('Error reading config:', error);
     return NextResponse.json(
@@ -65,20 +77,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { agents } = body;
+    const { agents, categories } = body;
 
-    // If agents not provided, nothing to update
-    if (agents === undefined) {
+    // If neither agents nor categories provided, nothing to update
+    if (agents === undefined && categories === undefined) {
       return NextResponse.json(
-        { error: 'Missing agents field' },
+        { error: 'Missing agents or categories field' },
         { status: 400 }
       );
     }
 
-    // Validate agents is an object
-    if (typeof agents !== 'object' || agents === null || Array.isArray(agents)) {
+    // Validate agents is an object (if provided)
+    if (agents !== undefined && (typeof agents !== 'object' || agents === null || Array.isArray(agents))) {
       return NextResponse.json(
         { error: 'Agents must be an object' },
+        { status: 400 }
+      );
+    }
+    
+    // Validate categories is an object (if provided)
+    if (categories !== undefined && (typeof categories !== 'object' || categories === null || Array.isArray(categories))) {
+      return NextResponse.json(
+        { error: 'Categories must be an object' },
         { status: 400 }
       );
     }
@@ -96,36 +116,37 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    for (const [agentName, agentConfig] of Object.entries(agents)) {
-      if (typeof agentConfig !== 'object' || agentConfig === null || Array.isArray(agentConfig)) {
-        return NextResponse.json(
-          { error: `Agent '${agentName}' config must be an object` },
-          { status: 400 }
-        );
-      }
-
-      const config = agentConfig as Record<string, unknown>;
-      const disallowedFields: string[] = [];
-
-      for (const key of Object.keys(config)) {
-        const lowerKey = key.toLowerCase();
-        if (
-          lowerKey.includes('api') ||
-          lowerKey.includes('key') ||
-          lowerKey.includes('token') ||
-          lowerKey.includes('secret') ||
-          lowerKey.includes('password') ||
-          lowerKey.includes('auth') ||
-          lowerKey.includes('credential') ||
-          lowerKey.includes('private') ||
-          lowerKey.includes('cert')
-        ) {
-          disallowedFields.push(key);
+    if (agents !== undefined) {
+      for (const [agentName, agentConfig] of Object.entries(agents)) {
+        if (typeof agentConfig !== 'object' || agentConfig === null || Array.isArray(agentConfig)) {
+          return NextResponse.json(
+            { error: `Agent '${agentName}' config must be an object` },
+            { status: 400 }
+          );
         }
-      }
 
-      if (disallowedFields.length > 0) {
-        return NextResponse.json(
+        const config = agentConfig as Record<string, unknown>;
+        const disallowedFields: string[] = [];
+
+        for (const key of Object.keys(config)) {
+          const lowerKey = key.toLowerCase();
+          if (
+            lowerKey.includes('api') ||
+            lowerKey.includes('key') ||
+            lowerKey.includes('token') ||
+            lowerKey.includes('secret') ||
+            lowerKey.includes('password') ||
+            lowerKey.includes('auth') ||
+            lowerKey.includes('credential') ||
+            lowerKey.includes('private') ||
+            lowerKey.includes('cert')
+          ) {
+            disallowedFields.push(key);
+          }
+        }
+
+        if (disallowedFields.length > 0) {
+          return NextResponse.json(
           {
             error: `Agent '${agentName}' contains disallowed fields: ${disallowedFields.join(', ')}`
           },
@@ -195,20 +216,89 @@ export async function POST(request: NextRequest) {
         ...validatedConfig
       };
     }
-
-    // Update config and save
-    const newConfig = { ...currentConfig, agents: updatedAgents };
-    await writeConfig(newConfig);
-
-    return NextResponse.json(
-      { success: true, agents: updatedAgents },
-      { status: 200 }
-    );
-  } catch (error) {
-    console.error('Error updating config:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
   }
+
+  // Process categories updates if provided
+  const updatedCategories: Record<string, Record<string, unknown>> = {};
+  const currentCategories = currentConfig.categories || {};
+
+  for (const [name, config] of Object.entries(currentCategories)) {
+    if (typeof config === 'object' && config !== null && !Array.isArray(config)) {
+      updatedCategories[name] = config as Record<string, unknown>;
+    }
+  }
+
+  if (categories !== undefined) {
+    for (const [categoryName, categoryConfig] of Object.entries(categories)) {
+      if (typeof categoryConfig !== 'object' || categoryConfig === null || Array.isArray(categoryConfig)) {
+        return NextResponse.json(
+          { error: `Category '${categoryName}' config must be an object` },
+          { status: 400 }
+        );
+      }
+
+      const configObj = categoryConfig as Record<string, unknown>;
+      const validatedCategoryConfig: Record<string, unknown> = {};
+
+      for (const [field, value] of Object.entries(configObj)) {
+        if (field === 'model' || field === 'variant' || field === 'prompt_append' || field === 'description') {
+          if (value !== undefined && typeof value !== 'string') {
+             return NextResponse.json(
+               { error: `Category '${categoryName}': '${field}' must be a string` },
+               { status: 400 }
+             );
+          }
+          validatedCategoryConfig[field] = value;
+        } else if (field === 'temperature' || field === 'top_p') {
+          if (value !== undefined && typeof value !== 'number') {
+             return NextResponse.json(
+               { error: `Category '${categoryName}': '${field}' must be a number` },
+               { status: 400 }
+             );
+          }
+          
+          const numValue = value as number;
+          const temp = field === 'temperature' ? Math.max(0, Math.min(2, numValue)) : numValue;
+          const topP = field === 'top_p' ? Math.max(0, Math.min(1, numValue)) : numValue;
+          
+          validatedCategoryConfig[field] = field === 'temperature' ? temp : topP;
+        } else {
+           return NextResponse.json(
+             { error: `Category '${categoryName}': unknown field '${field}'` },
+             { status: 400 }
+           );
+        }
+      }
+      
+      updatedCategories[categoryName] = {
+        ...((currentCategories[categoryName] as Record<string, unknown>) || {}),
+        ...validatedCategoryConfig
+      };
+    }
+  }
+
+  // Update config and save
+  const newConfig = { ...currentConfig } as Record<string, unknown>;
+  if (agents !== undefined) newConfig.agents = updatedAgents;
+  if (categories !== undefined) newConfig.categories = updatedCategories;
+  
+  // writeConfig type doesn't natively expose categories yet, safely bypassing
+  await writeConfig(
+    newConfig as { 
+      agents?: Record<string, Record<string, unknown>>; 
+      categories?: Record<string, Record<string, unknown>>; 
+    }
+  );
+
+  return NextResponse.json(
+    { success: true, agents: updatedAgents, categories: updatedCategories },
+    { status: 200 }
+  );
+} catch (error) {
+  console.error('Error updating config:', error);
+  return NextResponse.json(
+    { error: 'Internal server error' },
+    { status: 500 }
+  );
+}
 }
