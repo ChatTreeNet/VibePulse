@@ -37,15 +37,32 @@ Real-time dashboard for monitoring and managing OpenCode sessions.
 
 ## Getting Started
 
+### Quick Start (npx)
+
+```bash
+# Run directly without installing
+npx vibepulse
+
+# Or specify a custom port
+PORT=8080 npx vibepulse
+```
+
+Open [http://localhost:3456](http://localhost:3456)
+
+### Development
+
 ```bash
 # Install dependencies
 npm install
 
 # Make sure OpenCode is running locally, then:
 npm run dev
+
+# Or specify a custom port
+PORT=8080 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+Open [http://localhost:3456](http://localhost:3456) (default port: 3456)
 
 ## Architecture
 
