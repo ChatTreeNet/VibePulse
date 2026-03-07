@@ -220,7 +220,7 @@ export async function POST(request: NextRequest) {
 
   // Process categories updates if provided
   const updatedCategories: Record<string, Record<string, unknown>> = {};
-  const currentCategories = currentConfig.categories || {};
+  const currentCategories = (currentConfig.categories || {}) as Record<string, Record<string, unknown>>;
 
   for (const [name, config] of Object.entries(currentCategories)) {
     if (typeof config === 'object' && config !== null && !Array.isArray(config)) {
