@@ -16,15 +16,13 @@ Real-time dashboard for monitoring and managing OpenCode sessions.
 - **Offline snapshot** — Displays last known state when OpenCode is unreachable
 - **Auto-generated cards** — No manual card creation needed
 
-### Configuration Management (New)
-- **Profile System** — Create and manage multiple configuration profiles for different workflows
-  - Built-in profiles (e.g., "Balanced") with optimized agent/category configurations
-  - Custom profiles with user-defined settings
-  - One-click profile switching
-  - **Reset to Profile** — After applying a profile, if you modify configs elsewhere, click "Reset" to restore the profile's original values (with confirmation dialog)
-- **Agent Configuration** — Configure models, temperature, and other parameters for each agent (sisyphus, oracle, librarian, etc.)
-- **Category Configuration** — Set up model preferences for different task categories (visual-engineering, ultrabrain, deep, quick, etc.)
-- **Model Selector** — Smart model selection with grouped providers and search; shows error state with retry button if model fetch fails
+### Configuration Management (oh-my-opencode)
+Configure agent orchestration settings through the UI — no manual file editing needed.
+
+- **Profiles** — Switch between presets (Built-in or custom) for different workflows
+- **Agent / Category Models** — Configure which models to use for each agent and task category
+- **Storage** — Profiles are stored in `~/.config/opencode/profiles/` and overwrite your current configs when applied
+- **Reset** — After modifying configs elsewhere, use "Reset" to restore the profile's original values
 
 ## Tech Stack
 
@@ -33,7 +31,7 @@ Real-time dashboard for monitoring and managing OpenCode sessions.
 - Tailwind CSS
 - @dnd-kit (drag and drop)
 - TanStack Query (state management)
-- @opencode-ai/sdk
+- [@opencode-ai/sdk](https://github.com/opencode-ai/opencode)
 
 ## Getting Started
 
@@ -98,30 +96,9 @@ Open [http://localhost:3456](http://localhost:3456) (default port: 3456)
    - Cascades child session status to parent sessions
 5. Cards are auto-generated and organized into kanban columns
 
-### Configuration Management
-1. **Profiles** are stored in `~/.config/opencode/profiles/`
-2. **Applying a Profile** overwrites your current agent and category configurations
-3. **Reset Functionality** — When a profile shows "Reset" button:
-   - The profile was previously applied but configs have been modified
-   - Click "Reset" and confirm to restore the profile's original values
-4. **Model Fetching** — Models are fetched from `opencode models` CLI command; if it fails, an error state is shown with a retry button (no fallback models)
-
 ## Troubleshooting
 
-### Configuration Management
-
-#### Models not loading / "Failed to fetch models" error
-- Ensure `opencode` CLI is installed and available in your PATH
-- Check that `~/.opencode/bin` is in your PATH
-- Click the **Retry** button in the model selector to attempt fetching again
-- Run `opencode models` in your terminal to verify CLI is working
-
-#### Profile Reset not working
-- Make sure the profile was previously applied (shows "Reset" button instead of "Apply")
-- The reset requires confirmation — check that you clicked "Reset" in the confirmation dialog
-- If configs still don't reset, try re-applying the profile from the profile list
-
-#### Board shows "No sessions found"
+### Board shows "No sessions found"
 - Ensure OpenCode is running locally
 - Check that the SDK can connect (port conflicts)
 - Look for the ℹ️ icon in the header for process hints
@@ -129,7 +106,7 @@ Open [http://localhost:3456](http://localhost:3456) (default port: 3456)
 ### Session status flickers or seems inaccurate
 - This is a known limitation due to sparse OpenCode status signals
 - See [docs/session-status-detection.md](./docs/session-status-detection.md) for detailed explanation
-- The board uses 25-second sticky buffering to reduce flickering
+- The board uses 1-second sticky buffering to reduce flickering
 
 ### IDE doesn't open
 - Make sure VSCode / Antigravity is installed

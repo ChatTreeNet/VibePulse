@@ -30,7 +30,7 @@ flowchart TB
     
     subgraph Process["Status Processing Layer"]
         B1["Part Status Analysis"]
-        B2["Sticky State Management\n25s one-way buffer"]
+        B2["Sticky State Management\n1s one-way buffer"]
         B3["Child Session Cascade"]
     end
     
@@ -86,7 +86,7 @@ flowchart LR
     end
     
     subgraph BusyToIdle["busy → idle"]
-        B1["Detected idle"] --> B2{"lastBusyAt\nwithin 25s?"}
+        B1["Detected idle"] --> B2{"lastBusyAt\nwithin 1s?"}
         B2 -->|Yes| B3["Keep busy\n(sticky)"]
         B2 -->|No| B4["Actually become idle"]
     end
@@ -146,13 +146,13 @@ sequenceDiagram
     
     OC->>API: /session/status = null (sparse)
     API->>Sticky: Query lastBusyAt
-    Sticky-->>Sticky: now - lastBusyAt = 10s < 25s
+    Sticky-->>Sticky: now - lastBusyAt = 0.5s < 1s
     Sticky->>UI: **Keep busy** (sticky)
     
     Note over OC,UI: 30 seconds later
     
     API->>Sticky: Query lastBusyAt
-    Sticky-->>Sticky: now - lastBusyAt = 30s > 25s
+    Sticky-->>Sticky: now - lastBusyAt = 2s > 1s
     Sticky->>UI: **Become idle**
 ```
 
@@ -171,7 +171,7 @@ flowchart TB
     end
     
     subgraph Workarounds["Current Workarounds"]
-        W1["Time buffer (25s sticky)"]
+        W1["Time buffer (1s sticky)"]
         W2["Message history inference (8 messages)"]
         W3["Child session cascade"]
     end
@@ -184,7 +184,7 @@ flowchart TB
 | Shortcoming | Impact Scenario | User Experience |
 |-------------|-----------------|-----------------|
 | **1. Shallow message sampling** | Long computation without output | Misclassified as idle, user thinks task finished |
-| **2. Fixed time window** | One-size-fits-all approach | 25s may be too short for some tasks, too long for others |
+| **2. Fixed time window** | One-size-fits-all approach | 1s may be too short for some tasks |
 | **3. No CPU/IO monitoring** | Process hang or deadlock | Continuously shows busy, user waits in vain |
 | **4. Cannot detect deep subtask nesting** | Nested agent calls | Grandchild task status not trackable |
 | **5. Network jitter sensitive** | Brief disconnection | May trigger unnecessary stale state |
@@ -209,7 +209,7 @@ sequenceDiagram
     
     Task->>Task: Continuous computation (no output)
     
-    Note over User,Task: After 25 seconds...
+    Note over User,Task: After 1 second...
     
     UI->>Task: Query status
     Task-->>UI: No status / completed parts
@@ -235,7 +235,7 @@ sequenceDiagram
 
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
-| `STATUS_STICKY_BUSY_WINDOW_MS` | 25 seconds | Buffer window for busy → idle transition |
+| `STATUS_STICKY_BUSY_WINDOW_MS` | 1 second | Buffer window for busy → idle transition |
 | `CHILD_ACTIVE_WINDOW_MS` | 30 minutes | Child session activity determination window |
 | `CHILD_UNKNOWN_STATE_BUSY_WINDOW_MS` | 2 minutes | Busy assumption for unknown states |
 | `STALL_DETECTION_WINDOW_MS` | 30 seconds | Stall detection (if updated time is within this window) |
