@@ -11,44 +11,41 @@ console.log(`🚀 Starting VibePulse on port ${port}...`);
 console.log(`📊 Open http://localhost:${port} to view the dashboard`);
 console.log('');
 
-// Try to find next binary
-let nextBin;
-const possiblePaths = [
-  // Local development
-  path.join(__dirname, '..', 'node_modules', '.bin', 'next'),
-  // Global install
-  path.join(__dirname, '..', '..', '.bin', 'next'),
-];
+// Standalone mode server.js
+const standaloneServer = path.join(__dirname, '..', '.next', 'standalone', 'server.js');
+const nextBin = path.join(__dirname, '..', 'node_modules', '.bin', 'next');
 
-for (const p of possiblePaths) {
-  if (fs.existsSync(p)) {
-    nextBin = p;
-    break;
-  }
+let command;
+let args;
+
+if (fs.existsSync(standaloneServer)) {
+  // Production standalone mode - fastest, no deps to install
+  console.log('📦 Running in standalone mode...\n');
+  command = 'node';
+  args = [standaloneServer];
+} else if (fs.existsSync(nextBin)) {
+  // Production mode with next start
+  console.log('⚡ Running in production mode...\n');
+  command = nextBin;
+  args = ['start', '-p', port];
+} else {
+  console.error('❌ VibePulse is not built. Please install from npm or build locally:');
+  console.error('   npm install -g vibepulse');
+  process.exit(1);
 }
 
-if (!nextBin) {
-  // Try using npx
-  nextBin = 'npx';
-}
-
-const args = nextBin === 'npx' 
-  ? ['next', 'dev', '-p', port]
-  : ['dev', '-p', port];
-
-const proc = spawn(nextBin, args, {
+const proc = spawn(command, args, {
   cwd: path.join(__dirname, '..'),
   stdio: 'inherit',
   env: {
     ...process.env,
-    PORT: port
+    PORT: port,
+    HOSTNAME: '0.0.0.0'
   }
 });
 
 proc.on('error', (err) => {
   console.error('Failed to start VibePulse:', err.message);
-  console.error('\nMake sure you have Next.js installed:');
-  console.error('  npm install next');
   process.exit(1);
 });
 
