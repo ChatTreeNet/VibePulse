@@ -155,11 +155,11 @@ export function AgentModelSelector({
 
   const providers = Object.keys(groupedModels).sort();
 
-  const handleOpenChange = (open: boolean) => {
-    if (!open) {
-      setSearchQuery('');
-    }
-  };
+   const handleOpenChange = React.useCallback((open: boolean) => {
+     if (!open) {
+       setSearchQuery('');
+     }
+   }, []);
 
   const selectedModel = value ? parseModelName(value) : null;
 
