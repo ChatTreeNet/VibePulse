@@ -133,13 +133,22 @@ export function AgentModelSelector({
     },
   });
 
-  const models = data?.models ?? [];
+   const models = data?.models ?? [];
+
+  // 确保当前选中的模型在列表中（用于回显）
+  const allModels = React.useMemo(() => {
+    const modelSet = new Set(models);
+    if (value && !modelSet.has(value)) {
+      modelSet.add(value);
+    }
+    return Array.from(modelSet).sort();
+  }, [models, value]);
 
   const filteredModels = React.useMemo(() => {
-    if (!searchQuery.trim()) return models;
+    if (!searchQuery.trim()) return allModels;
     const query = searchQuery.toLowerCase();
-    return models.filter((model) => model.toLowerCase().includes(query));
-  }, [models, searchQuery]);
+    return allModels.filter((model) => model.toLowerCase().includes(query));
+  }, [allModels, searchQuery]);
 
   const groupedModels = React.useMemo(() => {
     const groups: Record<string, string[]> = {};
