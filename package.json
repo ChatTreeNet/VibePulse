@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": false,
   "description": "Real-time dashboard for monitoring and managing OpenCode sessions",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ChatTreeNet/VibePulse"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
