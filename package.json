@@ -22,16 +22,6 @@
       "require": "./dist/index.cjs"
     }
   },
-  "peerDependencies": {
-    "next": ">=14.0.0",
-    "react": ">=18.0.0",
-    "react-dom": ">=18.0.0"
-  },
-  "peerDependenciesMeta": {
-    "next": {
-      "optional": true
-    }
-  },
   "scripts": {
     "dev": "next dev -p 3456",
     "build": "next build",
@@ -56,6 +46,9 @@
     "clsx": "^2.1.1",
     "comment-json": "^4.6.2",
     "lucide-react": "^0.575.0",
+    "next": "^16.1.6",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "react-hook-form": "^7.71.2",
     "tailwind-merge": "^3.5.0"
   },
