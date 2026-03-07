@@ -7,7 +7,7 @@ import { useOpencodeSync } from "@/hooks/useOpencodeSync";
 import { isMuted, playToggleFeedbackSound, setMuted, unlockAudio } from "@/lib/notificationSound";
 import { Info } from 'lucide-react';
 import { ConfigButton } from "@/components/opencode-config/ConfigButton";
-import { ConfigPanel } from "@/components/opencode-config/ConfigPanel";
+import { FullscreenConfigPanel } from "@/components/opencode-config/FullscreenConfigPanel";
 import { AgentConfigForm } from "@/components/opencode-config/AgentConfigForm";
 
 const DATE_FILTERS = [
@@ -230,11 +230,9 @@ export default function Home() {
                 <ErrorBoundary>
                     <KanbanBoard filterDays={filterDays} onProcessHintsChange={setProcessHints} />
                 </ErrorBoundary>
-                <ConfigPanel
+                <FullscreenConfigPanel
                     open={configPanelOpen}
-                    onOpenChange={setConfigPanelOpen}
-                    title="OpenCode Settings"
-                    description="Configure agent models and parameters"
+                    onClose={() => setConfigPanelOpen(false)}
                 />
             </main>
         </div>
