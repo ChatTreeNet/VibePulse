@@ -10,6 +10,8 @@ interface AgentConfig {
   model?: string;
   temperature?: number;
   top_p?: number;
+  variant?: string;
+  prompt_append?: string;
 }
 
 interface OpencodeConfigResponse {
@@ -20,6 +22,8 @@ interface AgentConfigFormData {
   model: string;
   temperature: number;
   top_p: number;
+  variant: string;
+  prompt_append: string;
 }
 
 interface AgentConfigFormProps {
@@ -57,6 +61,8 @@ export function AgentConfigForm({
       model: '',
       temperature: 0.7,
       top_p: 1,
+      variant: '',
+      prompt_append: '',
     },
   });
 
@@ -67,6 +73,8 @@ export function AgentConfigForm({
         model: currentAgentConfig.model || '',
         temperature: currentAgentConfig.temperature ?? 0.7,
         top_p: currentAgentConfig.top_p ?? 1,
+        variant: currentAgentConfig.variant || '',
+        prompt_append: currentAgentConfig.prompt_append || '',
       });
     }
   }, [config, agentName, reset]);
@@ -167,6 +175,34 @@ export function AgentConfigForm({
         />
         <p className="text-xs text-zinc-500 dark:text-zinc-400">
           The AI model used for this agent.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <label htmlFor="variant-selector" className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+          Variant
+        </label>
+        <Controller
+          name="variant"
+          control={control}
+          render={({ field }) => (
+            <select
+              id="variant-selector"
+              value={field.value}
+              onChange={(e) => field.onChange(e.target.value)}
+              className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-800 dark:bg-zinc-950"
+            >
+              <option value="">Not set</option>
+              <option value="max">max</option>
+              <option value="high">high</option>
+              <option value="medium">medium</option>
+              <option value="low">low</option>
+              <option value="xhigh">xhigh</option>
+            </select>
+          )}
+        />
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          Model reasoning variant. Higher values mean more thinking.
         </p>
       </div>
 
@@ -274,6 +310,29 @@ export function AgentConfigForm({
         </div>
         <p className="text-xs text-zinc-500 dark:text-zinc-400">
           Controls nucleus sampling: lower values sample from more likely tokens.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <label htmlFor="prompt-append" className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+          Prompt Append
+        </label>
+        <Controller
+          name="prompt_append"
+          control={control}
+          render={({ field }) => (
+            <textarea
+              id="prompt-append"
+              value={field.value}
+              onChange={(e) => field.onChange(e.target.value)}
+              rows={4}
+              className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm resize-none dark:border-zinc-800 dark:bg-zinc-950"
+              placeholder="Additional system instructions to append..."
+            />
+          )}
+        />
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          Additional instructions appended to the system prompt.
         </p>
       </div>
 

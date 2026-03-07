@@ -58,6 +58,21 @@ const PREDEFINED_AGENTS: AgentDefinition[] = [
     name: 'Momus',
     description: 'Review and critique agent - evaluates code and decisions',
   },
+  {
+    key: 'atlas',
+    name: 'Atlas',
+    description: 'Execution-focused agent for task completion',
+  },
+  {
+    key: 'librarian',
+    name: 'Librarian',
+    description: 'Documentation and code exploration agent',
+  },
+  {
+    key: 'explore',
+    name: 'Explore',
+    description: 'Code navigation and discovery agent',
+  },
 ];
 
 interface AgentsConfigPanelProps {
