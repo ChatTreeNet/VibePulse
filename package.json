@@ -18,9 +18,9 @@
     }
   },
   "peerDependencies": {
+    "next": ">=14.0.0",
     "react": ">=18.0.0",
-    "react-dom": ">=18.0.0",
-    "next": ">=14.0.0"
+    "react-dom": ">=18.0.0"
   },
   "peerDependenciesMeta": {
     "next": {
@@ -34,7 +34,7 @@
     "lint": "eslint",
     "test": "vitest",
     "test:run": "vitest run",
-    "build:lib": "tsup src/index.ts --format cjs,esm --dts --clean --outDir dist --external react,react-dom,next"
+    "build:lib": "tsc --project tsconfig.lib.json && tsup src/index.ts --format cjs,esm --clean --outDir dist --external react,react-dom,next"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -48,9 +48,6 @@
     "clsx": "^2.1.1",
     "comment-json": "^4.6.2",
     "lucide-react": "^0.575.0",
-    "next": "16.1.6",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
     "react-hook-form": "^7.71.2",
     "tailwind-merge": "^3.5.0"
   },
@@ -64,6 +61,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4.5.2",
+    "esbuild-plugin-alias": "^0.2.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "jsdom": "^26.1.0",
