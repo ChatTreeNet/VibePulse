@@ -47,10 +47,7 @@ export function AgentConfigForm({
       return res.json();
     },
   });
-
-  const agentConfig = config?.agents?.[agentName] || {};
-
-  const {
+   const {
     control,
     handleSubmit,
     reset,
@@ -65,13 +62,14 @@ export function AgentConfigForm({
 
   React.useEffect(() => {
     if (config) {
+      const currentAgentConfig = config.agents?.[agentName] || {};
       reset({
-        model: agentConfig.model || '',
-        temperature: agentConfig.temperature ?? 0.7,
-        top_p: agentConfig.top_p ?? 1,
+        model: currentAgentConfig.model || '',
+        temperature: currentAgentConfig.temperature ?? 0.7,
+        top_p: currentAgentConfig.top_p ?? 1,
       });
     }
-  }, [config, agentConfig, reset]);
+  }, [config, agentName, reset]);
 
   React.useEffect(() => {
     if (toast) {
