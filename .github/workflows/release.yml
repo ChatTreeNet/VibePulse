@@ -30,8 +30,11 @@ jobs:
       - name: Run tests
         run: npm run test:run
 
-      - name: Build
-        run: npm run build:lib
+      - name: Build Next.js app
+        run: npm run build
+
+      - name: Copy public to standalone
+        run: cp -r public .next/standalone/
 
       - name: Extract version info
         id: version
