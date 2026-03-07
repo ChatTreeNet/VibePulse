@@ -35,7 +35,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { id, name, emoji, description, config } = body;
+    // Support both { id, name, ... } and { profile: { id, name, ... }, config } formats
+    const profileData = body.profile || body;
+    const { id, name, emoji, description } = profileData;
+    const config = body.config || profileData.config;
 
     if (!id || typeof id !== 'string' || id.trim() === '') {
       return NextResponse.json(
