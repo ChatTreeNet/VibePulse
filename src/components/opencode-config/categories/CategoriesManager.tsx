@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader2, AlertCircle, Check } from 'lucide-react';
-import type { CategoryConfig } from '@/types/opencodeConfig';
+import type { CategoryConfig } from '../../../types/opencodeConfig';
 import { CategoriesList } from './CategoriesList';
 import { CategoryConfigForm } from './CategoryConfigForm';
 

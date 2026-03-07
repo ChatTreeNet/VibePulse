@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader2, AlertCircle, Check } from 'lucide-react';
-import type { Profile, ProfileConfig } from '@/types/opencodeConfig';
+import type { Profile, ProfileConfig } from '../../../types/opencodeConfig';
 import { ProfileList } from './ProfileList';
 import { ProfileEditor } from './ProfileEditor';
 

@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/Tabs';
 import { AgentConfigForm } from './AgentConfigForm';
 import { Loader2 } from 'lucide-react';
 

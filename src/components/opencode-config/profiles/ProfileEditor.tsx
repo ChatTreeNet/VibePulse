@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { Check, AlertCircle, Loader2, Upload, ChevronDown, RotateCcw } from 'lucide-react';
-import { Profile, ProfileConfig } from '@/types/opencodeConfig';
+import { Profile, ProfileConfig } from '../../../types/opencodeConfig';
 
 interface ProfileFormData {
   id: string;

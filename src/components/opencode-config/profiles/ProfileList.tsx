@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { Search, Plus, Users, AlertTriangle, X, Check } from 'lucide-react';
-import { Profile } from '@/types/opencodeConfig';
+import { Profile } from '../../../types/opencodeConfig';
 
 interface ProfileListProps {
   /** Array of profiles to display */

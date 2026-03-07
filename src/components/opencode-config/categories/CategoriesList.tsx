@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { Pencil, Trash2, Layers, AlertTriangle, AlertCircle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { CategoryConfig } from '@/types/opencodeConfig';
+import { CategoryConfig } from '../../../types/opencodeConfig';
 
 
 interface ModelsResponse {

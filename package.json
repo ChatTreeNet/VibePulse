@@ -34,7 +34,7 @@
     "lint": "eslint",
     "test": "vitest",
     "test:run": "vitest run",
-    "build:lib": "tsc --project tsconfig.lib.json && tsup src/index.ts --format cjs,esm --clean --outDir dist --external react,react-dom,next"
+    "build:lib": "tsup src/index.ts --format cjs,esm --dts --clean --outDir dist --external react,react-dom,next"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

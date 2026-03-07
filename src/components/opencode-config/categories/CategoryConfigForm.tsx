@@ -5,7 +5,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { Check, AlertCircle, Loader2, AlertTriangle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { AgentModelSelector } from '../AgentModelSelector';
-import { CategoryConfig } from '@/types/opencodeConfig';
+import { CategoryConfig } from '../../../types/opencodeConfig';
 
 interface ModelsResponse {
   models: string[];
