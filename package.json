@@ -12,9 +12,19 @@
   ],
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "require": "./dist/index.cjs",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.cjs"
+    }
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0",
+    "next": ">=14.0.0"
+  },
+  "peerDependenciesMeta": {
+    "next": {
+      "optional": true
     }
   },
   "scripts": {
@@ -24,7 +34,7 @@
     "lint": "eslint",
     "test": "vitest",
     "test:run": "vitest run",
-    "build:lib": "tsup src/index.ts --format cjs,esm --dts --clean --outDir dist"
+    "build:lib": "tsup src/index.ts --format cjs,esm --dts --clean --outDir dist --external react,react-dom,next"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
