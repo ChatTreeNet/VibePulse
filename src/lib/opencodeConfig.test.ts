@@ -5,7 +5,6 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-// 使用临时目录进行测试
 const TEST_CONFIG_DIR = join(tmpdir(), 'vibepulse-test-' + Date.now());
 const TEST_CONFIG_PATH = join(TEST_CONFIG_DIR, 'oh-my-opencode.json');
 
@@ -17,12 +16,12 @@ async function cleanup() {
   } catch {}
 }
 
-describe('opencodeConfig - Bug 覆盖', () => {
+describe('opencodeConfig', () => {
   beforeEach(cleanup);
   afterEach(cleanup);
 
-  describe('设置回显 Bug', () => {
-    it('Bug #1: 配置保存后应该能立即正确读取', async () => {
+  describe('config echo bug fixes', () => {
+    it('should correctly read config immediately after saving', async () => {
       const originalConfig = {
         agents: {
           sisyphus: {
@@ -43,7 +42,7 @@ describe('opencodeConfig - Bug 覆盖', () => {
       expect(echoed).toEqual(originalConfig);
     });
 
-    it('Bug #2: 部分更新不应该丢失其他字段', async () => {
+    it('should not lose other fields during partial update', async () => {
       await writeConfig({
         agents: {
           sisyphus: { model: 'claude', temperature: 0.5 },
@@ -66,12 +65,12 @@ describe('opencodeConfig - Bug 覆盖', () => {
       expect(final.agents?.prometheus).toEqual({ model: 'gpt-4', temperature: 0.7 });
     });
 
-    it('Bug #3: 文件不存在时应该返回空对象', async () => {
+    it('should return empty object when file does not exist', async () => {
       const config = await readConfig(TEST_CONFIG_PATH);
       expect(config).toEqual({});
     });
 
-    it('Bug #4: 无效 JSON 应该返回空对象', async () => {
+    it('should return empty object for invalid JSON', async () => {
       await mkdir(TEST_CONFIG_DIR, { recursive: true });
       await writeFile(TEST_CONFIG_PATH, 'invalid {{{ json');
 

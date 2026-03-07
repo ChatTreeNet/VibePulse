@@ -7,7 +7,6 @@ type ExecFn = (
   callback: (error: ExecException | null, stdout: string, stderr: string) => void
 ) => void;
 
-// 默认实现：运行时从 child_process 动态取，避免 __mocks__ 被 Turbopack 静态解析时污染
 let _execFn: ExecFn | null = null;
 
 function getExecFn(): ExecFn {
@@ -16,7 +15,6 @@ function getExecFn(): ExecFn {
   return require('child_process').exec as ExecFn;
 }
 
-/** 仅供测试注入 mock，生产代码不调用 */
 export function setExecFn(fn: ExecFn | null) {
   _execFn = fn;
 }

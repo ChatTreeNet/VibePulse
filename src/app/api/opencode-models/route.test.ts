@@ -7,7 +7,7 @@ type MockExecFn = (cmd: string, opts: unknown, callback: ExecCallback) => void;
 
 describe('/api/opencode-models', () => {
   describe('handleExecResult', () => {
-    it('CLI 不存在时应返回错误', () => {
+    it('should return error when CLI does not exist', () => {
       const error = new Error('spawn opencode ENOENT') as ExecException;
       const result = handleExecResult(error, '', 'command not found');
 
@@ -16,7 +16,7 @@ describe('/api/opencode-models', () => {
       expect(result.error).toBeTruthy();
     });
 
-    it('超时时应返回错误', () => {
+    it('should return error on timeout', () => {
       const error = new Error('timeout') as ExecException;
       const result = handleExecResult(error, '', '');
 
@@ -24,7 +24,7 @@ describe('/api/opencode-models', () => {
       expect(result.models).toEqual([]);
     });
 
-    it('空输出时应返回错误', () => {
+    it('should return error on empty output', () => {
       const result = handleExecResult(null, '', '');
 
       expect(result.source).toBe('error');
@@ -32,21 +32,21 @@ describe('/api/opencode-models', () => {
       expect(result.error).toContain('No models found');
     });
 
-    it('仅有 stderr 但 stdout 有效时，应正常返回模型', () => {
+    it('should return models when only stderr but stdout is valid', () => {
       const result = handleExecResult(null, 'anthropic/claude\nopenai/gpt-4', 'some warning from CLI');
 
       expect(result.source).toBe('opencode');
       expect(result.models).toContain('anthropic/claude');
     });
 
-    it('仅有 stderr 且 stdout 为空时，应返回错误', () => {
+    it('should return error when only stderr and stdout is empty', () => {
       const result = handleExecResult(null, '', 'some error in stderr');
 
       expect(result.source).toBe('error');
       expect(result.models).toEqual([]);
     });
 
-    it('正常情况应返回 CLI 模型', () => {
+    it('should return CLI models in normal case', () => {
       const result = handleExecResult(null, 'anthropic/claude\nopenai/gpt-4', '');
 
       expect(result.source).toBe('opencode');
@@ -54,7 +54,7 @@ describe('/api/opencode-models', () => {
     });
   });
 
-  describe('GET API 集成测试', () => {
+  describe('GET API Integration Tests', () => {
     const originalHome = process.env.HOME;
     const originalPath = process.env.PATH;
 
@@ -80,8 +80,8 @@ describe('/api/opencode-models', () => {
       setExecFn(exec as never);
     });
 
-    it('GET 成功时应返回 source=opencode 和真实模型列表', async () => {
-      mockExec.mockImplementation((_cmd, _opts, callback) => {
+    it('should return source=opencode and real model list on successful GET', async () => {
+      mockExec.mockImplementation((_cmd: unknown, _opts: unknown, callback: ExecCallback) => {
         callback(null, 'anthropic/claude-3.5-sonnet\nopenai/gpt-4o\ndeepseek/deepseek-chat\n', '');
       });
 
@@ -93,8 +93,8 @@ describe('/api/opencode-models', () => {
       expect(data.models).toContain('anthropic/claude-3.5-sonnet');
     });
 
-    it('GET CLI 有 stderr 但 stdout 有效时，应返回 source=opencode', async () => {
-      mockExec.mockImplementation((_cmd, _opts, callback) => {
+    it('should return source=opencode when CLI has stderr but stdout is valid', async () => {
+      mockExec.mockImplementation((_cmd: unknown, _opts: unknown, callback: ExecCallback) => {
         callback(null, 'anthropic/claude-3.5-sonnet\n', 'Warning: newer version available');
       });
 
@@ -105,8 +105,8 @@ describe('/api/opencode-models', () => {
       expect(data.source).toBe('opencode');
     });
 
-    it('GET CLI 失败时应返回 503 错误', async () => {
-      mockExec.mockImplementation((_cmd, _opts, callback) => {
+    it('should return 503 error when CLI fails', async () => {
+      mockExec.mockImplementation((_cmd: unknown, _opts: unknown, callback: ExecCallback) => {
         callback(new Error('spawn opencode ENOENT') as ExecException, '', 'command not found');
       });
 
@@ -119,8 +119,8 @@ describe('/api/opencode-models', () => {
       expect(data.error).toBeTruthy();
     });
 
-    it('GET 返回空模型时应返回 503 错误', async () => {
-      mockExec.mockImplementation((_cmd, _opts, callback) => {
+    it('should return 503 error when GET returns empty models', async () => {
+      mockExec.mockImplementation((_cmd: unknown, _opts: unknown, callback: ExecCallback) => {
         callback(null, '', '');
       });
 

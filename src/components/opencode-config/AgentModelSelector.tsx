@@ -143,7 +143,7 @@ export function AgentModelSelector({
 
   const models = data?.models ?? [];
 
-  // 确保当前选中的模型在列表中（用于回显）
+  // Ensure the currently selected model is in the list (for echo display)
   const allModels = React.useMemo(() => {
     const modelSet = new Set(models);
     if (value && !modelSet.has(value)) {

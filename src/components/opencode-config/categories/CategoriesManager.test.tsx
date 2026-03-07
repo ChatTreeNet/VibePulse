@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-describe('CategoriesManager - Bug 覆盖', () => {
+describe('CategoriesManager', () => {
   let queryClient: QueryClient;
 
   beforeEach(() => {
@@ -19,7 +19,7 @@ describe('CategoriesManager - Bug 覆盖', () => {
     vi.clearAllMocks();
   });
 
-  it('应该正确加载和显示分类配置', async () => {
+  it('should load and display category configurations correctly', async () => {
     mockFetch.mockResolvedValueOnce({
       json: async () => ({
         agents: {},
@@ -43,7 +43,7 @@ describe('CategoriesManager - Bug 覆盖', () => {
     });
   });
 
-  it('编辑分类后应该正确保存', async () => {
+  it('should save category correctly after editing', async () => {
     const user = userEvent.setup();
 
     mockFetch

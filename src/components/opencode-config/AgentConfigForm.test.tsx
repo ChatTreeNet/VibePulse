@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-describe('AgentConfigForm - 回显 Bug', () => {
+describe('AgentConfigForm - echo bug fix', () => {
   let queryClient: QueryClient;
 
   beforeEach(() => {
@@ -20,7 +20,7 @@ describe('AgentConfigForm - 回显 Bug', () => {
     vi.clearAllMocks();
   });
 
-  it('保存后表单应该显示新值而不是缓存值', async () => {
+  it('should display new value instead of cached value after saving', async () => {
     const user = userEvent.setup();
     
     mockFetch

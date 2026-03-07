@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-describe('ProfileManager - Bug 覆盖', () => {
+describe('ProfileManager', () => {
   let queryClient: QueryClient;
 
   beforeEach(() => {
@@ -19,7 +19,7 @@ describe('ProfileManager - Bug 覆盖', () => {
     vi.clearAllMocks();
   });
 
-  it('应该正确加载和显示配置文件列表', async () => {
+  it('should load and display profile list correctly', async () => {
     mockFetch.mockResolvedValueOnce({
       json: async () => ({
         profiles: [
@@ -42,7 +42,7 @@ describe('ProfileManager - Bug 覆盖', () => {
     });
   });
 
-   it('应用配置文件应该正确调用 API', async () => {
+   it('should call API correctly when applying profile', async () => {
     const user = userEvent.setup();
 
     mockFetch
@@ -79,11 +79,10 @@ describe('ProfileManager - Bug 覆盖', () => {
     });
   });
 
-  it('应用配置文件应该同时失效 profiles 和 opencode-config 查询缓存', async () => {
+  it('should invalidate profiles and opencode-config query cache when applying profile', async () => {
     const user = userEvent.setup();
     const invalidateQueriesSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-    // Prefetch some data into the ['opencode-config'] query to simulate it being cached
     await queryClient.prefetchQuery({
       queryKey: ['opencode-config'],
       queryFn: async () => ({ config: 'test' }),
