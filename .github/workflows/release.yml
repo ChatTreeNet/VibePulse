@@ -3,7 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
 
 permissions:
   contents: read
@@ -32,7 +33,33 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish to npm
+      - name: Extract version info
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          if [[ $TAG =~ - ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            if [[ $TAG =~ -alpha ]]; then
+              echo "dist_tag=alpha" >> $GITHUB_OUTPUT
+            elif [[ $TAG =~ -beta ]]; then
+              echo "dist_tag=beta" >> $GITHUB_OUTPUT
+            else
+              echo "dist_tag=next" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "dist_tag=latest" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish to npm (Latest)
+        if: steps.version.outputs.is_prerelease == 'false'
         run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish to npm (Alpha/Beta/Next)
+        if: steps.version.outputs.is_prerelease == 'true'
+        run: npm publish --provenance --access public --tag ${{ steps.version.outputs.dist_tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
