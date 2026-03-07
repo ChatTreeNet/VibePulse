@@ -2,13 +2,12 @@
 
 import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
-import { ReactNode } from 'react';
+import { AgentsConfigPanel } from './AgentsConfigPanel';
 
 interface ConfigPanelProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     title?: string;
-    children?: ReactNode;
     description?: string;
 }
 
@@ -16,7 +15,6 @@ export function ConfigPanel({
     open,
     onOpenChange,
     title = 'Configuration',
-    children,
     description,
 }: ConfigPanelProps) {
     return (
@@ -59,11 +57,7 @@ export function ConfigPanel({
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-5 scrollbar-thin">
-                        {children ?? (
-                            <div className="text-sm text-gray-500 dark:text-gray-400">
-                                Configuration form will be rendered here.
-                            </div>
-                        )}
+                        <AgentsConfigPanel />
                     </div>
 
                     <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100 dark:border-zinc-700/50 bg-gray-50/50 dark:bg-zinc-800/50 flex-shrink-0">

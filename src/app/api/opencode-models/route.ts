@@ -14,7 +14,7 @@ export async function GET(): Promise<Response> {
   return new Promise<Response>((resolve) => {
     const timeout = 5000;
 
-    exec('opencode models --json', { timeout }, (error, stdout, stderr) => {
+    exec('opencode models', { timeout }, (error, stdout, stderr) => {
       if (error || stderr) {
         return resolve(
           NextResponse.json(
@@ -25,7 +25,7 @@ export async function GET(): Promise<Response> {
       }
 
       try {
-        const models = JSON.parse(stdout);
+        const models = stdout.trim().split('\n').filter(line => line.includes('/'));
         return resolve(
           NextResponse.json(
             { models, source: 'opencode' },

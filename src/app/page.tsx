@@ -235,9 +235,7 @@ export default function Home() {
                     onOpenChange={setConfigPanelOpen}
                     title="OpenCode Settings"
                     description="Configure agent models and parameters"
-                >
-                    <AgentConfigForm agentName="default" onSaveSuccess={() => setConfigPanelOpen(false)} />
-                </ConfigPanel>
+                />
             </main>
         </div>
     );
