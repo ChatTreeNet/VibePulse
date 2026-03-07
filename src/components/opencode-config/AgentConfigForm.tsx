@@ -47,17 +47,17 @@ interface AgentConfigFormProps {
   onSaveSuccess?: () => void;
 }
 
-const AGENT_CATEGORY_MAP: Record<string, string> = {
-  prometheus: 'ultrabrain',
-  hephaestus: 'deep',
-  oracle: 'ultrabrain',
-  metis: 'ultrabrain',
-  momus: 'quick',
-  atlas: 'unspecified-high',
-  librarian: 'writing',
-  explore: 'explore',
-  sisyphus: 'unspecified-high',
-  default: 'unspecified-low',
+const AGENT_FALLBACK_CHAINS: Record<string, string[]> = {
+  sisyphus: ['anthropic/claude-opus-4-6', 'glm-5', 'big-pickle'],
+  prometheus: ['anthropic/claude-opus-4-6', 'openai/gpt-5.4', 'google/gemini-3.1-pro'],
+  metis: ['anthropic/claude-opus-4-6', 'openai/gpt-5.4', 'google/gemini-3.1-pro'],
+  atlas: ['anthropic/claude-sonnet-4-6', 'openai/gpt-5.4'],
+  hephaestus: ['openai/gpt-5.3-codex'],
+  oracle: ['openai/gpt-5.4', 'google/gemini-3.1-pro', 'anthropic/claude-opus-4-6'],
+  momus: ['openai/gpt-5.4', 'anthropic/claude-opus-4-6', 'google/gemini-3.1-pro'],
+  explore: ['github-copilot/grok-code-fast-1', 'minimax-m2.5-free', 'anthropic/claude-haiku-4-5', 'opencode/gpt-5-nano'],
+  librarian: ['google/gemini-3-flash', 'minimax-m2.5-free', 'big-pickle'],
+  default: ['anthropic/claude-opus-4-6', 'openai/gpt-5.4'],
 };
 
 export function AgentConfigForm({ 
@@ -170,9 +170,7 @@ export function AgentConfigForm({
   const isModelInvalid = currentModel && availableModels.size > 0 && !availableModels.has(currentModel);
   const isModelMissing = !currentModel;
 
-  const targetCategory = AGENT_CATEGORY_MAP[agentName] || 'unspecified-low';
-  const categoryModel = config?.categories?.[targetCategory]?.model;
-  const defaultModel = config?.defaultAgent?.model;
+  const fallbackChain = AGENT_FALLBACK_CHAINS[agentName] || AGENT_FALLBACK_CHAINS.default;
 
   if (isLoading) {
     return (
@@ -216,15 +214,24 @@ export function AgentConfigForm({
         <div className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/20">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" />
           <div className="text-sm text-zinc-700 dark:text-zinc-300">
-            <span className="font-medium">Category fallback</span> — this agent will inherit its model from the <code className="rounded bg-zinc-200 px-1 py-0.5 text-xs dark:bg-zinc-800">{targetCategory}</code> category.
-            {categoryModel ? (
-              <span className="ml-1">Currently resolving to model <code className="rounded bg-blue-100 px-1 py-0.5 text-xs text-blue-800 dark:bg-blue-900/50 dark:text-blue-200">{categoryModel}</code>.</span>
-            ) : defaultModel ? (
-              <span className="ml-1">Falling back to Default Agent resolving to <code className="rounded bg-blue-100 px-1 py-0.5 text-xs text-blue-800 dark:bg-blue-900/50 dark:text-blue-200">{defaultModel}</code>.</span>
-            ) : (
-              <span className="ml-1">Resolving to system default model.</span>
-            )}
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Select a model below only if you want to override it.</p>
+            <span className="font-medium">Using default fallback chain</span> — this agent will try models in priority order:
+            <div className="mt-2 flex flex-wrap items-center gap-1">
+              {fallbackChain.map((model, index) => (
+                <React.Fragment key={model}>
+                  <code className={`rounded px-1.5 py-0.5 text-xs ${
+                    index === 0 
+                      ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200 font-medium' 
+                      : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
+                  }`}>
+                    {model}
+                  </code>
+                  {index < fallbackChain.length - 1 && (
+                    <span className="text-zinc-400 dark:text-zinc-500">→</span>
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Select a model below to override the default behavior.</p>
           </div>
         </div>
       )}

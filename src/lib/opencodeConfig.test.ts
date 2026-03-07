@@ -6,7 +6,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 const TEST_CONFIG_DIR = join(tmpdir(), 'vibepulse-test-' + Date.now());
-const TEST_CONFIG_PATH = join(TEST_CONFIG_DIR, 'oh-my-opencode.json');
+const TEST_CONFIG_PATH = join(TEST_CONFIG_DIR, 'oh-my-opencode.jsonc');
 
 async function cleanup() {
   try {

@@ -19,6 +19,8 @@ Real-time dashboard for monitoring and managing OpenCode sessions.
 ### Configuration Management (oh-my-opencode)
 Configure agent orchestration settings through the UI — no manual file editing needed.
 
+![omo Config](./public/omo-config.png)
+
 - **Profiles** — Switch between presets (Built-in or custom) for different workflows
 - **Agent / Category Models** — Configure which models to use for each agent and task category
 - **Storage** — Profiles are stored in `~/.config/opencode/profiles/` and overwrite your current configs when applied

@@ -26,7 +26,17 @@ interface CategoryDefinition {
   description: string;
 }
 
-/** Built-in categories as defined by oh-my-opencode */
+const CATEGORY_FALLBACK_CHAINS: Record<string, string[]> = {
+  'visual-engineering': ['google/gemini-3.1-pro', 'glm-5', 'anthropic/claude-opus-4-6'],
+  ultrabrain: ['openai/gpt-5.3-codex', 'google/gemini-3.1-pro', 'anthropic/claude-opus-4-6'],
+  deep: ['openai/gpt-5.3-codex', 'anthropic/claude-opus-4-6', 'google/gemini-3.1-pro'],
+  artistry: ['google/gemini-3.1-pro', 'anthropic/claude-opus-4-6', 'openai/gpt-5.4'],
+  quick: ['anthropic/claude-haiku-4-5', 'google/gemini-3-flash', 'opencode/gpt-5-nano'],
+  'unspecified-low': ['anthropic/claude-sonnet-4-6', 'openai/gpt-5.3-codex', 'google/gemini-3-flash'],
+  'unspecified-high': ['openai/gpt-5.4', 'anthropic/claude-opus-4-6', 'glm-5', 'kimi-for-coding/k2p5'],
+  writing: ['google/gemini-3-flash', 'anthropic/claude-sonnet-4-6'],
+};
+
 const BUILT_IN_CATEGORIES: CategoryDefinition[] = [
   {
     key: 'visual-engineering',
@@ -165,7 +175,7 @@ function CategoryCard({
           {!hasConfig && (
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
               <AlertCircle className="h-3 w-3" />
-              Default fallback
+              Built-in fallback
             </span>
           )}
         </div>

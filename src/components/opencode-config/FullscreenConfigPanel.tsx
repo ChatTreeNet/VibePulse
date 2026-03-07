@@ -319,7 +319,6 @@ export function FullscreenConfigPanel({ open, onClose }: FullscreenConfigPanelPr
 
                 <AgentConfigForm
                     agentName={selectedAgent}
-                    onSaveSuccess={onClose}
                   />
              </div>
            </main>

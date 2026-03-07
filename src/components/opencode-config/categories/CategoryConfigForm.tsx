@@ -27,6 +27,17 @@ interface CategoryConfigFormProps {
   onCancel: () => void;
 }
 
+const CATEGORY_FALLBACK_CHAINS: Record<string, string[]> = {
+  'visual-engineering': ['google/gemini-3.1-pro', 'glm-5', 'anthropic/claude-opus-4-6'],
+  ultrabrain: ['openai/gpt-5.3-codex', 'google/gemini-3.1-pro', 'anthropic/claude-opus-4-6'],
+  deep: ['openai/gpt-5.3-codex', 'anthropic/claude-opus-4-6', 'google/gemini-3.1-pro'],
+  artistry: ['google/gemini-3.1-pro', 'anthropic/claude-opus-4-6', 'openai/gpt-5.4'],
+  quick: ['anthropic/claude-haiku-4-5', 'google/gemini-3-flash', 'opencode/gpt-5-nano'],
+  'unspecified-low': ['anthropic/claude-sonnet-4-6', 'openai/gpt-5.3-codex', 'google/gemini-3-flash'],
+  'unspecified-high': ['openai/gpt-5.4', 'anthropic/claude-opus-4-6', 'glm-5', 'kimi-for-coding/k2p5'],
+  writing: ['google/gemini-3-flash', 'anthropic/claude-sonnet-4-6'],
+};
+
 export function CategoryConfigForm({
   categoryName,
   initialConfig,
@@ -70,6 +81,7 @@ export function CategoryConfigForm({
   const watchedModel = watch('model');
   const isModelInvalid = watchedModel && availableModels.size > 0 && !availableModels.has(watchedModel);
   const isModelMissing = !watchedModel;
+  const fallbackChain = CATEGORY_FALLBACK_CHAINS[categoryName];
 
   React.useEffect(() => {
     if (toast) {
@@ -130,11 +142,37 @@ export function CategoryConfigForm({
         </p>
       </div>
 
-      {isModelMissing && (
+      {isModelMissing && fallbackChain && (
+        <div className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/20">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" />
+          <div className="text-sm text-zinc-700 dark:text-zinc-300">
+            <span className="font-medium">Using built-in fallback chain</span> — this category will try models in priority order when <code className="rounded bg-zinc-200 px-1 py-0.5 text-xs dark:bg-zinc-800">task()</code> is called:
+            <div className="mt-2 flex flex-wrap items-center gap-1">
+              {fallbackChain.map((model, index) => (
+                <React.Fragment key={model}>
+                  <code className={`rounded px-1.5 py-0.5 text-xs ${
+                    index === 0 
+                      ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200 font-medium' 
+                      : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
+                  }`}>
+                    {model}
+                  </code>
+                  {index < fallbackChain.length - 1 && (
+                    <span className="text-zinc-400 dark:text-zinc-500">→</span>
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Select a model to override the built-in behavior.</p>
+          </div>
+        </div>
+      )}
+      
+      {isModelMissing && !fallbackChain && (
         <div className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/20">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" />
           <p className="text-sm text-zinc-700 dark:text-zinc-300">
-            <span className="font-medium">System default fallback</span> — this category has no specific model assigned. It will fall back to the global default agent model.
+            <span className="font-medium">No model configured</span> — this custom category needs a model to be used with <code className="rounded bg-zinc-200 px-1 py-0.5 text-xs dark:bg-zinc-800">task()</code>.
           </p>
         </div>
       )}

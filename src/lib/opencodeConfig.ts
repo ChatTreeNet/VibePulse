@@ -5,7 +5,7 @@ import { homedir } from 'os';
 import { parse, stringify } from 'comment-json';
 
 export const CONFIG_DIR = join(homedir(), '.config', 'opencode');
-export const CONFIG_PATH = join(CONFIG_DIR, 'oh-my-opencode.json');
+export const CONFIG_PATH = join(CONFIG_DIR, 'oh-my-opencode.jsonc');
 
 export type OpenCodeConfig = {
   agents?: Record<string, unknown>;

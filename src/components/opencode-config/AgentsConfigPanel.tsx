@@ -26,7 +26,7 @@ const PREDEFINED_AGENTS: AgentDefinition[] = [
   {
     key: 'default',
     name: 'Default',
-    description: 'Default agent configuration used as fallback for all agents',
+    description: 'Base configuration for agents without specific model settings',
   },
   {
     key: 'sisyphus',

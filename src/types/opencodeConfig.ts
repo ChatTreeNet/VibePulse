@@ -8,6 +8,8 @@
 export interface AgentConfig {
   /** Model identifier (e.g., 'claude-3-5-sonnet-20241022') */
   model?: string;
+  /** Model variant (e.g., 'max', 'high', 'medium', 'low', 'xhigh') */
+  variant?: string;
   /** Sampling temperature (0-2) */
   temperature?: number;
   /** Top-p sampling parameter (0-1) */
@@ -16,6 +18,8 @@ export interface AgentConfig {
   max_tokens?: number;
   /** System prompt override for this agent */
   system?: string;
+  /** Additional system prompt to append */
+  prompt_append?: string;
   /** Additional model-specific parameters */
   [key: string]: unknown;
 }
