@@ -33,8 +33,10 @@ jobs:
       - name: Build Next.js app
         run: npm run build
 
-      - name: Copy public to standalone
-        run: cp -r public .next/standalone/
+      - name: Copy static files to standalone
+        run: |
+          cp -r public .next/standalone/
+          cp -r .next/static .next/standalone/.next/
 
       - name: Extract version info
         id: version
