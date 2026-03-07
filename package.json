@@ -1,6 +1,6 @@
 {
   "name": "vibepulse",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": false,
   "description": "Real-time dashboard for monitoring and managing OpenCode sessions",
   "repository": {
