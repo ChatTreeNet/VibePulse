@@ -37,35 +37,6 @@ Real-time dashboard for monitoring and managing OpenCode sessions.
 
 ## Getting Started
 
-### Quick Start (npx - Recommended)
-
-The fastest way to run VibePulse without installation:
-
-```bash
-# Run directly with npx
-npx vibepulse
-
-# Or specify a custom port
-PORT=8080 npx vibepulse
-```
-
-Open [http://localhost:3456](http://localhost:3456)
-
-### Global Installation
-
-Install VibePulse globally for easier access:
-
-```bash
-# Install globally
-npm install -g vibepulse
-
-# Run anytime
-vibepulse
-
-# With custom port
-PORT=8080 vibepulse
-```
-
 ### Development
 
 Clone and run from source:
