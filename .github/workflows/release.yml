@@ -35,8 +35,14 @@ jobs:
 
       - name: Copy static files to standalone
         run: |
+          ls -la .next/ || echo "No .next directory"
+          ls -la .next/static/ || echo "No static directory"
+          mkdir -p .next/standalone/.next
           cp -r public .next/standalone/
-          cp -r .next/static .next/standalone/.next/
+          if [ -d ".next/static" ]; then
+            cp -r .next/static .next/standalone/.next/
+          fi
+          ls -la .next/standalone/.next/ || echo "Standalone .next directory contents"
 
       - name: Extract version info
         id: version
