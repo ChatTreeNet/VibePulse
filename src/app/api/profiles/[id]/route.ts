@@ -61,7 +61,10 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const { name, description, emoji, config } = body;
+    // Support both { name, ... } and { profile: { name, ... }, config } formats
+    const profileData = body.profile || body;
+    const { name, description, emoji } = profileData;
+    const config = body.config || profileData.config;
 
     if (name !== undefined) {
       if (typeof name !== 'string' || name.trim() === '') {
