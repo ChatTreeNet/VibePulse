@@ -46,9 +46,14 @@ export async function GET() {
       }
     }
 
+    const vibepulse = config.vibepulse && typeof config.vibepulse === 'object' && !Array.isArray(config.vibepulse)
+      ? config.vibepulse
+      : {};
+
     return NextResponse.json({ 
       agents: filteredAgents,
-      categories: filteredCategories
+      categories: filteredCategories,
+      vibepulse
     });
   } catch (error) {
     console.error('Error reading config:', error);
@@ -77,12 +82,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { agents, categories } = body;
+    const { agents, categories, vibepulse } = body;
 
-    // If neither agents nor categories provided, nothing to update
-    if (agents === undefined && categories === undefined) {
+    // If neither agents, categories, nor vibepulse provided, nothing to update
+    if (agents === undefined && categories === undefined && vibepulse === undefined) {
       return NextResponse.json(
-        { error: 'Missing agents or categories field' },
+        { error: 'Missing agents, categories, or vibepulse field' },
         { status: 400 }
       );
     }
@@ -99,6 +104,14 @@ export async function POST(request: NextRequest) {
     if (categories !== undefined && (typeof categories !== 'object' || categories === null || Array.isArray(categories))) {
       return NextResponse.json(
         { error: 'Categories must be an object' },
+        { status: 400 }
+      );
+    }
+
+    // Validate vibepulse is an object (if provided)
+    if (vibepulse !== undefined && (typeof vibepulse !== 'object' || vibepulse === null || Array.isArray(vibepulse))) {
+      return NextResponse.json(
+        { error: 'Vibepulse must be an object' },
         { status: 400 }
       );
     }
@@ -277,21 +290,75 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Process vibepulse updates if provided
+  const updatedVibepulse: Record<string, unknown> = {};
+  const currentVibepulse = (currentConfig.vibepulse && typeof currentConfig.vibepulse === 'object' && !Array.isArray(currentConfig.vibepulse))
+    ? (currentConfig.vibepulse as Record<string, unknown>)
+    : {};
+
+  if (vibepulse !== undefined) {
+    for (const [key, value] of Object.entries(currentVibepulse)) {
+      updatedVibepulse[key] = value;
+    }
+    
+    for (const [field, value] of Object.entries(vibepulse as Record<string, unknown>)) {
+      if (field === 'stickyBusyDelayMs' || field === 'sessionsRefreshIntervalMs') {
+        if (value !== undefined && typeof value !== 'number') {
+           return NextResponse.json(
+             { error: `Vibepulse: '${field}' must be a number` },
+             { status: 400 }
+           );
+        }
+        if (typeof value === 'number') {
+           if (!Number.isFinite(value)) {
+             return NextResponse.json(
+               { error: `Vibepulse: '${field}' must be a finite number` },
+               { status: 400 }
+             );
+           }
+
+           if (field === 'stickyBusyDelayMs' && value < 0) {
+             return NextResponse.json(
+               { error: `Vibepulse: '${field}' must be a non-negative number` },
+               { status: 400 }
+             );
+           }
+
+           if (field === 'sessionsRefreshIntervalMs' && value <= 0) {
+             return NextResponse.json(
+               { error: `Vibepulse: '${field}' must be greater than 0` },
+               { status: 400 }
+             );
+           }
+
+           updatedVibepulse[field] = value;
+        }
+      } else {
+         return NextResponse.json(
+           { error: `Vibepulse: unknown field '${field}'` },
+           { status: 400 }
+         );
+      }
+    }
+  }
+
   // Update config and save
   const newConfig = { ...currentConfig } as Record<string, unknown>;
   if (agents !== undefined) newConfig.agents = updatedAgents;
   if (categories !== undefined) newConfig.categories = updatedCategories;
+  if (vibepulse !== undefined) newConfig.vibepulse = updatedVibepulse;
   
   // writeConfig type doesn't natively expose categories yet, safely bypassing
   await writeConfig(
     newConfig as { 
       agents?: Record<string, Record<string, unknown>>; 
       categories?: Record<string, Record<string, unknown>>; 
+      vibepulse?: Record<string, unknown>;
     }
   );
 
   return NextResponse.json(
-    { success: true, agents: updatedAgents, categories: updatedCategories },
+    { success: true, agents: updatedAgents, categories: updatedCategories, vibepulse: updatedVibepulse },
     { status: 200 }
   );
 } catch (error) {

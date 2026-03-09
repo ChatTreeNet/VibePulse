@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { CategoriesManager } from './categories/CategoriesManager';
 import { ProfileManager } from './profiles/ProfileManager';
 import { AgentConfigForm } from './AgentConfigForm';
+import { GeneralSettingsForm } from './GeneralSettingsForm';
 
 interface AgentConfig {
   model?: string;
@@ -48,7 +49,7 @@ const AGENTS: AgentItem[] = [
 ];
 
 export function FullscreenConfigPanel({ open, onClose }: FullscreenConfigPanelProps) {
-  const [activeTab, setActiveTab] = React.useState<'agents' | 'categories' | 'profiles'>('agents');
+  const [activeTab, setActiveTab] = React.useState<'general' | 'agents' | 'categories' | 'profiles'>('general');
   const [selectedAgent, setSelectedAgent] = React.useState('default');
   const [searchQuery, setSearchQuery] = React.useState('');
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -148,15 +149,26 @@ export function FullscreenConfigPanel({ open, onClose }: FullscreenConfigPanelPr
           </div>
           <div>
             <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-              Agent Configuration
+              Settings
             </h1>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Manage AI agent settings and preferences
+              Manage application and agent configuration
             </p>
            </div>
          </div>
 
          <div className="flex items-center gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800">
+           <button
+             type="button"
+             onClick={() => setActiveTab('general')}
+             className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+               activeTab === 'general'
+                 ? 'bg-blue-600 text-white shadow-sm'
+                 : 'text-zinc-600 hover:bg-zinc-200 dark:text-zinc-400 dark:hover:bg-zinc-700'
+             }`}
+           >
+             General
+           </button>
            <button
              type="button"
              onClick={() => setActiveTab('agents')}
@@ -202,7 +214,21 @@ export function FullscreenConfigPanel({ open, onClose }: FullscreenConfigPanelPr
         </button>
        </header>
 
-       {activeTab === 'agents' ? (
+       {activeTab === 'general' ? (
+         <main className="flex-1 overflow-y-auto bg-white dark:bg-zinc-950">
+           <div className="mx-auto max-w-4xl p-8">
+             <div className="mb-8">
+               <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+                 General Settings
+               </h2>
+               <p className="text-zinc-500 dark:text-zinc-400">
+                 Manage application-wide behavior and preferences
+               </p>
+             </div>
+             <GeneralSettingsForm />
+           </div>
+         </main>
+       ) : activeTab === 'agents' ? (
          <div className="flex flex-1 overflow-hidden">
            <aside className="flex w-[280px] flex-col border-r border-zinc-200 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/20">
              <div className="border-b border-zinc-200 p-4 dark:border-zinc-800">

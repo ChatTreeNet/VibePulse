@@ -23,6 +23,10 @@ function formatRelativeTime(timestamp: number): string {
     return `${diffDays}d`;
 }
 
+function buildTooltipTitle(lines: string[], debugReason?: string): string {
+    return debugReason ? [...lines, `Reason: ${debugReason}`].join('\n') : lines.join('\n');
+}
+
 function StatusDot({ status, waitingForUser }: { status: string; waitingForUser: boolean }) {
     if (waitingForUser) {
         return (
@@ -208,12 +212,17 @@ function SessionRow({ card, isLast, readOnly = false }: { card: KanbanCard; isLa
         (child) => child.realTimeStatus !== 'idle' || child.waitingForUser
     );
     const hasChildren = visibleChildren.length > 0;
+    const rowTitle = buildTooltipTitle([
+        card.title || 'Untitled Session',
+        `Active ${formatRelativeTime(card.updatedAt)} ago`,
+        `Started ${formatRelativeTime(card.createdAt)} ago`,
+    ], card.debugReason);
 
     return (
         <div className={!isLast ? 'border-b border-gray-50 dark:border-zinc-700/30' : ''}>
             <div
                 className="group/row flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 dark:hover:bg-zinc-700/30 transition-colors"
-                title={`${card.title || 'Untitled Session'}\nActive ${formatRelativeTime(card.updatedAt)} ago · Started ${formatRelativeTime(card.createdAt)} ago`}
+                title={rowTitle}
             >
                 {/* Expand toggle or spacer */}
                 {hasChildren && (
@@ -260,7 +269,7 @@ function SessionRow({ card, isLast, readOnly = false }: { card: KanbanCard; isLa
                         <div
                             key={child.id}
                             className="flex items-center gap-2 pl-8 pr-3 py-1.5 hover:bg-gray-100/50 dark:hover:bg-zinc-700/20 transition-colors"
-                            title={child.title || 'Subagent'}
+                            title={buildTooltipTitle([child.title || 'Subagent'], child.debugReason)}
                         >
                             {/* Tree connector */}
                             <span className="text-gray-300 dark:text-zinc-600 text-xs flex-shrink-0 font-mono leading-none">

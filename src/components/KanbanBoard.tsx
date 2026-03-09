@@ -57,11 +57,26 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
     const [copyFeedback, setCopyFeedback] = useState<'idle' | 'copied' | 'failed'>('idle');
     const [staleSnapshot, setStaleSnapshot] = useState<SessionSnapshot | null>(null);
 
+    const { data: config } = useQuery({
+        queryKey: ['opencode-config'],
+        queryFn: async () => {
+            const res = await fetch('/api/opencode-config');
+            if (!res.ok) throw new Error('Failed to fetch config');
+            return res.json();
+        }
+    });
+
+    const configuredRefreshIntervalMs = config?.vibepulse?.sessionsRefreshIntervalMs;
+    const refreshIntervalMs =
+        typeof configuredRefreshIntervalMs === 'number' && Number.isFinite(configuredRefreshIntervalMs) && configuredRefreshIntervalMs > 0
+            ? configuredRefreshIntervalMs
+            : 5000;
+
     const { data, isLoading, error, dataUpdatedAt, refetch, isFetching } = useQuery<SessionsResponse>({
         queryKey: ['sessions'],
-        queryFn: async () => {
+        queryFn: async ({ signal }: { signal: AbortSignal }) => {
             try {
-                const res = await fetch('/api/sessions');
+                const res = await fetch('/api/sessions', { signal });
                 if (!res.ok) {
                     let payload: { error?: string; hint?: string } | null = null;
                     try {
@@ -95,7 +110,7 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
                 throw fetchError;
             }
         },
-        refetchInterval: 5000,
+        refetchInterval: (query) => query.state.fetchStatus === 'fetching' ? false : refreshIntervalMs,
         refetchIntervalInBackground: true,
         refetchOnReconnect: true,
     });

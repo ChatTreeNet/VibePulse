@@ -1,5 +1,13 @@
 // Core types
 export type KanbanColumn = 'idle' | 'busy' | 'review' | 'done';
+export type SessionDebugReason =
+  | 'child_recent_activity'
+  | 'child_unknown_fallback'
+  | 'direct_status_busy'
+  | 'recent_activity_fallback'
+  | 'sticky_busy'
+  | 'unknown_fallback'
+  | 'waiting_for_user';
 
 export interface KanbanCard {
   id: string;
@@ -13,18 +21,22 @@ export interface KanbanCard {
   status: KanbanColumn;
   opencodeStatus: OpencodeStatus;
   waitingForUser: boolean;
+  debugReason?: SessionDebugReason;
   todosTotal: number;
   todosCompleted: number;
   createdAt: number;
   updatedAt: number;
   archivedAt?: number;
   sortOrder: number;
-  children?: {
-    id: string;
-    title?: string;
-    realTimeStatus: string;
-    waitingForUser: boolean;
-  }[];
+   children?: {
+     id: string;
+     title?: string;
+     realTimeStatus: string;
+     waitingForUser: boolean;
+     debugReason?: SessionDebugReason;
+     createdAt: number;
+     updatedAt: number;
+   }[];
 }
 
 // OpenCode event types
@@ -46,6 +58,7 @@ export interface OpencodeSession {
   hasTranscript?: boolean;
   realTimeStatus?: 'idle' | 'busy' | 'retry';  // Real-time status
   waitingForUser?: boolean;
+  debugReason?: SessionDebugReason;
   children?: OpencodeSession[];
 }
 
