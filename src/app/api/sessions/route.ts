@@ -2,6 +2,7 @@ import { createOpencodeClient } from '@opencode-ai/sdk';
 import { execSync } from 'child_process';
 import path from 'path';
 import { discoverOpencodePorts, discoverOpencodeProcessCwdsWithoutPort } from '@/lib/opencodeDiscovery';
+import { readConfig } from '@/lib/opencodeConfig';
 
 type SessionLike = {
   id: string;
@@ -19,7 +20,6 @@ type SessionLike = {
 const CHILD_ACTIVE_WINDOW_MS = 30 * 60 * 1000;
 const CHILD_UNKNOWN_STATE_BUSY_WINDOW_MS = 2 * 60 * 1000;
 const CHILD_STATUS_MESSAGE_CHECK_LIMIT = 50;
-const STATUS_STICKY_BUSY_WINDOW_MS = 25 * 1000;
 const STALL_DETECTION_WINDOW_MS = 30 * 1000;
 const STATUS_STICKY_RETENTION_MS = 24 * 60 * 60 * 1000;
 
@@ -124,7 +124,7 @@ function normalizeRealtimeStatus(value: string | undefined): StableRealtimeStatu
   return 'idle';
 }
 
-function applyStickyBusyStatus(id: string, status: StableRealtimeStatus, now: number): StableRealtimeStatus {
+function applyStickyBusyStatus(id: string, status: StableRealtimeStatus, now: number, stickyBusyWindowMs: number): StableRealtimeStatus {
   const existing = statusStickyState.get(id) ?? { lastBusyAt: 0, lastSeenAt: now };
 
   if (status === 'busy') {
@@ -140,7 +140,7 @@ function applyStickyBusyStatus(id: string, status: StableRealtimeStatus, now: nu
     return status;
   }
 
-  const shouldKeepBusy = existing.lastBusyAt > 0 && now - existing.lastBusyAt <= STATUS_STICKY_BUSY_WINDOW_MS;
+  const shouldKeepBusy = existing.lastBusyAt > 0 && now - existing.lastBusyAt <= stickyBusyWindowMs;
   existing.lastSeenAt = now;
   statusStickyState.set(id, existing);
   return shouldKeepBusy ? 'busy' : 'idle';
@@ -211,6 +211,22 @@ function getGitBranch(directory: string): string | null {
 }
 
 export async function GET() {
+  // Read config to get stickyBusyDelayMs setting
+  let stickyBusyDelayMs = 25000; // default 25s
+  try {
+    const config = await readConfig();
+    const vibepulseRaw = config.vibepulse && typeof config.vibepulse === 'object' && !Array.isArray(config.vibepulse)
+      ? config.vibepulse
+      : {};
+    const vibepulse = vibepulseRaw as Record<string, unknown>;
+    const stickyDelay = vibepulse['stickyBusyDelayMs'] as number | undefined;
+    if (typeof stickyDelay === 'number' && Number.isFinite(stickyDelay) && stickyDelay >= 0) {
+      stickyBusyDelayMs = stickyDelay;
+    }
+  } catch {
+    // Use default if config read fails
+  }
+
   const rawProcessHints = discoverOpencodeProcessCwdsWithoutPort();
   const processHintsByDirectory = new Map<string, ProcessHint>();
   for (const process of rawProcessHints) {
@@ -560,13 +576,13 @@ export async function GET() {
     for (const session of enrichedSessions) {
       for (const child of session.children) {
         const normalizedChildStatus = normalizeRealtimeStatus(child.realTimeStatus);
-        child.realTimeStatus = applyStickyBusyStatus(`child:${child.id}`, normalizedChildStatus, stickyNow);
+        child.realTimeStatus = applyStickyBusyStatus(`child:${child.id}`, normalizedChildStatus, stickyNow, stickyBusyDelayMs);
       }
 
       const normalizedSessionStatus = normalizeRealtimeStatus(session.realTimeStatus);
       const sessionStatusForStabilization =
         session.waitingForUser && normalizedSessionStatus === 'idle' ? 'busy' : normalizedSessionStatus;
-      session.realTimeStatus = applyStickyBusyStatus(session.id, sessionStatusForStabilization, stickyNow);
+      session.realTimeStatus = applyStickyBusyStatus(session.id, sessionStatusForStabilization, stickyNow, stickyBusyDelayMs);
     }
     pruneStickyState(stickyNow);
 

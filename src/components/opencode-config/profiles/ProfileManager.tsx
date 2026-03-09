@@ -16,6 +16,31 @@ interface ProfileManagerProps {
   onSaveSuccess?: () => void;
 }
 
+const PROFILE_FETCH_TIMEOUT_MS = 8000;
+
+async function fetchProfiles(): Promise<ProfilesResponse> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), PROFILE_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch('/api/profiles', { signal: controller.signal });
+
+    if (!res.ok) {
+      throw new Error('Failed to fetch profiles');
+    }
+
+    return res.json();
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Loading profiles timed out. Please try again.');
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export function ProfileManager({ onSaveSuccess }: ProfileManagerProps) {
   const queryClient = useQueryClient();
   const [editingProfile, setEditingProfile] = React.useState<Profile | null>(null);
@@ -34,13 +59,8 @@ export function ProfileManager({ onSaveSuccess }: ProfileManagerProps) {
     error,
   } = useQuery<ProfilesResponse>({
     queryKey: ['profiles'],
-    queryFn: async () => {
-      const res = await fetch('/api/profiles');
-      if (!res.ok) {
-        throw new Error('Failed to fetch profiles');
-      }
-      return res.json();
-    },
+    queryFn: fetchProfiles,
+    retry: false,
   });
 
   React.useEffect(() => {

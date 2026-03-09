@@ -83,8 +83,16 @@ export interface OhMyOpencodeConfig {
   tools?: Record<string, unknown>;
   /** Custom environment variables */
   env?: Record<string, string>;
-   /** Additional custom configuration */
-   [key: string]: unknown;
+  /** VibePulse settings */
+  vibepulse?: {
+    /** Delay in milliseconds to keep session status 'busy' to prevent flickering */
+    stickyBusyDelayMs?: number;
+    /** Interval in milliseconds to refresh session data */
+    sessionsRefreshIntervalMs?: number;
+    [key: string]: unknown;
+  };
+  /** Additional custom configuration */
+  [key: string]: unknown;
 }
 
 /**

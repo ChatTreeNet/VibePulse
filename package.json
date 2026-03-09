@@ -1,6 +1,6 @@
 {
   "name": "vibepulse",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": false,
   "description": "Real-time dashboard for monitoring and managing OpenCode sessions",
   "repository": {
@@ -9,7 +9,7 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-"files": [
+  "files": [
     ".next",
     "bin",
     "public",
@@ -69,6 +69,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "jsdom": "^26.1.0",
+    "playwright": "^1.58.2",
     "tailwindcss": "^4",
     "tsup": "^8.5.1",
     "typescript": "^5",
