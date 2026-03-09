@@ -2,6 +2,8 @@
 
 [![npm version](https://img.shields.io/npm/v/vibepulse)](https://www.npmjs.com/package/vibepulse)
 
+Current version: **0.1.7**
+
 A tiny dashboard that sits in your browser tab — tired of switching IDE tabs just to check which OpenCode sessions finished.
 
 ![VibePulse README cover](./public/readme-cover.png)
