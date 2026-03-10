@@ -286,7 +286,7 @@ function getGitBranch(directory: string): string | null {
 
 export async function GET() {
   // Read config to get stickyBusyDelayMs setting
-  let stickyBusyDelayMs = 25000; // default 25s
+  let stickyBusyDelayMs = 1000; // default 1s
   try {
     const config = await readConfig();
     const vibepulseRaw = config.vibepulse && typeof config.vibepulse === 'object' && !Array.isArray(config.vibepulse)

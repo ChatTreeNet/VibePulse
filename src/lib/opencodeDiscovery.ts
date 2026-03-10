@@ -1,6 +1,7 @@
 import { execSync } from 'child_process';
 
 const DEFAULT_DISCOVERY_COMMAND_TIMEOUT_MS = 5000;
+const knownPorts = new Set<number>();
 
 export type OpencodeProcessCwd = {
   pid: number;
@@ -145,9 +146,18 @@ export function discoverOpencodePortsWithMeta(): OpencodePortDiscoveryResult {
     deadlineMs: Date.now() + timeoutMs,
   };
 
-  const ports = toUniqueSortedPorts([
+  const discoveredPorts = toUniqueSortedPorts([
     ...getPortsFromLsof(state),
     ...getPortsFromProcessArgs(state),
+  ]);
+
+  for (const port of discoveredPorts) {
+    knownPorts.add(port);
+  }
+
+  const ports = toUniqueSortedPorts([
+    ...discoveredPorts,
+    ...Array.from(knownPorts),
   ]);
 
   return {
