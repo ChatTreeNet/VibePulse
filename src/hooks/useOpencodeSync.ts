@@ -6,6 +6,7 @@ import { OpencodeEvent, OpencodeSession } from '@/types';
 import { playAttentionSound, playAlertSound, playCompleteSound } from '@/lib/notificationSound';
 
 const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
+const WAITING_ENTER_DELAY_MS = 1500;
 
 function getPersistedWaiting(): Record<string, boolean> {
     if (typeof window === 'undefined') return {};
@@ -58,6 +59,7 @@ export function useOpencodeSync() {
     const rotatingRef = useRef(false);
     const initialLoadRef = useRef(true);
     const initialLoadTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const waitingActivationTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
     const MAX_RECONNECT_ATTEMPTS = 5;
     const BASE_RECONNECT_DELAY = 1000;
     const STREAM_ROTATE_INTERVAL = 15000;
@@ -65,10 +67,63 @@ export function useOpencodeSync() {
     const scheduleRefetch = useCallback(() => {
         if (refetchTimeoutRef.current) return;
         refetchTimeoutRef.current = setTimeout(() => {
-            queryClient.invalidateQueries({ queryKey: ['sessions'] });
+            queryClient.invalidateQueries(
+                { queryKey: ['sessions'] },
+                { cancelRefetch: false }
+            );
             refetchTimeoutRef.current = null;
         }, 500);
     }, [queryClient]);
+
+    const clearWaitingActivation = useCallback((id: string) => {
+        const timer = waitingActivationTimersRef.current.get(id);
+        if (timer) {
+            clearTimeout(timer);
+            waitingActivationTimersRef.current.delete(id);
+        }
+    }, []);
+
+    const setWaitingInCache = useCallback((id: string, waiting: boolean) => {
+        queryClient.setQueryData(['sessions'], (old: { sessions: OpencodeSession[] } | undefined) => {
+            if (!old?.sessions) return old;
+
+            let found = false;
+            const sessions = old.sessions.map((session) => {
+                if (session.id === id) {
+                    found = true;
+                    return { ...session, waitingForUser: waiting };
+                }
+
+                if (session.children?.some((child) => child.id === id)) {
+                    found = true;
+                    return {
+                        ...session,
+                        children: session.children.map((child) =>
+                            child.id === id ? { ...child, waitingForUser: waiting } : child
+                        ),
+                    };
+                }
+
+                return session;
+            });
+
+            if (!found) {
+                return old;
+            }
+
+            return { ...old, sessions };
+        });
+    }, [queryClient]);
+
+    const scheduleWaitingActivation = useCallback((id: string) => {
+        clearWaitingActivation(id);
+        const timer = setTimeout(() => {
+            waitingActivationTimersRef.current.delete(id);
+            persistWaiting(id, true);
+            setWaitingInCache(id, true);
+        }, WAITING_ENTER_DELAY_MS);
+        waitingActivationTimersRef.current.set(id, timer);
+    }, [clearWaitingActivation, setWaitingInCache]);
 
     const handleEvent = useCallback((rawEvent: OpencodeEvent | { payload: OpencodeEvent; directory: string }) => {
         // Unwrap GlobalEvent wrapper if present
@@ -207,10 +262,15 @@ export function useOpencodeSync() {
                                     playCompleteSound();
                                 }
                                 if (statusType === 'idle') {
+                                    clearWaitingActivation(s.id);
                                     persistWaiting(s.id, false);
                                 }
                                 if (statusType === 'retry') {
+                                    clearWaitingActivation(s.id);
                                     persistWaiting(s.id, true);
+                                }
+                                if (statusType === 'busy') {
+                                    clearWaitingActivation(s.id);
                                 }
                                 if (statusType === 'idle' && isParentSession && (s.children?.length || 0) > 0) {
                                     scheduleRefetch();
@@ -232,14 +292,16 @@ export function useOpencodeSync() {
                                 if (!initialLoadRef.current) {
                                     playAttentionSound();
                                 }
-                                persistWaiting(sessionId!, true);
-                                return { ...s, waitingForUser: true };
+                                scheduleWaitingActivation(sessionId!);
+                                return s;
                             case 'permission.updated':
+                                clearWaitingActivation(sessionId!);
                                 scheduleRefetch();
                                 return s;
                             case 'question.replied':
                             case 'question.rejected':
                             case 'permission.replied':
+                                clearWaitingActivation(sessionId!);
                                 persistWaiting(sessionId!, false);
                                 return { ...s, waitingForUser: false };
                             case 'session.archived':
@@ -286,7 +348,7 @@ export function useOpencodeSync() {
                 }
             }
         });
-    }, [queryClient, scheduleRefetch]);
+    }, [queryClient, scheduleRefetch, clearWaitingActivation, scheduleWaitingActivation]);
 
     // After initial connection, mark as no longer initial load after 3 seconds
     useEffect(() => {
@@ -302,6 +364,7 @@ export function useOpencodeSync() {
 
     useEffect(() => {
         let eventSource: EventSource | null = null;
+        const waitingActivationTimers = waitingActivationTimersRef.current;
 
         const connect = () => {
             if (reconnectTimeoutRef.current) {
@@ -372,6 +435,10 @@ export function useOpencodeSync() {
                 clearTimeout(streamRotateTimeoutRef.current);
                 streamRotateTimeoutRef.current = null;
             }
+            for (const timer of waitingActivationTimers.values()) {
+                clearTimeout(timer);
+            }
+            waitingActivationTimers.clear();
         };
     }, [handleEvent, scheduleRefetch]);
 

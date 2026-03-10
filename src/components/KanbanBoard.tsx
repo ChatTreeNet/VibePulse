@@ -12,6 +12,7 @@ const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
 const SNAPSHOT_STORAGE_KEY = 'vibepulse:last-sessions-snapshot';
 const START_COMMAND_TEMPLATE = 'opencode --port <PORT>';
 const CARD_ANIMATION_DURATION_MS = 250;
+const SESSIONS_ERROR_DISPLAY_THRESHOLD = 3;
 
 const COLUMNS: { id: KanbanColumn; title: string }[] = [
     { id: 'idle', title: 'Idle' },
@@ -72,7 +73,7 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
             ? configuredRefreshIntervalMs
             : 5000;
 
-    const { data, isLoading, error, dataUpdatedAt, refetch, isFetching } = useQuery<SessionsResponse>({
+    const { data, isLoading, error, dataUpdatedAt, refetch, isFetching, failureCount } = useQuery<SessionsResponse>({
         queryKey: ['sessions'],
         queryFn: async ({ signal }: { signal: AbortSignal }) => {
             try {
@@ -101,6 +102,10 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
 
                 return res.json();
             } catch (error) {
+                if (error instanceof Error && error.name === 'AbortError') {
+                    throw error;
+                }
+
                 if (error instanceof Error && (error as SessionsFetchError).kind) {
                     throw error;
                 }
@@ -113,9 +118,11 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
         refetchInterval: (query) => query.state.fetchStatus === 'fetching' ? false : refreshIntervalMs,
         refetchIntervalInBackground: true,
         refetchOnReconnect: true,
+        retry: false,
     });
 
     const activeError = error as SessionsFetchError | null;
+    const hasSessionsResponse = data !== undefined;
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -174,6 +181,17 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
     }, [activeError, data?.sessions, staleSnapshot?.sessions]);
 
     const isShowingStaleData = !!activeError && !data?.sessions && !!staleSnapshot?.sessions?.length;
+    const shouldShowHardError =
+        !!activeError &&
+        !isShowingStaleData &&
+        !hasSessionsResponse &&
+        failureCount >= SESSIONS_ERROR_DISPLAY_THRESHOLD;
+    const shouldShowTransientRecovery =
+        !!activeError &&
+        !isShowingStaleData &&
+        !hasSessionsResponse &&
+        failureCount > 0 &&
+        failureCount < SESSIONS_ERROR_DISPLAY_THRESHOLD;
 
     const processHints = useMemo(() => {
         if (data?.processHints) {
@@ -293,7 +311,7 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
         return <LoadingState />;
     }
 
-    if (error && !isShowingStaleData) {
+    if (shouldShowHardError) {
         const isOpencodeUnavailable = activeError?.kind === 'opencode_unavailable';
         const title = isOpencodeUnavailable ? 'OpenCode is not running' : 'Failed to load sessions';
         const description = isOpencodeUnavailable
@@ -348,6 +366,45 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
                             </button>
                         ) : null}
                     </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (shouldShowTransientRecovery) {
+        return (
+            <div className="flex-1 flex items-center justify-center p-8">
+                <div className="max-w-md w-full text-center">
+                    <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-amber-100 dark:bg-amber-900/30 rounded-full">
+                        <svg
+                            className="w-6 h-6 text-amber-600 dark:text-amber-400"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                        >
+                            <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                            />
+                        </svg>
+                    </div>
+                    <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                        Reconnecting to session service...
+                    </h2>
+                    <p className="text-gray-600 dark:text-gray-400 mb-4">
+                        Temporary fetch failure ({failureCount}/{SESSIONS_ERROR_DISPLAY_THRESHOLD}). Retrying automatically.
+                    </p>
+                    <button
+                        type="button"
+                        onClick={() => refetch()}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={isFetching}
+                    >
+                        {isFetching ? 'Retrying...' : 'Retry now'}
+                    </button>
                 </div>
             </div>
         );

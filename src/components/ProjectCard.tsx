@@ -81,7 +81,10 @@ function HeaderActionMenu({ cards, readOnly = false }: { cards: KanbanCard[]; re
             fetch(`/api/sessions/${card.id}/archive`, { method: 'POST' })
         ));
         setOpen(false);
-        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        queryClient.invalidateQueries(
+            { queryKey: ['sessions'] },
+            { cancelRefetch: false }
+        );
     };
 
     const handleDeleteAll = async (e: React.MouseEvent) => {
@@ -91,7 +94,10 @@ function HeaderActionMenu({ cards, readOnly = false }: { cards: KanbanCard[]; re
             fetch(`/api/sessions/${card.id}/delete`, { method: 'POST' })
         ));
         setOpen(false);
-        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        queryClient.invalidateQueries(
+            { queryKey: ['sessions'] },
+            { cancelRefetch: false }
+        );
     };
 
     if (readOnly) return null;
@@ -155,7 +161,10 @@ function RowActionMenu({ cardId, archived }: { cardId: string; archived: boolean
             await fetch(`/api/sessions/${cardId}/archive`, { method: 'POST' });
         } finally {
             setOpen(false);
-            queryClient.invalidateQueries({ queryKey: ['sessions'] });
+            queryClient.invalidateQueries(
+                { queryKey: ['sessions'] },
+                { cancelRefetch: false }
+            );
         }
     };
 
@@ -165,7 +174,10 @@ function RowActionMenu({ cardId, archived }: { cardId: string; archived: boolean
             await fetch(`/api/sessions/${cardId}/delete`, { method: 'POST' });
         } finally {
             setOpen(false);
-            queryClient.invalidateQueries({ queryKey: ['sessions'] });
+            queryClient.invalidateQueries(
+                { queryKey: ['sessions'] },
+                { cancelRefetch: false }
+            );
         }
     };
 
