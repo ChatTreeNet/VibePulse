@@ -1,9 +1,16 @@
-import { discoverOpencodePorts } from '@/lib/opencodeDiscovery';
+import { discoverOpencodePortsWithMeta } from '@/lib/opencodeDiscovery';
 
 export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
     const { id: sessionId } = await params;
-    const ports = discoverOpencodePorts();
+    const { ports, timedOut } = discoverOpencodePortsWithMeta();
     if (!ports.length) {
+        if (timedOut) {
+            return Response.json(
+                { error: 'OpenCode discovery timed out' },
+                { status: 503 }
+            );
+        }
+
         return Response.json(
             { error: 'OpenCode server not found' },
             { status: 503 }

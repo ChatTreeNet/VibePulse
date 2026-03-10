@@ -1,13 +1,23 @@
 import { createOpencodeClient } from '@opencode-ai/sdk';
-import { discoverOpencodePorts } from '@/lib/opencodeDiscovery';
+import { discoverOpencodePortsWithMeta } from '@/lib/opencodeDiscovery';
 
 export async function GET(
     _: Request,
     { params }: { params: Promise<{ id: string }> }
 ) {
-    const ports = discoverOpencodePorts();
+    const { ports, timedOut } = discoverOpencodePortsWithMeta();
     
     if (!ports.length) {
+        if (timedOut) {
+            return Response.json(
+                {
+                    error: 'OpenCode discovery timed out',
+                    hint: 'Host process discovery exceeded timeout. Retry shortly, or increase OPENCODE_DISCOVERY_TIMEOUT_MS.'
+                },
+                { status: 503 }
+            );
+        }
+
         return Response.json(
             {
                 error: 'OpenCode server not found',

@@ -1,11 +1,60 @@
 import { execSync } from 'child_process';
 
-const knownPorts = new Set<number>();
+const DEFAULT_DISCOVERY_COMMAND_TIMEOUT_MS = 5000;
 
 export type OpencodeProcessCwd = {
   pid: number;
   cwd: string;
 };
+
+export type OpencodePortDiscoveryResult = {
+  ports: number[];
+  timedOut: boolean;
+};
+
+export type OpencodeProcessCwdDiscoveryResult = {
+  processes: OpencodeProcessCwd[];
+  timedOut: boolean;
+};
+
+type DiscoveryState = {
+  timedOut: boolean;
+  timeoutMs: number;
+  deadlineMs: number;
+};
+
+function getDiscoveryCommandTimeoutMs(): number {
+  const parsedTimeout = Number(process.env.OPENCODE_DISCOVERY_TIMEOUT_MS);
+  return Number.isFinite(parsedTimeout) && parsedTimeout > 0
+    ? parsedTimeout
+    : DEFAULT_DISCOVERY_COMMAND_TIMEOUT_MS;
+}
+
+function isCommandTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  type TimeoutLikeError = Error & {
+    code?: string;
+    signal?: string;
+    killed?: boolean;
+  };
+
+  const timeoutError = error as TimeoutLikeError;
+  const message = timeoutError.message.toLowerCase();
+  return timeoutError.code === 'ETIMEDOUT' || message.includes('timed out') || message.includes('etimedout');
+}
+
+function getRemainingTimeoutMs(state: DiscoveryState): number | null {
+  const remainingMs = state.deadlineMs - Date.now();
+  if (remainingMs <= 0) {
+    state.timedOut = true;
+    return null;
+  }
+
+  return Math.max(1, Math.min(state.timeoutMs, remainingMs));
+}
 
 function toUniqueSortedPorts(ports: number[]): number[] {
   return Array.from(
@@ -13,11 +62,17 @@ function toUniqueSortedPorts(ports: number[]): number[] {
   ).sort((a, b) => a - b);
 }
 
-function getPortsFromLsof(): number[] {
+function getPortsFromLsof(state: DiscoveryState): number[] {
   try {
+    const timeoutMs = getRemainingTimeoutMs(state);
+    if (timeoutMs === null) {
+      return [];
+    }
+
     const output = execSync('lsof -nP -iTCP -sTCP:LISTEN', {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: timeoutMs,
     });
     const lines = output.split('\n');
     const ports: number[] = [];
@@ -46,47 +101,72 @@ function getPortsFromLsof(): number[] {
     }
 
     return ports;
-  } catch {
+  } catch (error) {
+    if (isCommandTimeoutError(error)) {
+      state.timedOut = true;
+    }
     return [];
   }
 }
 
-function getPortsFromProcessArgs(): number[] {
+function getPortsFromProcessArgs(state: DiscoveryState): number[] {
   try {
+    const timeoutMs = getRemainingTimeoutMs(state);
+    if (timeoutMs === null) {
+      return [];
+    }
+
     const output = execSync('ps -axo command', {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: timeoutMs,
     });
     const matches = [...output.matchAll(/\bopencode\b[^\n]*\b--port(?:=|\s+)(\d+)\b/g)];
     return matches
       .map((match) => parseInt(match[1], 10))
       .filter((port) => Number.isFinite(port));
-  } catch {
+  } catch (error) {
+    if (isCommandTimeoutError(error)) {
+      state.timedOut = true;
+    }
     return [];
   }
 }
 
 export function discoverOpencodePorts(): number[] {
-  const discoveredPorts = toUniqueSortedPorts([
-    ...getPortsFromLsof(),
-    ...getPortsFromProcessArgs(),
-  ]);
-
-  for (const port of discoveredPorts) {
-    knownPorts.add(port);
-  }
-
-  return toUniqueSortedPorts([
-    ...discoveredPorts,
-    ...Array.from(knownPorts),
-  ]);
+  return discoverOpencodePortsWithMeta().ports;
 }
 
-function getOpencodePidsWithoutPortFlag(): number[] {
+export function discoverOpencodePortsWithMeta(): OpencodePortDiscoveryResult {
+  const timeoutMs = getDiscoveryCommandTimeoutMs();
+  const state: DiscoveryState = {
+    timedOut: false,
+    timeoutMs,
+    deadlineMs: Date.now() + timeoutMs,
+  };
+
+  const ports = toUniqueSortedPorts([
+    ...getPortsFromLsof(state),
+    ...getPortsFromProcessArgs(state),
+  ]);
+
+  return {
+    ports,
+    timedOut: state.timedOut,
+  };
+}
+
+function getOpencodePidsWithoutPortFlag(state: DiscoveryState): number[] {
   try {
+    const timeoutMs = getRemainingTimeoutMs(state);
+    if (timeoutMs === null) {
+      return [];
+    }
+
     const output = execSync('ps -axo pid=,command=', {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: timeoutMs,
     });
 
     const pids: number[] = [];
@@ -110,16 +190,25 @@ function getOpencodePidsWithoutPortFlag(): number[] {
     }
 
     return Array.from(new Set(pids));
-  } catch {
+  } catch (error) {
+    if (isCommandTimeoutError(error)) {
+      state.timedOut = true;
+    }
     return [];
   }
 }
 
-function getCwdForPid(pid: number): string | null {
+function getCwdForPid(pid: number, state: DiscoveryState): string | null {
   try {
+    const timeoutMs = getRemainingTimeoutMs(state);
+    if (timeoutMs === null) {
+      return null;
+    }
+
     const output = execSync(`lsof -nP -a -p ${pid} -d cwd -Fn`, {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: timeoutMs,
     });
 
     const cwdLine = output
@@ -128,20 +217,39 @@ function getCwdForPid(pid: number): string | null {
 
     if (!cwdLine) return null;
     return cwdLine.slice(1);
-  } catch {
+  } catch (error) {
+    if (isCommandTimeoutError(error)) {
+      state.timedOut = true;
+    }
     return null;
   }
 }
 
 export function discoverOpencodeProcessCwdsWithoutPort(): OpencodeProcessCwd[] {
-  const pids = getOpencodePidsWithoutPortFlag();
-  if (!pids.length) return [];
+  return discoverOpencodeProcessCwdsWithoutPortWithMeta().processes;
+}
+
+export function discoverOpencodeProcessCwdsWithoutPortWithMeta(): OpencodeProcessCwdDiscoveryResult {
+  const timeoutMs = getDiscoveryCommandTimeoutMs();
+  const state: DiscoveryState = {
+    timedOut: false,
+    timeoutMs,
+    deadlineMs: Date.now() + timeoutMs,
+  };
+
+  const pids = getOpencodePidsWithoutPortFlag(state);
+  if (!pids.length) {
+    return {
+      processes: [],
+      timedOut: state.timedOut,
+    };
+  }
 
   const processes: OpencodeProcessCwd[] = [];
   const seen = new Set<string>();
 
   for (const pid of pids) {
-    const cwd = getCwdForPid(pid);
+    const cwd = getCwdForPid(pid, state);
     if (!cwd) continue;
 
     const key = `${pid}:${cwd}`;
@@ -150,5 +258,8 @@ export function discoverOpencodeProcessCwdsWithoutPort(): OpencodeProcessCwd[] {
     processes.push({ pid, cwd });
   }
 
-  return processes;
+  return {
+    processes,
+    timedOut: state.timedOut,
+  };
 }
