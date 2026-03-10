@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { OpencodeEvent, OpencodeSession } from '@/types';
-import { playAttentionSound, playAlertSound, playCompleteSound } from '@/lib/notificationSound';
+import { playAttentionSound, playAlertSound } from '@/lib/notificationSound';
 
 const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
 const WAITING_ENTER_DELAY_MS = 1500;
@@ -67,7 +67,7 @@ export function useOpencodeSync() {
     const scheduleRefetch = useCallback(() => {
         if (refetchTimeoutRef.current) return;
         refetchTimeoutRef.current = setTimeout(() => {
-            queryClient.invalidateQueries(
+            void queryClient.invalidateQueries(
                 { queryKey: ['sessions'] },
                 { cancelRefetch: false }
             );
@@ -248,18 +248,9 @@ export function useOpencodeSync() {
                             case 'session.status': {
                                 const statusType = event.properties?.status?.type as 'idle' | 'busy' | 'retry' | undefined;
                                 if (!statusType) return s;
-                                const previousStatus = s.realTimeStatus;
                                 const isParentSession = !s.parentID;
                                 if (statusType === 'retry' && !initialLoadRef.current) {
                                     playAlertSound();
-                                }
-                                if (
-                                    statusType === 'idle' &&
-                                    !initialLoadRef.current &&
-                                    !s.parentID &&
-                                    (previousStatus === 'busy' || previousStatus === 'retry')
-                                ) {
-                                    playCompleteSound();
                                 }
                                 if (statusType === 'idle') {
                                     clearWaitingActivation(s.id);

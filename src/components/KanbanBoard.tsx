@@ -53,8 +53,8 @@ type SessionsResponse = {
 export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardProps) {
     const waitingStateRef = useRef<Record<string, boolean>>({});
     const waitingInitRef = useRef(false);
-    const statusStateRef = useRef<Record<string, 'idle' | 'busy' | 'retry'>>({});
-    const statusInitRef = useRef(false);
+    const cardStatusStateRef = useRef<Record<string, KanbanColumn>>({});
+    const cardStatusInitRef = useRef(false);
     const [copyFeedback, setCopyFeedback] = useState<'idle' | 'copied' | 'failed'>('idle');
     const [staleSnapshot, setStaleSnapshot] = useState<SessionSnapshot | null>(null);
 
@@ -264,40 +264,6 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
         }
     }, [enrichedSessions]);
 
-    useEffect(() => {
-        const nextStatus: Record<string, 'idle' | 'busy' | 'retry'> = {};
-
-        for (const session of enrichedSessions as Array<{ id: string; realTimeStatus?: string }>) {
-            const normalized =
-                session.realTimeStatus === 'busy' || session.realTimeStatus === 'retry'
-                    ? session.realTimeStatus
-                    : 'idle';
-            nextStatus[session.id] = normalized;
-        }
-
-        if (!statusInitRef.current) {
-            statusInitRef.current = true;
-            statusStateRef.current = nextStatus;
-            return;
-        }
-
-        let shouldPlayComplete = false;
-
-        for (const [id, currentStatus] of Object.entries(nextStatus)) {
-            const previousStatus = statusStateRef.current[id];
-            if ((previousStatus === 'busy' || previousStatus === 'retry') && currentStatus === 'idle') {
-                shouldPlayComplete = true;
-                break;
-            }
-        }
-
-        statusStateRef.current = nextStatus;
-
-        if (shouldPlayComplete && !isShowingStaleData) {
-            setTimeout(() => playCompleteSound(), CARD_ANIMATION_DURATION_MS);
-        }
-    }, [enrichedSessions, isShowingStaleData]);
-
     const cards: KanbanCard[] = useMemo(() => {
         const allCards = transformSessions(enrichedSessions);
         if (filterDays === 0) {
@@ -306,6 +272,30 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
         const cutoff = dataUpdatedAt - filterDays * 24 * 60 * 60 * 1000;
         return allCards.filter((card) => card.updatedAt >= cutoff);
     }, [dataUpdatedAt, enrichedSessions, filterDays]);
+
+    useEffect(() => {
+        const nextCardStatus: Record<string, KanbanColumn> = {};
+        for (const card of cards) {
+            nextCardStatus[card.id] = card.status;
+        }
+
+        if (!cardStatusInitRef.current) {
+            cardStatusInitRef.current = true;
+            cardStatusStateRef.current = nextCardStatus;
+            return;
+        }
+
+        const shouldPlayComplete = Object.entries(nextCardStatus).some(([id, currentStatus]) => {
+            const previousStatus = cardStatusStateRef.current[id];
+            return !!previousStatus && previousStatus !== 'idle' && currentStatus === 'idle';
+        });
+
+        cardStatusStateRef.current = nextCardStatus;
+
+        if (shouldPlayComplete && !isShowingStaleData) {
+            setTimeout(() => playCompleteSound(), CARD_ANIMATION_DURATION_MS);
+        }
+    }, [cards, isShowingStaleData]);
 
     if (isLoading) {
         return <LoadingState />;
