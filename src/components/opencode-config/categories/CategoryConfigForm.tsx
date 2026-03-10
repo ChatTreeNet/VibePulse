@@ -10,6 +10,7 @@ import { CategoryConfig } from '../../../types/opencodeConfig';
 interface ModelsResponse {
   models: string[];
   source: string;
+  error?: string;
 }
 
 interface CategoryConfigFormData {
@@ -68,9 +69,11 @@ export function CategoryConfigForm({
     queryKey: ['opencode-models'],
     queryFn: async () => {
       const res = await fetch('/api/opencode-models');
-      if (!res.ok) throw new Error('Failed to fetch models');
-      return res.json();
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Failed to fetch models');
+      return data;
     },
+    retry: false,
   });
 
   const availableModels = React.useMemo(
