@@ -1,4 +1,5 @@
 import { discoverOpencodePortsWithMeta } from '@/lib/opencodeDiscovery';
+import { clearSessionForceUnarchived } from '@/lib/sessionArchiveOverrides';
 
 export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
     const { id: sessionId } = await params;
@@ -27,6 +28,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
                 body: JSON.stringify({ time: { archived: Date.now() } })
             });
             if (response.ok) {
+                clearSessionForceUnarchived(sessionId);
                 return Response.json({ success: true });
             }
             console.error(`Failed to archive session on port ${port}:`, await response.text());

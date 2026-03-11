@@ -6,6 +6,11 @@ import {
   discoverOpencodeProcessCwdsWithoutPortWithMeta,
 } from '@/lib/opencodeDiscovery';
 import { readConfig } from '@/lib/opencodeConfig';
+import {
+  markSessionForceUnarchived,
+  pruneSessionForceUnarchived,
+  shouldForceSessionUnarchived,
+} from '@/lib/sessionArchiveOverrides';
 
 type SessionLike = {
   id: string;
@@ -401,6 +406,27 @@ export async function GET() {
     const parentSessions = sessions.filter((s) => !s.parentID);
     const childSessions = sessions.filter((s) => !!s.parentID);
 
+    const lifecycleNow = Date.now();
+    pruneSessionForceUnarchived(lifecycleNow);
+
+    for (const session of parentSessions) {
+      if (session.time?.archived !== undefined && shouldForceSessionUnarchived(session.id, lifecycleNow)) {
+        session.time = {
+          ...session.time,
+          archived: undefined,
+        };
+      }
+    }
+
+    for (const child of childSessions) {
+      if (child.time?.archived !== undefined && shouldForceSessionUnarchived(child.id, lifecycleNow)) {
+        child.time = {
+          ...child.time,
+          archived: undefined,
+        };
+      }
+    }
+
     if (results.length > 0 && failedPorts.length === results.length) {
       pruneStickyState(Date.now(), new Set<string>());
       return Response.json(
@@ -737,6 +763,10 @@ export async function GET() {
           stickyNow,
           stickyBusyDelayMs
         );
+
+        if (child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry' || child.waitingForUser) {
+          markSessionForceUnarchived(child.id, stickyNow);
+        }
       }
 
       const normalizedSessionStatus = normalizeRealtimeStatus(session.realTimeStatus);
@@ -752,6 +782,10 @@ export async function GET() {
         session.realTimeStatus === 'retry' ||
         session.waitingForUser ||
         hasActiveChildren;
+
+      if (shouldAutoUnarchive) {
+        markSessionForceUnarchived(session.id, stickyNow);
+      }
 
       if (shouldAutoUnarchive && session.time?.archived) {
         session.time = {
