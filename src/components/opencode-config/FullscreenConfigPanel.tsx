@@ -22,6 +22,12 @@ interface ModelsResponse {
   error?: string;
 }
 
+function isModelsResponse(value: unknown): value is ModelsResponse {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as { models?: unknown };
+  return Array.isArray(candidate.models);
+}
+
 type AgentStatus = 'ok' | 'invalid' | 'unconfigured';
 
 interface FullscreenConfigPanelProps {
@@ -70,8 +76,30 @@ export function FullscreenConfigPanel({ open, onClose }: FullscreenConfigPanelPr
     queryKey: ['opencode-models'],
     queryFn: async () => {
       const res = await fetch('/api/opencode-models');
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || 'Failed to fetch models');
+      let parsed: unknown = null;
+      try {
+        parsed = await res.json();
+      } catch {
+        parsed = null;
+      }
+
+      const errorMessage =
+        parsed &&
+        typeof parsed === 'object' &&
+        'error' in parsed &&
+        typeof parsed.error === 'string'
+          ? parsed.error
+          : null;
+
+      if (!res.ok || errorMessage) {
+        throw new Error(errorMessage || `Failed to fetch models (${res.status})`);
+      }
+
+      if (!isModelsResponse(parsed)) {
+        throw new Error('Invalid models response');
+      }
+
+      const data = parsed;
       return data;
     },
     enabled: open,
