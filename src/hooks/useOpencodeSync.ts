@@ -3,10 +3,11 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { OpencodeEvent, OpencodeSession } from '@/types';
-import { playAttentionSound, playAlertSound } from '@/lib/notificationSound';
+import { playAlertSound, playAttentionSound } from '@/lib/notificationSound';
 
 const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
 const WAITING_ENTER_DELAY_MS = 1500;
+const ATTENTION_SOUND_DELAY_MS = 250;
 
 function getPersistedWaiting(): Record<string, boolean> {
     if (typeof window === 'undefined') return {};
@@ -133,6 +134,20 @@ export function useOpencodeSync() {
             return;
         }
         const sessionId = event.properties?.sessionID;
+        const isAskEvent = event.type === 'question.asked' || event.type === 'permission.asked';
+        const isResolvedInteractionEvent =
+            event.type === 'question.replied' ||
+            event.type === 'question.rejected' ||
+            event.type === 'permission.replied';
+
+        if (sessionId && isAskEvent) {
+            persistWaiting(sessionId, true);
+        }
+
+        if (sessionId && isResolvedInteractionEvent) {
+            clearWaitingActivation(sessionId);
+            persistWaiting(sessionId, false);
+        }
         
         const handledEvents = [
             'session.status',
@@ -249,6 +264,7 @@ export function useOpencodeSync() {
                                 const statusType = event.properties?.status?.type as 'idle' | 'busy' | 'retry' | undefined;
                                 if (!statusType) return s;
                                 const isParentSession = !s.parentID;
+                                const shouldAutoUnarchive = statusType === 'busy' || statusType === 'retry';
                                 if (statusType === 'retry' && !initialLoadRef.current) {
                                     playAlertSound();
                                 }
@@ -268,6 +284,7 @@ export function useOpencodeSync() {
                                 }
                                 return { 
                                     ...s, 
+                                    time: shouldAutoUnarchive ? { ...(s.time || {}), archived: undefined } : s.time,
                                     realTimeStatus: statusType, 
                                     waitingForUser:
                                         statusType === 'retry'
@@ -281,10 +298,15 @@ export function useOpencodeSync() {
                             case 'question.asked':
                             case 'permission.asked':
                                 if (!initialLoadRef.current) {
-                                    playAttentionSound();
+                                    setTimeout(() => playAttentionSound(), ATTENTION_SOUND_DELAY_MS);
                                 }
+                                persistWaiting(sessionId!, true);
                                 scheduleWaitingActivation(sessionId!);
-                                return s;
+                                return {
+                                    ...s,
+                                    time: { ...(s.time || {}), archived: undefined },
+                                    waitingForUser: true,
+                                };
                             case 'permission.updated':
                                 clearWaitingActivation(sessionId!);
                                 scheduleRefetch();

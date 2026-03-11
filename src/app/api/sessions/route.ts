@@ -415,14 +415,13 @@ export async function GET() {
 
     if (failedPorts.length > 0 && parentSessions.length === 0 && childSessions.length === 0) {
       pruneStickyState(Date.now(), new Set<string>());
-      return Response.json(
-        {
-          error: 'Session discovery is degraded',
-          hint: 'Some OpenCode API ports failed and no sessions were returned. Retry shortly, or increase OPENCODE_SESSIONS_LIST_TIMEOUT_MS.',
-          failedPorts,
-        },
-        { status: 503 }
-      );
+      const processHints = Array.from(processHintsByDirectory.values());
+      return Response.json({
+        sessions: [],
+        processHints,
+        failedPorts,
+        degraded: true,
+      });
     }
 
     // Enrich parent sessions
@@ -446,8 +445,6 @@ export async function GET() {
 
     // Enrich and nest child sessions under parents
     for (const child of childSessions) {
-      if (child.time?.archived) continue;
-
       // Find parent by parentID
       let parent = child.parentID
         ? enrichedSessions.find((s) => s.id === child.parentID)
@@ -470,6 +467,11 @@ export async function GET() {
       const statusFromMap = statusMap[child.id]?.type;
       const childUpdatedAt = getUpdatedAt(child);
       const isRecent = childUpdatedAt > 0 && now - childUpdatedAt <= CHILD_ACTIVE_WINDOW_MS;
+      const shouldSkipArchivedChild = !!child.time?.archived && !statusFromMap && !isRecent;
+
+      if (shouldSkipArchivedChild) {
+        continue;
+      }
 
       if (statusFromMap && statusFromMap !== 'idle') {
         parent.children.push(toChildEntry(child, statusFromMap));
@@ -537,7 +539,6 @@ export async function GET() {
     const parentStatusFallbackCandidates = enrichedSessions
       .filter((session) => {
         if (session.realTimeStatus !== 'idle') return false;
-        if (session.time?.archived) return false;
         const updatedAt = getUpdatedAt(session);
         return updatedAt > 0 && now - updatedAt <= CHILD_ACTIVE_WINDOW_MS;
       })
@@ -712,13 +713,36 @@ export async function GET() {
     for (const session of enrichedSessions) {
       for (const child of session.children) {
         const normalizedChildStatus = normalizeRealtimeStatus(child.realTimeStatus);
-        child.realTimeStatus = applyStickyBusyStatus(`child:${child.id}`, normalizedChildStatus, stickyNow, stickyBusyDelayMs);
+        const childStatusForStabilization =
+          child.waitingForUser && normalizedChildStatus === 'idle' ? 'retry' : normalizedChildStatus;
+        child.realTimeStatus = applyStickyBusyStatus(
+          `child:${child.id}`,
+          childStatusForStabilization,
+          stickyNow,
+          stickyBusyDelayMs
+        );
       }
 
       const normalizedSessionStatus = normalizeRealtimeStatus(session.realTimeStatus);
       const sessionStatusForStabilization =
-        session.waitingForUser && normalizedSessionStatus === 'idle' ? 'busy' : normalizedSessionStatus;
+        session.waitingForUser && normalizedSessionStatus === 'idle' ? 'retry' : normalizedSessionStatus;
       session.realTimeStatus = applyStickyBusyStatus(session.id, sessionStatusForStabilization, stickyNow, stickyBusyDelayMs);
+
+      const hasActiveChildren = session.children.some(
+        (child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry' || child.waitingForUser
+      );
+      const shouldAutoUnarchive =
+        session.realTimeStatus === 'busy' ||
+        session.realTimeStatus === 'retry' ||
+        session.waitingForUser ||
+        hasActiveChildren;
+
+      if (shouldAutoUnarchive && session.time?.archived) {
+        session.time = {
+          ...session.time,
+          archived: undefined,
+        };
+      }
     }
     pruneStickyState(stickyNow, activeStickyIds);
 
@@ -733,7 +757,22 @@ export async function GET() {
       (hint) => !knownDirectories.has(hint.directory)
     );
 
-    return Response.json({ sessions: enrichedSessions, processHints });
+    const payload: {
+      sessions: EnrichedSession[];
+      processHints: ProcessHint[];
+      failedPorts?: Array<{ port: number; reason: string }>;
+      degraded?: boolean;
+    } = {
+      sessions: enrichedSessions,
+      processHints,
+    };
+
+    if (failedPorts.length > 0) {
+      payload.failedPorts = failedPorts;
+      payload.degraded = true;
+    }
+
+    return Response.json(payload);
   } catch (error) {
     console.error('Error fetching sessions:', error);
     return Response.json(

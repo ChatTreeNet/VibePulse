@@ -51,12 +51,12 @@ export function transformSession(session: EnrichedSession): KanbanCard {
             ? session.debugReason || firstActiveChild?.debugReason
             : session.debugReason;
     
-    if (session.time?.archived) {
-        status = 'done';
-    } else if (waitingForUser) {
+    if (waitingForUser) {
         status = 'review';  // Needs Attention
     } else if (effectiveStatus === 'busy') {
         status = 'busy';
+    } else if (session.time?.archived) {
+        status = 'done';
     } else {
         status = 'idle';
     }
@@ -78,7 +78,7 @@ export function transformSession(session: EnrichedSession): KanbanCard {
          todosCompleted: 0,
          createdAt: session.time.created,
          updatedAt: session.time.updated,
-         archivedAt: session.time.archived,
+          archivedAt: status === 'done' ? session.time.archived : undefined,
          sortOrder: 0,
          children: children.map(c => ({
              id: c.id,
