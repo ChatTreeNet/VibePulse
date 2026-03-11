@@ -540,7 +540,8 @@ export async function GET() {
       .filter((session) => {
         if (session.realTimeStatus !== 'idle') return false;
         const updatedAt = getUpdatedAt(session);
-        return updatedAt > 0 && now - updatedAt <= CHILD_ACTIVE_WINDOW_MS;
+        if (updatedAt > 0 && now - updatedAt <= CHILD_ACTIVE_WINDOW_MS) return true;
+        return !!session.time?.archived;
       })
       .sort((a, b) => getUpdatedAt(b) - getUpdatedAt(a))
       .slice(0, CHILD_STATUS_MESSAGE_CHECK_LIMIT);
@@ -624,6 +625,7 @@ export async function GET() {
     const sessionsForInteractionChecks = enrichedSessions.filter(
       (s) =>
         s.realTimeStatus === 'busy' ||
+        !!s.time?.archived ||
         s.children.some((child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry')
     );
     if (sessionsForInteractionChecks.length > 0) {
@@ -632,7 +634,12 @@ export async function GET() {
           const port = sessionPortMap[session.id];
           const client = port ? clientByPort[port] : undefined;
           if (!client) {
-            return { sessionId: session.id, waiting: false, waitingChildIds: new Set<string>() };
+            return {
+              sessionId: session.id,
+              waiting: false,
+              running: false,
+              waitingChildIds: new Set<string>(),
+            };
           }
 
           try {
@@ -676,10 +683,16 @@ export async function GET() {
             return {
               sessionId: session.id,
               waiting: hasInteractionWait || hasWaitingChildren,
+              running: hasRunning,
               waitingChildIds,
             };
           } catch {
-            return { sessionId: session.id, waiting: false, waitingChildIds: new Set<string>() };
+            return {
+              sessionId: session.id,
+              waiting: false,
+              running: false,
+              waitingChildIds: new Set<string>(),
+            };
           }
         })
       );
@@ -692,6 +705,9 @@ export async function GET() {
             if (result.value.waitingChildIds.has(child.id)) {
               child.waitingForUser = true;
             }
+          }
+          if (result.value.running) {
+            session.realTimeStatus = 'busy';
           }
           if (result.value.waiting) {
             session.waitingForUser = true;
