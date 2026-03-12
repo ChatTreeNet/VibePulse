@@ -3,6 +3,7 @@ import type { ExecException } from 'child_process';
 import { handleExecResult, GET, setExecFn } from './route';
 
 type ExecCallback = (error: ExecException | null, stdout: string, stderr: string) => void;
+
 type MockExecFn = (cmd: string, opts: unknown, callback: ExecCallback) => void;
 
 describe('/api/opencode-models', () => {
@@ -57,27 +58,39 @@ describe('/api/opencode-models', () => {
   describe('GET API Integration Tests', () => {
     const originalHome = process.env.HOME;
     const originalPath = process.env.PATH;
+    const originalModelsTimeout = process.env.OPENCODE_MODELS_TIMEOUT_MS;
 
-    let mockExec: ReturnType<typeof vi.fn<MockExecFn>>;
+    let mockExec: MockExecFn & {
+      mockImplementation: (impl: MockExecFn) => void;
+      mock: { calls: unknown[][] };
+    };
 
     beforeAll(() => {
       process.env.HOME = '/tmp';
       process.env.PATH = '/usr/bin';
+      delete process.env.OPENCODE_MODELS_TIMEOUT_MS;
     });
 
     afterAll(() => {
       process.env.HOME = originalHome;
       process.env.PATH = originalPath;
+      if (originalModelsTimeout === undefined) {
+        delete process.env.OPENCODE_MODELS_TIMEOUT_MS;
+      } else {
+        process.env.OPENCODE_MODELS_TIMEOUT_MS = originalModelsTimeout;
+      }
     });
 
     beforeEach(() => {
-      mockExec = vi.fn<MockExecFn>();
+      mockExec = vi.fn() as unknown as MockExecFn & {
+        mockImplementation: (impl: MockExecFn) => void;
+        mock: { calls: unknown[][] };
+      };
       setExecFn(mockExec as never);
     });
 
     afterEach(() => {
-      const { exec } = vi.importActual<typeof import('child_process')>('child_process') as never as { exec: MockExecFn };
-      setExecFn(exec as never);
+      setExecFn(null);
     });
 
     it('should return source=opencode and real model list on successful GET', async () => {
@@ -87,10 +100,29 @@ describe('/api/opencode-models', () => {
 
       const response = await GET();
       const data = await response.json();
+      const call = mockExec.mock.calls[0] as [string, { timeout: number }, ExecCallback] | undefined;
 
       expect(response.status).toBe(200);
       expect(data.source).toBe('opencode');
       expect(data.models).toContain('anthropic/claude-3.5-sonnet');
+      expect(call?.[0]).toBe('opencode models');
+      expect(call?.[1]?.timeout).toBe(15000);
+      expect(typeof call?.[2]).toBe('function');
+    });
+
+    it('should use OPENCODE_MODELS_TIMEOUT_MS when valid', async () => {
+      process.env.OPENCODE_MODELS_TIMEOUT_MS = '30000';
+      mockExec.mockImplementation((_cmd: unknown, _opts: unknown, callback: ExecCallback) => {
+        callback(null, 'anthropic/claude-3.5-sonnet\n', '');
+      });
+
+      const response = await GET();
+      const call = mockExec.mock.calls[0] as [string, { timeout: number }, ExecCallback] | undefined;
+      expect(response.status).toBe(200);
+      expect(call?.[0]).toBe('opencode models');
+      expect(call?.[1]?.timeout).toBe(30000);
+      expect(typeof call?.[2]).toBe('function');
+      delete process.env.OPENCODE_MODELS_TIMEOUT_MS;
     });
 
     it('should return source=opencode when CLI has stderr but stdout is valid', async () => {
@@ -105,7 +137,7 @@ describe('/api/opencode-models', () => {
       expect(data.source).toBe('opencode');
     });
 
-    it('should return 503 error when CLI fails', async () => {
+    it('should return 503 with error payload when CLI fails', async () => {
       mockExec.mockImplementation((_cmd: unknown, _opts: unknown, callback: ExecCallback) => {
         callback(new Error('spawn opencode ENOENT') as ExecException, '', 'command not found');
       });
@@ -119,7 +151,7 @@ describe('/api/opencode-models', () => {
       expect(data.error).toBeTruthy();
     });
 
-    it('should return 503 error when GET returns empty models', async () => {
+    it('should return 503 with error payload when GET returns empty models', async () => {
       mockExec.mockImplementation((_cmd: unknown, _opts: unknown, callback: ExecCallback) => {
         callback(null, '', '');
       });

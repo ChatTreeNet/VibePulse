@@ -5,13 +5,16 @@ import { KanbanColumn, KanbanCard, OpencodeSession } from '@/types';
 import { ProjectCard } from './ProjectCard';
 import { transformSessions } from '@/lib/transform';
 import { LoadingState } from './LoadingState';
-import { playAttentionSound, playCompleteSound } from '@/lib/notificationSound';
+import { playCompleteSound } from '@/lib/notificationSound';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
 const SNAPSHOT_STORAGE_KEY = 'vibepulse:last-sessions-snapshot';
 const START_COMMAND_TEMPLATE = 'opencode --port <PORT>';
 const CARD_ANIMATION_DURATION_MS = 250;
+const SESSIONS_ERROR_DISPLAY_THRESHOLD = 3;
+const DEGRADED_MERGE_MAX_SNAPSHOT_AGE_MS = 10 * 60 * 1000;
+const WAITING_PERSIST_MAX_AGE_MS = 10 * 60 * 1000;
 
 const COLUMNS: { id: KanbanColumn; title: string }[] = [
     { id: 'idle', title: 'Idle' },
@@ -47,13 +50,13 @@ type SessionSnapshot = {
 type SessionsResponse = {
     sessions: OpencodeSession[];
     processHints?: ProcessHint[];
+    failedPorts?: Array<{ port: number; reason: string }>;
+    degraded?: boolean;
 };
 
 export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardProps) {
-    const waitingStateRef = useRef<Record<string, boolean>>({});
-    const waitingInitRef = useRef(false);
-    const statusStateRef = useRef<Record<string, 'idle' | 'busy' | 'retry'>>({});
-    const statusInitRef = useRef(false);
+    const cardStatusStateRef = useRef<Record<string, KanbanColumn>>({});
+    const cardStatusInitRef = useRef(false);
     const [copyFeedback, setCopyFeedback] = useState<'idle' | 'copied' | 'failed'>('idle');
     const [staleSnapshot, setStaleSnapshot] = useState<SessionSnapshot | null>(null);
 
@@ -72,7 +75,7 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
             ? configuredRefreshIntervalMs
             : 5000;
 
-    const { data, isLoading, error, dataUpdatedAt, refetch, isFetching } = useQuery<SessionsResponse>({
+    const { data, isLoading, error, dataUpdatedAt, refetch, isFetching, failureCount } = useQuery<SessionsResponse>({
         queryKey: ['sessions'],
         queryFn: async ({ signal }: { signal: AbortSignal }) => {
             try {
@@ -101,6 +104,10 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
 
                 return res.json();
             } catch (error) {
+                if (error instanceof Error && error.name === 'AbortError') {
+                    throw error;
+                }
+
                 if (error instanceof Error && (error as SessionsFetchError).kind) {
                     throw error;
                 }
@@ -113,9 +120,11 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
         refetchInterval: (query) => query.state.fetchStatus === 'fetching' ? false : refreshIntervalMs,
         refetchIntervalInBackground: true,
         refetchOnReconnect: true,
+        retry: false,
     });
 
     const activeError = error as SessionsFetchError | null;
+    const hasSessionsResponse = data !== undefined;
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -140,6 +149,10 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
         if (typeof window === 'undefined') return;
         if (!data?.sessions || data.sessions.length === 0) return;
 
+        if (data.degraded && staleSnapshot?.sessions?.length) {
+            return;
+        }
+
         const snapshot: SessionSnapshot = {
             savedAt: Date.now(),
             sessions: data.sessions,
@@ -152,7 +165,7 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
         } catch {
             setStaleSnapshot(snapshot);
         }
-    }, [data?.processHints, data?.sessions]);
+    }, [data?.degraded, data?.processHints, data?.sessions, staleSnapshot?.sessions?.length]);
 
     const handleCopyStartCommand = async () => {
         try {
@@ -166,14 +179,40 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
     };
 
     const sourceSessions = useMemo(() => {
-        if (data?.sessions) return data.sessions;
+        if (data?.sessions) {
+            if (data.degraded && staleSnapshot?.sessions?.length) {
+                const snapshotAgeMs = Date.now() - staleSnapshot.savedAt;
+                if (snapshotAgeMs <= DEGRADED_MERGE_MAX_SNAPSHOT_AGE_MS) {
+                    const merged = [...data.sessions];
+                    const seen = new Set(merged.map((session) => session.id));
+                    for (const session of staleSnapshot.sessions) {
+                        if (seen.has(session.id)) continue;
+                        merged.push(session);
+                        seen.add(session.id);
+                    }
+                    return merged;
+                }
+            }
+            return data.sessions;
+        }
         if (activeError && staleSnapshot?.sessions?.length) {
             return staleSnapshot.sessions;
         }
         return [];
-    }, [activeError, data?.sessions, staleSnapshot?.sessions]);
+    }, [activeError, data?.degraded, data?.sessions, staleSnapshot?.savedAt, staleSnapshot?.sessions]);
 
     const isShowingStaleData = !!activeError && !data?.sessions && !!staleSnapshot?.sessions?.length;
+    const shouldShowHardError =
+        !!activeError &&
+        !isShowingStaleData &&
+        !hasSessionsResponse &&
+        failureCount >= SESSIONS_ERROR_DISPLAY_THRESHOLD;
+    const shouldShowTransientRecovery =
+        !!activeError &&
+        !isShowingStaleData &&
+        !hasSessionsResponse &&
+        failureCount > 0 &&
+        failureCount < SESSIONS_ERROR_DISPLAY_THRESHOLD;
 
     const processHints = useMemo(() => {
         if (data?.processHints) {
@@ -201,11 +240,42 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
             }
         }
 
+        const now = Date.now();
+        const isPersistedWaitingStillValid = (
+            status: string | undefined,
+            updatedAt: number,
+            persisted: boolean
+        ) => {
+            if (!persisted) return false;
+            if (status !== 'busy' && status !== 'retry') return false;
+            if (!updatedAt) return false;
+            return now - updatedAt <= WAITING_PERSIST_MAX_AGE_MS;
+        };
+
         return sourceSessions.map((s) => {
             const persisted = !!persistedWaiting[s.id];
+            const updatedAt = s.time?.updated || s.time?.created || 0;
+            const keepWaitingFromPersistence = isPersistedWaitingStillValid(s.realTimeStatus, updatedAt, persisted);
+
+            const children = (s.children || []).map((child) => {
+                const childPersisted = !!persistedWaiting[child.id];
+                const childUpdatedAt = child.time?.updated || child.time?.created || 0;
+                const keepChildWaitingFromPersistence = isPersistedWaitingStillValid(
+                    child.realTimeStatus,
+                    childUpdatedAt,
+                    childPersisted
+                );
+
+                return {
+                    ...child,
+                    waitingForUser: !!child.waitingForUser || keepChildWaitingFromPersistence,
+                };
+            });
+
             return {
                 ...s,
-                waitingForUser: !!s.waitingForUser || (s.realTimeStatus === 'retry' && persisted),
+                waitingForUser: !!s.waitingForUser || keepWaitingFromPersistence,
+                children,
             };
         });
     }, [sourceSessions]);
@@ -213,72 +283,19 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
     useEffect(() => {
         if (typeof window === 'undefined') return;
         const nextPersistedWaiting: Record<string, boolean> = {};
-        for (const session of enrichedSessions as Array<{ id: string; waitingForUser?: boolean }>) {
+        for (const session of enrichedSessions as Array<{ id: string; waitingForUser?: boolean; children?: Array<{ id: string; waitingForUser?: boolean }> }>) {
             if (session.waitingForUser) {
                 nextPersistedWaiting[session.id] = true;
+            }
+
+            for (const child of session.children || []) {
+                if (child.waitingForUser) {
+                    nextPersistedWaiting[child.id] = true;
+                }
             }
         }
         localStorage.setItem(WAITING_STORAGE_KEY, JSON.stringify(nextPersistedWaiting));
     }, [enrichedSessions]);
-
-    useEffect(() => {
-        const nextWaiting: Record<string, boolean> = {};
-        let shouldPlayAttention = false;
-
-        for (const session of enrichedSessions as Array<{ id: string; waitingForUser?: boolean }>) {
-            const waiting = !!session.waitingForUser;
-            nextWaiting[session.id] = waiting;
-
-            if (waitingInitRef.current && waiting && !waitingStateRef.current[session.id]) {
-                shouldPlayAttention = true;
-            }
-        }
-
-        waitingStateRef.current = nextWaiting;
-
-        if (!waitingInitRef.current) {
-            waitingInitRef.current = true;
-            return;
-        }
-
-        if (shouldPlayAttention) {
-            setTimeout(() => playAttentionSound(), CARD_ANIMATION_DURATION_MS);
-        }
-    }, [enrichedSessions]);
-
-    useEffect(() => {
-        const nextStatus: Record<string, 'idle' | 'busy' | 'retry'> = {};
-
-        for (const session of enrichedSessions as Array<{ id: string; realTimeStatus?: string }>) {
-            const normalized =
-                session.realTimeStatus === 'busy' || session.realTimeStatus === 'retry'
-                    ? session.realTimeStatus
-                    : 'idle';
-            nextStatus[session.id] = normalized;
-        }
-
-        if (!statusInitRef.current) {
-            statusInitRef.current = true;
-            statusStateRef.current = nextStatus;
-            return;
-        }
-
-        let shouldPlayComplete = false;
-
-        for (const [id, currentStatus] of Object.entries(nextStatus)) {
-            const previousStatus = statusStateRef.current[id];
-            if ((previousStatus === 'busy' || previousStatus === 'retry') && currentStatus === 'idle') {
-                shouldPlayComplete = true;
-                break;
-            }
-        }
-
-        statusStateRef.current = nextStatus;
-
-        if (shouldPlayComplete && !isShowingStaleData) {
-            setTimeout(() => playCompleteSound(), CARD_ANIMATION_DURATION_MS);
-        }
-    }, [enrichedSessions, isShowingStaleData]);
 
     const cards: KanbanCard[] = useMemo(() => {
         const allCards = transformSessions(enrichedSessions);
@@ -286,14 +303,50 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
             return allCards;
         }
         const cutoff = dataUpdatedAt - filterDays * 24 * 60 * 60 * 1000;
-        return allCards.filter((card) => card.updatedAt >= cutoff);
+
+        return allCards.filter((card) => {
+            if (card.status === 'busy' || card.status === 'review') {
+                return true;
+            }
+
+            const lastActivityAt = Math.max(
+                card.updatedAt || 0,
+                card.createdAt || 0,
+                card.archivedAt || 0
+            );
+            return lastActivityAt >= cutoff;
+        });
     }, [dataUpdatedAt, enrichedSessions, filterDays]);
+
+    useEffect(() => {
+        const nextCardStatus: Record<string, KanbanColumn> = {};
+        for (const card of cards) {
+            nextCardStatus[card.id] = card.status;
+        }
+
+        if (!cardStatusInitRef.current) {
+            cardStatusInitRef.current = true;
+            cardStatusStateRef.current = nextCardStatus;
+            return;
+        }
+
+        const shouldPlayComplete = Object.entries(nextCardStatus).some(([id, currentStatus]) => {
+            const previousStatus = cardStatusStateRef.current[id];
+            return !!previousStatus && previousStatus !== 'idle' && currentStatus === 'idle';
+        });
+
+        cardStatusStateRef.current = nextCardStatus;
+
+        if (shouldPlayComplete && !isShowingStaleData) {
+            setTimeout(() => playCompleteSound(), CARD_ANIMATION_DURATION_MS);
+        }
+    }, [cards, isShowingStaleData]);
 
     if (isLoading) {
         return <LoadingState />;
     }
 
-    if (error && !isShowingStaleData) {
+    if (shouldShowHardError) {
         const isOpencodeUnavailable = activeError?.kind === 'opencode_unavailable';
         const title = isOpencodeUnavailable ? 'OpenCode is not running' : 'Failed to load sessions';
         const description = isOpencodeUnavailable
@@ -348,6 +401,45 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
                             </button>
                         ) : null}
                     </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (shouldShowTransientRecovery) {
+        return (
+            <div className="flex-1 flex items-center justify-center p-8">
+                <div className="max-w-md w-full text-center">
+                    <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-amber-100 dark:bg-amber-900/30 rounded-full">
+                        <svg
+                            className="w-6 h-6 text-amber-600 dark:text-amber-400"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                        >
+                            <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                            />
+                        </svg>
+                    </div>
+                    <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                        Reconnecting to session service...
+                    </h2>
+                    <p className="text-gray-600 dark:text-gray-400 mb-4">
+                        Temporary fetch failure ({failureCount}/{SESSIONS_ERROR_DISPLAY_THRESHOLD}). Retrying automatically.
+                    </p>
+                    <button
+                        type="button"
+                        onClick={() => refetch()}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={isFetching}
+                    >
+                        {isFetching ? 'Retrying...' : 'Retry now'}
+                    </button>
                 </div>
             </div>
         );

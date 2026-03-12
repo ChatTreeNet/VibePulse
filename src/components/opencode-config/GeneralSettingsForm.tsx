@@ -43,7 +43,7 @@ export function GeneralSettingsForm() {
     formState: { isDirty, isSubmitting }
   } = useForm<GeneralSettingsFormData>({
     defaultValues: {
-      stickyBusyDelaySeconds: 25,
+      stickyBusyDelaySeconds: 1,
       sessionsRefreshIntervalSeconds: 5
     }
   });
@@ -53,7 +53,7 @@ export function GeneralSettingsForm() {
       reset({
         stickyBusyDelaySeconds: typeof config.vibepulse?.stickyBusyDelayMs === 'number'
           ? Math.round(config.vibepulse.stickyBusyDelayMs / 1000)
-          : 25,
+          : 1,
         sessionsRefreshIntervalSeconds: typeof config.vibepulse?.sessionsRefreshIntervalMs === 'number'
           ? Math.round(config.vibepulse.sessionsRefreshIntervalMs / 1000)
           : 5
@@ -183,7 +183,7 @@ export function GeneralSettingsForm() {
               )}
             />
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              The duration to keep a session marked as &quot;busy&quot; after activity stops. This prevents the UI from flickering when agents pause briefly. Default is 25 seconds.
+              The duration to keep a session marked as &quot;busy&quot; after activity stops. This prevents the UI from flickering when agents pause briefly. Default is 1 second.
             </p>
           </div>
 
@@ -255,4 +255,3 @@ export function GeneralSettingsForm() {
     </form>
   );
 }
-

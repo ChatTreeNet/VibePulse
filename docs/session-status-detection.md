@@ -94,7 +94,7 @@ flowchart LR
 
 **Design Rationale**:
 - `idle → busy`: **Immediate effect** (once busy is detected, it's truly running)
-- `busy → idle`: **25-second buffer** (prevents misclassification from brief state loss)
+- `busy → idle`: **1-second buffer by default** (prevents misclassification from brief state loss while keeping UI responsive)
 
 ---
 
@@ -235,7 +235,7 @@ sequenceDiagram
 
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
-| `STATUS_STICKY_BUSY_WINDOW_MS` | 1 second | Buffer window for busy → idle transition |
+| `stickyBusyDelayMs` | 1 second (default, configurable) | Buffer window for busy → idle transition |
 | `CHILD_ACTIVE_WINDOW_MS` | 30 minutes | Child session activity determination window |
 | `CHILD_UNKNOWN_STATE_BUSY_WINDOW_MS` | 2 minutes | Busy assumption for unknown states |
 | `STALL_DETECTION_WINDOW_MS` | 30 seconds | Stall detection (if updated time is within this window) |

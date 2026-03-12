@@ -1,8 +1,16 @@
 import { createOpencodeClient } from '@opencode-ai/sdk';
 import { execSync } from 'child_process';
 import path from 'path';
-import { discoverOpencodePorts, discoverOpencodeProcessCwdsWithoutPort } from '@/lib/opencodeDiscovery';
+import {
+  discoverOpencodePortsWithMeta,
+  discoverOpencodeProcessCwdsWithoutPortWithMeta,
+} from '@/lib/opencodeDiscovery';
 import { readConfig } from '@/lib/opencodeConfig';
+import {
+  markSessionForceUnarchived,
+  pruneSessionForceUnarchived,
+  shouldForceSessionUnarchived,
+} from '@/lib/sessionArchiveOverrides';
 
 type SessionLike = {
   id: string;
@@ -22,6 +30,9 @@ const CHILD_UNKNOWN_STATE_BUSY_WINDOW_MS = 2 * 60 * 1000;
 const CHILD_STATUS_MESSAGE_CHECK_LIMIT = 50;
 const STALL_DETECTION_WINDOW_MS = 30 * 1000;
 const STATUS_STICKY_RETENTION_MS = 24 * 60 * 60 * 1000;
+const STATUS_STICKY_ABSENT_RETENTION_MS = 30 * 60 * 1000;
+const DEFAULT_STATUS_STICKY_MAX_ENTRIES = 5000;
+const GIT_COMMAND_TIMEOUT_MS = 1200;
 
 type StableRealtimeStatus = 'idle' | 'busy' | 'retry';
 
@@ -66,6 +77,30 @@ type MessagePart = {
   };
 };
 
+function readPositiveTimeoutEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  const parsed = Number(raw);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return Math.floor(parsed);
+  }
+  return fallback;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }) as Promise<T>;
+}
+
 const WAITING_PART_STATUSES = new Set<string>([
   'awaiting-input',
   'awaiting_input',
@@ -105,12 +140,17 @@ function collectPartStatuses(messages: Array<{ parts?: MessagePart[] }>): Messag
 
 async function fetchPartStatuses(
   client: ReturnType<typeof createOpencodeClient>,
-  sessionId: string
+  sessionId: string,
+  timeoutMs: number
 ): Promise<MessageStateStatus[]> {
-  const messagesResult = await client.session.messages({
-    path: { id: sessionId },
-    query: { limit: 8 },
-  });
+  const messagesResult = await withTimeout(
+    client.session.messages({
+      path: { id: sessionId },
+      query: { limit: 8 },
+    }),
+    timeoutMs,
+    `session.messages(${sessionId})`
+  );
   const messages = (messagesResult.data || []) as Array<{ parts?: MessagePart[] }>;
   return collectPartStatuses(messages);
 }
@@ -146,11 +186,48 @@ function applyStickyBusyStatus(id: string, status: StableRealtimeStatus, now: nu
   return shouldKeepBusy ? 'busy' : 'idle';
 }
 
-function pruneStickyState(now: number): void {
+function getStickyStateMaxEntries(): number {
+  const raw = Number(process.env.OPENCODE_STATUS_STICKY_MAX_ENTRIES);
+  if (Number.isFinite(raw) && raw > 0) {
+    return Math.floor(raw);
+  }
+  return DEFAULT_STATUS_STICKY_MAX_ENTRIES;
+}
+
+function pruneStickyState(now: number, activeIds: Set<string>): void {
   for (const [id, state] of statusStickyState) {
-    if (now - state.lastSeenAt > STATUS_STICKY_RETENTION_MS) {
+    const ageMs = now - state.lastSeenAt;
+    const isActive = activeIds.has(id);
+    if (ageMs > STATUS_STICKY_RETENTION_MS || (!isActive && ageMs > STATUS_STICKY_ABSENT_RETENTION_MS)) {
       statusStickyState.delete(id);
     }
+  }
+
+  const maxEntries = getStickyStateMaxEntries();
+  if (statusStickyState.size <= maxEntries) {
+    return;
+  }
+
+  const overflow = statusStickyState.size - maxEntries;
+  const sortedByLastSeen = Array.from(statusStickyState.entries()).sort((a, b) => a[1].lastSeenAt - b[1].lastSeenAt);
+
+  let removed = 0;
+  for (const [id] of sortedByLastSeen) {
+    if (removed >= overflow) break;
+    if (activeIds.has(id)) continue;
+    statusStickyState.delete(id);
+    removed++;
+  }
+
+  if (removed >= overflow) {
+    return;
+  }
+
+  for (const [id] of sortedByLastSeen) {
+    if (removed >= overflow) break;
+    if (!statusStickyState.has(id)) continue;
+    statusStickyState.delete(id);
+    removed++;
   }
 }
 
@@ -187,7 +264,8 @@ function isGitRepo(directory: string): boolean {
     const result = execSync('git rev-parse --is-inside-work-tree', {
       cwd: directory,
       encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: GIT_COMMAND_TIMEOUT_MS,
     });
     return result.trim() === 'true';
   } catch {
@@ -202,7 +280,8 @@ function getGitBranch(directory: string): string | null {
     const branch = execSync('git branch --show-current', {
       cwd: directory,
       encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: GIT_COMMAND_TIMEOUT_MS,
     });
     return branch.trim() || null;
   } catch {
@@ -212,7 +291,7 @@ function getGitBranch(directory: string): string | null {
 
 export async function GET() {
   // Read config to get stickyBusyDelayMs setting
-  let stickyBusyDelayMs = 25000; // default 25s
+  let stickyBusyDelayMs = 1000; // default 1s
   try {
     const config = await readConfig();
     const vibepulseRaw = config.vibepulse && typeof config.vibepulse === 'object' && !Array.isArray(config.vibepulse)
@@ -227,7 +306,8 @@ export async function GET() {
     // Use default if config read fails
   }
 
-  const rawProcessHints = discoverOpencodeProcessCwdsWithoutPort();
+  const { processes: rawProcessHints, timedOut: processDiscoveryTimedOut } =
+    discoverOpencodeProcessCwdsWithoutPortWithMeta();
   const processHintsByDirectory = new Map<string, ProcessHint>();
   for (const process of rawProcessHints) {
     if (!process.cwd || process.cwd.startsWith('/private/tmp/opencode')) {
@@ -244,10 +324,22 @@ export async function GET() {
     });
   }
 
-  const ports = discoverOpencodePorts();
+  const { ports, timedOut: portDiscoveryTimedOut } = discoverOpencodePortsWithMeta();
 
   if (!ports.length) {
     const processHints = Array.from(processHintsByDirectory.values());
+
+    if (portDiscoveryTimedOut || processDiscoveryTimedOut) {
+      return Response.json(
+        {
+          error: 'OpenCode discovery timed out',
+          hint: 'Host process discovery exceeded timeout. Retry shortly, or increase OPENCODE_DISCOVERY_TIMEOUT_MS.',
+          ...(processHints.length > 0 ? { processHints } : {}),
+        },
+        { status: 503 }
+      );
+    }
+
     if (processHints.length > 0) {
       return Response.json({ sessions: [], processHints });
     }
@@ -262,24 +354,40 @@ export async function GET() {
   }
 
    try {
-    const results = await Promise.allSettled(ports.map(async (port) => {
-      const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
-      const sessionsResult = await client.session.list();
-      const statusResult = await client.session.status().catch(() => ({ data: {} }));
-      return { port, client, sessions: sessionsResult.data || [], status: statusResult.data || {} };
-    }));
+     const results = await Promise.allSettled(ports.map(async (port) => {
+       const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
+       const sessionsResult = await withTimeout(
+         client.session.list(),
+         sessionListTimeoutMs,
+         `session.list(${port})`
+       );
+       const statusResult = await withTimeout(
+         client.session.status(),
+         sessionStatusTimeoutMs,
+         `session.status(${port})`
+       ).catch(() => ({ data: {} }));
+       return { port, client, sessions: sessionsResult.data || [], status: statusResult.data || {} };
+     }));
 
-    const allSessions: SessionLike[] = [];
-    const statusMap: Record<string, { type: 'idle' | 'busy' | 'retry' }> = {};
-    const clientByPort: Record<number, ReturnType<typeof createOpencodeClient>> = {};
-    const sessionPortMap: Record<string, number> = {};
+     const allSessions: SessionLike[] = [];
+     const statusMap: Record<string, { type: 'idle' | 'busy' | 'retry' }> = {};
+     const clientByPort: Record<number, ReturnType<typeof createOpencodeClient>> = {};
+     const sessionPortMap: Record<string, number> = {};
+     const failedPorts: Array<{ port: number; reason: string }> = [];
 
-    for (let i = 0; i < results.length; i++) {
-      const r = results[i];
-      if (r.status !== 'fulfilled') continue;
-      allSessions.push(...r.value.sessions);
-      Object.assign(statusMap, r.value.status);
-      clientByPort[r.value.port] = r.value.client;
+     for (let i = 0; i < results.length; i++) {
+       const r = results[i];
+       const port = ports[i];
+       if (r.status !== 'fulfilled') {
+         failedPorts.push({
+           port,
+           reason: r.reason instanceof Error ? r.reason.message : String(r.reason),
+         });
+         continue;
+       }
+       allSessions.push(...r.value.sessions);
+       Object.assign(statusMap, r.value.status);
+       clientByPort[r.value.port] = r.value.client;
       for (const session of r.value.sessions as SessionLike[]) {
         if (!(session.id in sessionPortMap)) {
           sessionPortMap[session.id] = r.value.port;
@@ -297,6 +405,50 @@ export async function GET() {
 
     const parentSessions = sessions.filter((s) => !s.parentID);
     const childSessions = sessions.filter((s) => !!s.parentID);
+
+    const lifecycleNow = Date.now();
+    pruneSessionForceUnarchived(lifecycleNow);
+
+    for (const session of parentSessions) {
+      if (session.time?.archived !== undefined && shouldForceSessionUnarchived(session.id, lifecycleNow)) {
+        session.time = {
+          ...session.time,
+          archived: undefined,
+        };
+      }
+    }
+
+    for (const child of childSessions) {
+      if (child.time?.archived !== undefined && shouldForceSessionUnarchived(child.id, lifecycleNow)) {
+        child.time = {
+          ...child.time,
+          archived: undefined,
+        };
+      }
+    }
+
+    if (results.length > 0 && failedPorts.length === results.length) {
+      pruneStickyState(Date.now(), new Set<string>());
+      return Response.json(
+        {
+          error: 'Failed to fetch sessions from OpenCode ports',
+          hint: 'All discovered OpenCode API ports timed out or failed. Retry shortly or increase OPENCODE_SESSIONS_LIST_TIMEOUT_MS.',
+          failedPorts,
+        },
+        { status: 503 }
+      );
+    }
+
+    if (failedPorts.length > 0 && parentSessions.length === 0 && childSessions.length === 0) {
+      pruneStickyState(Date.now(), new Set<string>());
+      const processHints = Array.from(processHintsByDirectory.values());
+      return Response.json({
+        sessions: [],
+        processHints,
+        failedPorts,
+        degraded: true,
+      });
+    }
 
     // Enrich parent sessions
     const enrichedSessions: EnrichedSession[] = parentSessions.map((session) => {
@@ -319,8 +471,6 @@ export async function GET() {
 
     // Enrich and nest child sessions under parents
     for (const child of childSessions) {
-      if (child.time?.archived) continue;
-
       // Find parent by parentID
       let parent = child.parentID
         ? enrichedSessions.find((s) => s.id === child.parentID)
@@ -343,6 +493,11 @@ export async function GET() {
       const statusFromMap = statusMap[child.id]?.type;
       const childUpdatedAt = getUpdatedAt(child);
       const isRecent = childUpdatedAt > 0 && now - childUpdatedAt <= CHILD_ACTIVE_WINDOW_MS;
+      const shouldSkipArchivedChild = !!child.time?.archived && !statusFromMap && !isRecent;
+
+      if (shouldSkipArchivedChild) {
+        continue;
+      }
 
       if (statusFromMap && statusFromMap !== 'idle') {
         parent.children.push(toChildEntry(child, statusFromMap));
@@ -371,7 +526,7 @@ export async function GET() {
           }
 
           try {
-            const partStatuses = await fetchPartStatuses(client, child.id);
+            const partStatuses = await fetchPartStatuses(client, child.id, sessionMessagesTimeoutMs);
             const hasRunningState = partStatuses.some((status) => status === 'running');
             const hasWaitingState = !hasRunningState && partStatuses.some(isWaitingPartStatus);
             const hasActiveState = hasWaitingState || hasRunningState;
@@ -410,9 +565,9 @@ export async function GET() {
     const parentStatusFallbackCandidates = enrichedSessions
       .filter((session) => {
         if (session.realTimeStatus !== 'idle') return false;
-        if (session.time?.archived) return false;
         const updatedAt = getUpdatedAt(session);
-        return updatedAt > 0 && now - updatedAt <= CHILD_ACTIVE_WINDOW_MS;
+        if (updatedAt > 0 && now - updatedAt <= CHILD_ACTIVE_WINDOW_MS) return true;
+        return !!session.time?.archived;
       })
       .sort((a, b) => getUpdatedAt(b) - getUpdatedAt(a))
       .slice(0, CHILD_STATUS_MESSAGE_CHECK_LIMIT);
@@ -435,7 +590,7 @@ export async function GET() {
           }
 
           try {
-            const partStatuses = await fetchPartStatuses(client, session.id);
+            const partStatuses = await fetchPartStatuses(client, session.id, sessionMessagesTimeoutMs);
             const hasRunningState = partStatuses.some((status) => status === 'running');
             const hasWaitingState = !hasRunningState && partStatuses.some(isWaitingPartStatus);
             const hasCompletedState =
@@ -496,6 +651,7 @@ export async function GET() {
     const sessionsForInteractionChecks = enrichedSessions.filter(
       (s) =>
         s.realTimeStatus === 'busy' ||
+        !!s.time?.archived ||
         s.children.some((child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry')
     );
     if (sessionsForInteractionChecks.length > 0) {
@@ -504,11 +660,16 @@ export async function GET() {
           const port = sessionPortMap[session.id];
           const client = port ? clientByPort[port] : undefined;
           if (!client) {
-            return { sessionId: session.id, waiting: false, waitingChildIds: new Set<string>() };
+            return {
+              sessionId: session.id,
+              waiting: false,
+              running: false,
+              waitingChildIds: new Set<string>(),
+            };
           }
 
           try {
-            const partStatuses = await fetchPartStatuses(client, session.id);
+            const partStatuses = await fetchPartStatuses(client, session.id, sessionMessagesTimeoutMs);
             const hasRunning = partStatuses.some((status) => status === 'running');
             const hasInteractionWait = !hasRunning && partStatuses.some(isWaitingPartStatus);
 
@@ -522,7 +683,7 @@ export async function GET() {
                     return { childId: child.id, waiting: false };
                   }
                   try {
-                    const childStatuses = await fetchPartStatuses(childClient, child.id);
+                    const childStatuses = await fetchPartStatuses(childClient, child.id, sessionMessagesTimeoutMs);
                     const childHasRunning = childStatuses.some((status) => status === 'running');
                     return {
                       childId: child.id,
@@ -548,10 +709,16 @@ export async function GET() {
             return {
               sessionId: session.id,
               waiting: hasInteractionWait || hasWaitingChildren,
+              running: hasRunning,
               waitingChildIds,
             };
           } catch {
-            return { sessionId: session.id, waiting: false, waitingChildIds: new Set<string>() };
+            return {
+              sessionId: session.id,
+              waiting: false,
+              running: false,
+              waitingChildIds: new Set<string>(),
+            };
           }
         })
       );
@@ -565,6 +732,9 @@ export async function GET() {
               child.waitingForUser = true;
             }
           }
+          if (result.value.running) {
+            session.realTimeStatus = 'busy';
+          }
           if (result.value.waiting) {
             session.waitingForUser = true;
           }
@@ -573,18 +743,58 @@ export async function GET() {
     }
 
     const stickyNow = Date.now();
+    const activeStickyIds = new Set<string>();
+
+    for (const session of enrichedSessions) {
+      activeStickyIds.add(session.id);
+      for (const child of session.children) {
+        activeStickyIds.add(`child:${child.id}`);
+      }
+    }
+
     for (const session of enrichedSessions) {
       for (const child of session.children) {
         const normalizedChildStatus = normalizeRealtimeStatus(child.realTimeStatus);
-        child.realTimeStatus = applyStickyBusyStatus(`child:${child.id}`, normalizedChildStatus, stickyNow, stickyBusyDelayMs);
+        const childStatusForStabilization =
+          child.waitingForUser && normalizedChildStatus === 'idle' ? 'retry' : normalizedChildStatus;
+        child.realTimeStatus = applyStickyBusyStatus(
+          `child:${child.id}`,
+          childStatusForStabilization,
+          stickyNow,
+          stickyBusyDelayMs
+        );
+
+        if (child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry' || child.waitingForUser) {
+          markSessionForceUnarchived(child.id, stickyNow);
+        }
       }
 
       const normalizedSessionStatus = normalizeRealtimeStatus(session.realTimeStatus);
       const sessionStatusForStabilization =
-        session.waitingForUser && normalizedSessionStatus === 'idle' ? 'busy' : normalizedSessionStatus;
+        session.waitingForUser && normalizedSessionStatus === 'idle' ? 'retry' : normalizedSessionStatus;
       session.realTimeStatus = applyStickyBusyStatus(session.id, sessionStatusForStabilization, stickyNow, stickyBusyDelayMs);
+
+      const hasActiveChildren = session.children.some(
+        (child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry' || child.waitingForUser
+      );
+      const shouldAutoUnarchive =
+        session.realTimeStatus === 'busy' ||
+        session.realTimeStatus === 'retry' ||
+        session.waitingForUser ||
+        hasActiveChildren;
+
+      if (shouldAutoUnarchive) {
+        markSessionForceUnarchived(session.id, stickyNow);
+      }
+
+      if (shouldAutoUnarchive && session.time?.archived) {
+        session.time = {
+          ...session.time,
+          archived: undefined,
+        };
+      }
     }
-    pruneStickyState(stickyNow);
+    pruneStickyState(stickyNow, activeStickyIds);
 
     const knownDirectories = new Set<string>();
     for (const session of sessions) {
@@ -597,7 +807,22 @@ export async function GET() {
       (hint) => !knownDirectories.has(hint.directory)
     );
 
-    return Response.json({ sessions: enrichedSessions, processHints });
+    const payload: {
+      sessions: EnrichedSession[];
+      processHints: ProcessHint[];
+      failedPorts?: Array<{ port: number; reason: string }>;
+      degraded?: boolean;
+    } = {
+      sessions: enrichedSessions,
+      processHints,
+    };
+
+    if (failedPorts.length > 0) {
+      payload.failedPorts = failedPorts;
+      payload.degraded = true;
+    }
+
+    return Response.json(payload);
   } catch (error) {
     console.error('Error fetching sessions:', error);
     return Response.json(
@@ -610,3 +835,6 @@ export async function GET() {
     );
   }
 }
+  const sessionListTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_LIST_TIMEOUT_MS', 6000);
+  const sessionStatusTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_STATUS_TIMEOUT_MS', 4000);
+  const sessionMessagesTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_MESSAGES_TIMEOUT_MS', 2500);

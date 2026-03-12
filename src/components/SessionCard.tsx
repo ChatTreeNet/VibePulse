@@ -127,7 +127,7 @@ export function SessionCard({ card }: SessionCardProps) {
             await fetch(`/api/sessions/${card.id}/archive`, { method: 'POST' });
         } finally {
             setActionOpen(false);
-            queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        await queryClient.invalidateQueries({ queryKey: ['sessions'] });
         }
     };
 
@@ -136,7 +136,7 @@ export function SessionCard({ card }: SessionCardProps) {
             await fetch(`/api/sessions/${card.id}/delete`, { method: 'POST' });
         } finally {
             setActionOpen(false);
-            queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        await queryClient.invalidateQueries({ queryKey: ['sessions'] });
         }
     };
 
