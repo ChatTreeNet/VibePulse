@@ -17,6 +17,7 @@ type SessionLike = {
   slug?: string;
   title?: string;
   directory: string;
+  debugReason?: string;
   parentID?: string;
   time?: {
     created: number;
@@ -48,6 +49,7 @@ type ChildEntry = {
   slug?: string;
   title?: string;
   directory?: string;
+  debugReason?: string;
   parentID?: string;
   time?: { created: number; updated: number };
   realTimeStatus: string;
@@ -247,6 +249,7 @@ function toChildEntry(
     slug: child.slug,
     title: child.title,
     directory: child.directory,
+    debugReason: child.debugReason,
     parentID: child.parentID,
     time: child.time,
     realTimeStatus: status,
@@ -662,6 +665,7 @@ export async function GET() {
           if (!client) {
             return {
               sessionId: session.id,
+              parentWaiting: false,
               waiting: false,
               running: false,
               waitingChildIds: new Set<string>(),
@@ -708,6 +712,7 @@ export async function GET() {
 
             return {
               sessionId: session.id,
+              parentWaiting: hasInteractionWait,
               waiting: hasInteractionWait || hasWaitingChildren,
               running: hasRunning,
               waitingChildIds,
@@ -715,6 +720,7 @@ export async function GET() {
           } catch {
             return {
               sessionId: session.id,
+              parentWaiting: false,
               waiting: false,
               running: false,
               waitingChildIds: new Set<string>(),
@@ -735,7 +741,7 @@ export async function GET() {
           if (result.value.running) {
             session.realTimeStatus = 'busy';
           }
-          if (result.value.waiting) {
+          if (result.value.parentWaiting) {
             session.waitingForUser = true;
           }
         }

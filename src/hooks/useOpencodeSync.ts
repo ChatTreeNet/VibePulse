@@ -9,6 +9,28 @@ const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
 const WAITING_ENTER_DELAY_MS = 1500;
 const ATTENTION_SOUND_DELAY_MS = 250;
 
+export type SseStatusEntry = {
+    status: 'idle' | 'busy' | 'retry';
+    timestamp: number;
+};
+
+const SSE_STATUS_PROTECTION_WINDOW_MS = 5000;
+const sseStatusMap = new Map<string, SseStatusEntry>();
+
+export function getSseStatusSnapshot(): ReadonlyMap<string, SseStatusEntry> {
+    const now = Date.now();
+    for (const [id, entry] of sseStatusMap) {
+        if (now - entry.timestamp > SSE_STATUS_PROTECTION_WINDOW_MS) {
+            sseStatusMap.delete(id);
+        }
+    }
+    return sseStatusMap;
+}
+
+function recordSseStatus(sessionId: string, status: 'idle' | 'busy' | 'retry') {
+    sseStatusMap.set(sessionId, { status, timestamp: Date.now() });
+}
+
 function getPersistedWaiting(): Record<string, boolean> {
     if (typeof window === 'undefined') return {};
     try {
@@ -263,6 +285,7 @@ export function useOpencodeSync() {
                             case 'session.status': {
                                 const statusType = event.properties?.status?.type as 'idle' | 'busy' | 'retry' | undefined;
                                 if (!statusType) return s;
+                                recordSseStatus(s.id, statusType);
                                 const isParentSession = !s.parentID;
                                 const shouldAutoUnarchive = statusType === 'busy' || statusType === 'retry';
                                 if (statusType === 'retry' && !initialLoadRef.current) {
@@ -270,7 +293,9 @@ export function useOpencodeSync() {
                                 }
                                 if (statusType === 'idle') {
                                     clearWaitingActivation(s.id);
-                                    persistWaiting(s.id, false);
+                                    if (!isParentSession) {
+                                        persistWaiting(s.id, false);
+                                    }
                                 }
                                 if (statusType === 'retry') {
                                     clearWaitingActivation(s.id);
@@ -289,7 +314,7 @@ export function useOpencodeSync() {
                                     waitingForUser:
                                         statusType === 'retry'
                                             ? true
-                                            : statusType === 'idle'
+                                            : statusType === 'idle' && !isParentSession
                                                 ? false
                                                 : s.waitingForUser,
                                     children: s.children,

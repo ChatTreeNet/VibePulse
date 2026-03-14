@@ -47,8 +47,8 @@ const BUILTIN_PROFILE_CONFIGS: Record<string, ProfileConfig> = {
   balanced: {
     agents: {
       sisyphus: {
-        model: 'kimi-for-coding/k2p5',
-        variant: 'high',
+        model: 'anthropic/claude-opus-4-6',
+        variant: 'max',
         temperature: 0.2,
         top_p: 0.9,
       },
@@ -58,19 +58,55 @@ const BUILTIN_PROFILE_CONFIGS: Record<string, ProfileConfig> = {
         temperature: 0.2,
         top_p: 0.9,
       },
+      prometheus: {
+        model: 'anthropic/claude-opus-4-6',
+        variant: 'max',
+        temperature: 0.2,
+        top_p: 0.9,
+      },
+      metis: {
+        model: 'anthropic/claude-opus-4-6',
+        variant: 'max',
+        temperature: 0.2,
+        top_p: 0.9,
+      },
+      momus: {
+        model: 'openai/gpt-5.4',
+        variant: 'medium',
+        temperature: 0.2,
+        top_p: 0.9,
+      },
+      atlas: {
+        model: 'anthropic/claude-sonnet-4-6',
+        temperature: 0.2,
+        top_p: 0.9,
+      },
+      hepheastus: {
+        model: 'openai/gpt-5.3-codex',
+        variant: 'xhigh',
+        temperature: 0.2,
+        top_p: 0.9,
+      },
       librarian: {
-        model: 'google/gemini-3-flash',
+        model: 'anthropic/claude-sonnet-4-6',
         temperature: 0.3,
         top_p: 0.9,
       },
       explore: {
-        model: 'github-copilot/grok-code-fast-1',
+        model: 'anthropic/claude-haiku-4-5',
         temperature: 0.1,
         top_p: 0.9,
       },
       'multimodal-looker': {
-        model: 'kimi-for-coding/k2p5',
+        model: 'google/gemini-3.1-pro',
+        variant: 'high',
         temperature: 0.2,
+        top_p: 0.9,
+      },
+      'frontend-ui-ux': {
+        model: 'google/gemini-3.1-pro',
+        variant: 'high',
+        temperature: 0.3,
         top_p: 0.9,
       },
     },
@@ -79,9 +115,17 @@ const BUILTIN_PROFILE_CONFIGS: Record<string, ProfileConfig> = {
         model: 'google/gemini-3.1-pro',
         variant: 'high',
       },
+      ultrabrain: {
+        model: 'openai/gpt-5.3-codex',
+        variant: 'xhigh',
+      },
       deep: {
         model: 'openai/gpt-5.3-codex',
         variant: 'medium',
+      },
+      artistry: {
+        model: 'google/gemini-3.1-pro',
+        variant: 'high',
       },
       quick: {
         model: 'anthropic/claude-haiku-4-5',
@@ -97,7 +141,7 @@ const BUILTIN_PROFILE_CONFIGS: Record<string, ProfileConfig> = {
         temperature: 0.2,
       },
       writing: {
-        model: 'kimi-for-coding/k2p5',
+        model: 'google/gemini-3-flash',
         temperature: 0.3,
       },
     },

@@ -1,10 +1,79 @@
-import { KanbanCard, OpencodeSession, KanbanColumn } from '@/types';
+import { KanbanCard, OpencodeSession, KanbanColumn, SessionDebugReason } from '@/types';
 
 interface EnrichedSession extends OpencodeSession {
   realTimeStatus?: 'idle' | 'busy' | 'retry';
   projectName?: string;
   branch?: string;
   waitingForUser?: boolean;
+}
+
+type EnrichedChild = NonNullable<EnrichedSession['children']>[number];
+
+const RECENT_ACTIVITY_FALLBACK_MS = 5 * 60 * 1000;
+
+function isRecentlyUpdated(updatedAt: number | undefined, now: number): boolean {
+    return typeof updatedAt === 'number' && updatedAt > 0 && now - updatedAt <= RECENT_ACTIVITY_FALLBACK_MS;
+}
+
+function deriveChildDebugReason(child: EnrichedChild | undefined, now: number): SessionDebugReason | undefined {
+    if (!child) return undefined;
+    if (child.debugReason) return child.debugReason;
+
+    const childStatus = child.realTimeStatus || 'idle';
+    if (child.waitingForUser || childStatus === 'retry') {
+        return 'waiting_for_user';
+    }
+
+    if (childStatus === 'busy') {
+        const childUpdatedAt = child.time?.updated || child.time?.created;
+        return isRecentlyUpdated(childUpdatedAt, now) ? 'child_recent_activity' : 'child_unknown_fallback';
+    }
+
+    return undefined;
+}
+
+function deriveSessionDebugReason({
+    session,
+    waitingForUser,
+    effectiveStatus,
+    firstActiveChild,
+    firstWaitingChild,
+    now,
+}: {
+    session: EnrichedSession;
+    waitingForUser: boolean;
+    effectiveStatus: 'idle' | 'busy' | 'retry';
+    firstActiveChild: EnrichedChild | undefined;
+    firstWaitingChild: EnrichedChild | undefined;
+    now: number;
+}): SessionDebugReason | undefined {
+    if (session.debugReason) {
+        return session.debugReason;
+    }
+
+    if (waitingForUser) {
+        return (
+            deriveChildDebugReason(firstWaitingChild, now) ||
+            deriveChildDebugReason(firstActiveChild, now) ||
+            'waiting_for_user'
+        );
+    }
+
+    if (effectiveStatus === 'busy') {
+        const selfStatus = session.realTimeStatus || 'idle';
+        if (selfStatus === 'busy' || selfStatus === 'retry') {
+            const sessionUpdatedAt = session.time?.updated || session.time?.created;
+            return isRecentlyUpdated(sessionUpdatedAt, now) ? 'direct_status_busy' : 'sticky_busy';
+        }
+
+        if (firstActiveChild) {
+            return 'child_recent_activity';
+        }
+
+        return 'unknown_fallback';
+    }
+
+    return undefined;
 }
 
 export function transformSession(session: EnrichedSession): KanbanCard {
@@ -34,9 +103,11 @@ export function transformSession(session: EnrichedSession): KanbanCard {
         const childUpdated = child.time?.updated || now;
         return (now - childUpdated) < CHILD_BLOCKER_STALENESS_MS;
     });
+    const parentWaiting = !!session.waitingForUser;
     const waitingForUser =
         effectiveStatus === 'retry' ||
-        (effectiveStatus === 'busy' && (!!session.waitingForUser || hasWaitingChildren));
+        parentWaiting ||
+        (effectiveStatus === 'busy' && hasWaitingChildren);
     const firstActiveChild = children.find((child) => {
         const childStatus = child.realTimeStatus || 'idle';
         return childStatus === 'busy' || childStatus === 'retry';
@@ -45,11 +116,14 @@ export function transformSession(session: EnrichedSession): KanbanCard {
         const childStatus = child.realTimeStatus || 'idle';
         return childStatus === 'retry' || (childStatus !== 'idle' && !!child.waitingForUser);
     });
-    const debugReason = waitingForUser
-        ? session.debugReason || firstWaitingChild?.debugReason || firstActiveChild?.debugReason
-        : effectiveStatus === 'busy'
-            ? session.debugReason || firstActiveChild?.debugReason
-            : session.debugReason;
+    const debugReason = deriveSessionDebugReason({
+        session,
+        waitingForUser,
+        effectiveStatus,
+        firstActiveChild,
+        firstWaitingChild,
+        now,
+    });
     
     if (waitingForUser) {
         status = 'review';  // Needs Attention
@@ -87,7 +161,7 @@ export function transformSession(session: EnrichedSession): KanbanCard {
              waitingForUser:
                  (c.realTimeStatus || 'idle') === 'retry' ||
                  ((c.realTimeStatus || 'idle') === 'busy' && !!c.waitingForUser),
-             debugReason: c.debugReason,
+              debugReason: deriveChildDebugReason(c, now),
              createdAt: c.time?.created || 0,
              updatedAt: c.time?.updated || 0,
          })),

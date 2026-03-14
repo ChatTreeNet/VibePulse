@@ -7,6 +7,7 @@ import { transformSessions } from '@/lib/transform';
 import { LoadingState } from './LoadingState';
 import { playCompleteSound } from '@/lib/notificationSound';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { getSseStatusSnapshot } from '@/hooks/useOpencodeSync';
 
 const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
 const SNAPSHOT_STORAGE_KEY = 'vibepulse:last-sessions-snapshot';
@@ -240,6 +241,7 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
             }
         }
 
+        const sseSnapshot = getSseStatusSnapshot();
         const now = Date.now();
         const isPersistedWaitingStillValid = (
             status: string | undefined,
@@ -257,23 +259,30 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
             const updatedAt = s.time?.updated || s.time?.created || 0;
             const keepWaitingFromPersistence = isPersistedWaitingStillValid(s.realTimeStatus, updatedAt, persisted);
 
+            const sseEntry = sseSnapshot.get(s.id);
+            const sessionStatus = sseEntry ? sseEntry.status : s.realTimeStatus;
+
             const children = (s.children || []).map((child) => {
                 const childPersisted = !!persistedWaiting[child.id];
                 const childUpdatedAt = child.time?.updated || child.time?.created || 0;
+                const childSseEntry = sseSnapshot.get(child.id);
+                const childStatus = childSseEntry ? childSseEntry.status : child.realTimeStatus;
                 const keepChildWaitingFromPersistence = isPersistedWaitingStillValid(
-                    child.realTimeStatus,
+                    childStatus,
                     childUpdatedAt,
                     childPersisted
                 );
 
                 return {
                     ...child,
+                    realTimeStatus: childStatus,
                     waitingForUser: !!child.waitingForUser || keepChildWaitingFromPersistence,
                 };
             });
 
             return {
                 ...s,
+                realTimeStatus: sessionStatus,
                 waitingForUser: !!s.waitingForUser || keepWaitingFromPersistence,
                 children,
             };
