@@ -7,9 +7,12 @@ import {
 } from '@/lib/opencodeDiscovery';
 import { readConfig } from '@/lib/opencodeConfig';
 import {
+  clearSessionForceUnarchived,
   markSessionForceUnarchived,
+  pruneSessionStickyStatusBlocked,
   pruneSessionForceUnarchived,
   shouldForceSessionUnarchived,
+  takeSessionStickyStatusBlocked,
 } from '@/lib/sessionArchiveOverrides';
 
 type SessionLike = {
@@ -43,6 +46,18 @@ type StatusStickyState = {
 };
 
 const statusStickyState = new Map<string, StatusStickyState>();
+
+function clearStickyStatusState(sessionId: string): void {
+  statusStickyState.delete(sessionId);
+  statusStickyState.delete(`child:${sessionId}`);
+}
+
+function clearStickyStatusStateRecursively(session: EnrichedSession): void {
+  clearStickyStatusState(session.id);
+  for (const child of session.children) {
+    clearStickyStatusState(child.id);
+  }
+}
 
 type ChildEntry = {
   id: string;
@@ -411,6 +426,7 @@ export async function GET() {
 
     const lifecycleNow = Date.now();
     pruneSessionForceUnarchived(lifecycleNow);
+    pruneSessionStickyStatusBlocked(lifecycleNow);
 
     for (const session of parentSessions) {
       if (session.time?.archived !== undefined && shouldForceSessionUnarchived(session.id, lifecycleNow)) {
@@ -788,6 +804,24 @@ export async function GET() {
         session.realTimeStatus === 'retry' ||
         session.waitingForUser ||
         hasActiveChildren;
+
+      if (takeSessionStickyStatusBlocked(session.id, stickyNow)) {
+        clearStickyStatusStateRecursively(session);
+        clearSessionForceUnarchived(session.id);
+        for (const child of session.children) {
+          clearSessionForceUnarchived(child.id);
+        }
+        continue;
+      }
+
+      if (session.time?.archived) {
+        clearStickyStatusStateRecursively(session);
+        clearSessionForceUnarchived(session.id);
+        for (const child of session.children) {
+          clearSessionForceUnarchived(child.id);
+        }
+        continue;
+      }
 
       if (shouldAutoUnarchive) {
         markSessionForceUnarchived(session.id, stickyNow);

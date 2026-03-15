@@ -1,6 +1,9 @@
 import { createOpencodeClient } from '@opencode-ai/sdk';
 import { discoverOpencodePortsWithMeta } from '@/lib/opencodeDiscovery';
-import { clearSessionForceUnarchived } from '@/lib/sessionArchiveOverrides';
+import {
+    clearSessionForceUnarchived,
+    clearSessionStickyStatusBlocked,
+} from '@/lib/sessionArchiveOverrides';
 
 export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
     const { id: sessionId } = await params;
@@ -23,6 +26,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
             const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
             await client.session.delete({ path: { id: sessionId } });
             clearSessionForceUnarchived(sessionId);
+            clearSessionStickyStatusBlocked(sessionId);
             return Response.json({ success: true });
         } catch {
         }

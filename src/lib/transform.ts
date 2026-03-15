@@ -125,12 +125,12 @@ export function transformSession(session: EnrichedSession): KanbanCard {
         now,
     });
     
-    if (waitingForUser) {
+    if (session.time?.archived) {
+        status = 'done';
+    } else if (waitingForUser) {
         status = 'review';  // Needs Attention
     } else if (effectiveStatus === 'busy') {
         status = 'busy';
-    } else if (session.time?.archived) {
-        status = 'done';
     } else {
         status = 'idle';
     }
