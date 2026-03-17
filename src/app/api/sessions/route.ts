@@ -52,13 +52,6 @@ function clearStickyStatusState(sessionId: string): void {
   statusStickyState.delete(`child:${sessionId}`);
 }
 
-function clearStickyStatusStateRecursively(session: EnrichedSession): void {
-  clearStickyStatusState(session.id);
-  for (const child of session.children) {
-    clearStickyStatusState(child.id);
-  }
-}
-
 type ChildEntry = {
   id: string;
   slug?: string;
@@ -66,7 +59,7 @@ type ChildEntry = {
   directory?: string;
   debugReason?: string;
   parentID?: string;
-  time?: { created: number; updated: number };
+  time?: { created: number; updated: number; archived?: number };
   realTimeStatus: string;
   waitingForUser: boolean;
 };
@@ -77,6 +70,23 @@ type EnrichedSession = SessionLike & {
   realTimeStatus: 'idle' | 'busy' | 'retry';
   waitingForUser: boolean;
   children: ChildEntry[];
+};
+
+type SessionStatusStabilizationTarget = {
+  id: string;
+  time?: {
+    archived?: number;
+  };
+  realTimeStatus: string;
+  waitingForUser: boolean;
+  children: Array<{
+    id: string;
+    time?: {
+      archived?: number;
+    };
+    realTimeStatus: string;
+    waitingForUser: boolean;
+  }>;
 };
 
 type ProcessHint = {
@@ -181,7 +191,7 @@ function normalizeRealtimeStatus(value: string | undefined): StableRealtimeStatu
   return 'idle';
 }
 
-function applyStickyBusyStatus(id: string, status: StableRealtimeStatus, now: number, stickyBusyWindowMs: number): StableRealtimeStatus {
+export function applyStickyBusyStatus(id: string, status: StableRealtimeStatus, now: number, stickyBusyWindowMs: number): StableRealtimeStatus {
   const existing = statusStickyState.get(id) ?? { lastBusyAt: 0, lastSeenAt: now };
 
   if (status === 'busy') {
@@ -270,6 +280,83 @@ function toChildEntry(
     realTimeStatus: status,
     waitingForUser,
   };
+}
+
+function clearSessionStabilizationState(session: SessionStatusStabilizationTarget): void {
+  clearStickyStatusState(session.id);
+  clearSessionForceUnarchived(session.id);
+  for (const child of session.children) {
+    clearStickyStatusState(`child:${child.id}`);
+    clearSessionForceUnarchived(child.id);
+  }
+}
+
+export function shouldSkipSessionStatusStabilization(
+  session: SessionStatusStabilizationTarget,
+  now: number
+): boolean {
+  if (takeSessionStickyStatusBlocked(session.id, now)) {
+    clearSessionStabilizationState(session);
+    return true;
+  }
+
+  if (session.time?.archived) {
+    clearSessionStabilizationState(session);
+    return true;
+  }
+
+  return false;
+}
+
+export function applyStickyStatusStabilization(
+  session: SessionStatusStabilizationTarget,
+  stickyNow: number,
+  stickyBusyDelayMs: number
+): void {
+  for (const child of session.children) {
+    if (child.time?.archived) {
+      clearStickyStatusState(`child:${child.id}`);
+      clearSessionForceUnarchived(child.id);
+      continue;
+    }
+
+    const normalizedChildStatus = normalizeRealtimeStatus(child.realTimeStatus);
+    const childStatusForStabilization =
+      child.waitingForUser && normalizedChildStatus === 'idle' ? 'retry' : normalizedChildStatus;
+    child.realTimeStatus = applyStickyBusyStatus(
+      `child:${child.id}`,
+      childStatusForStabilization,
+      stickyNow,
+      stickyBusyDelayMs
+    );
+
+    if (child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry' || child.waitingForUser) {
+      markSessionForceUnarchived(child.id, stickyNow);
+    }
+  }
+
+  const normalizedSessionStatus = normalizeRealtimeStatus(session.realTimeStatus);
+  const sessionStatusForStabilization =
+    session.waitingForUser && normalizedSessionStatus === 'idle' ? 'retry' : normalizedSessionStatus;
+  session.realTimeStatus = applyStickyBusyStatus(
+    session.id,
+    sessionStatusForStabilization,
+    stickyNow,
+    stickyBusyDelayMs
+  );
+
+  const hasActiveChildren = session.children.some(
+    (child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry' || child.waitingForUser
+  );
+  const shouldAutoUnarchive =
+    session.realTimeStatus === 'busy' ||
+    session.realTimeStatus === 'retry' ||
+    session.waitingForUser ||
+    hasActiveChildren;
+
+  if (shouldAutoUnarchive) {
+    markSessionForceUnarchived(session.id, stickyNow);
+  }
 }
 // Get project name from directory path
 function getProjectName(directory: string): string {
@@ -775,64 +862,11 @@ export async function GET() {
     }
 
     for (const session of enrichedSessions) {
-      for (const child of session.children) {
-        const normalizedChildStatus = normalizeRealtimeStatus(child.realTimeStatus);
-        const childStatusForStabilization =
-          child.waitingForUser && normalizedChildStatus === 'idle' ? 'retry' : normalizedChildStatus;
-        child.realTimeStatus = applyStickyBusyStatus(
-          `child:${child.id}`,
-          childStatusForStabilization,
-          stickyNow,
-          stickyBusyDelayMs
-        );
-
-        if (child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry' || child.waitingForUser) {
-          markSessionForceUnarchived(child.id, stickyNow);
-        }
-      }
-
-      const normalizedSessionStatus = normalizeRealtimeStatus(session.realTimeStatus);
-      const sessionStatusForStabilization =
-        session.waitingForUser && normalizedSessionStatus === 'idle' ? 'retry' : normalizedSessionStatus;
-      session.realTimeStatus = applyStickyBusyStatus(session.id, sessionStatusForStabilization, stickyNow, stickyBusyDelayMs);
-
-      const hasActiveChildren = session.children.some(
-        (child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry' || child.waitingForUser
-      );
-      const shouldAutoUnarchive =
-        session.realTimeStatus === 'busy' ||
-        session.realTimeStatus === 'retry' ||
-        session.waitingForUser ||
-        hasActiveChildren;
-
-      if (takeSessionStickyStatusBlocked(session.id, stickyNow)) {
-        clearStickyStatusStateRecursively(session);
-        clearSessionForceUnarchived(session.id);
-        for (const child of session.children) {
-          clearSessionForceUnarchived(child.id);
-        }
+      if (shouldSkipSessionStatusStabilization(session, stickyNow)) {
         continue;
       }
 
-      if (session.time?.archived) {
-        clearStickyStatusStateRecursively(session);
-        clearSessionForceUnarchived(session.id);
-        for (const child of session.children) {
-          clearSessionForceUnarchived(child.id);
-        }
-        continue;
-      }
-
-      if (shouldAutoUnarchive) {
-        markSessionForceUnarchived(session.id, stickyNow);
-      }
-
-      if (shouldAutoUnarchive && session.time?.archived) {
-        session.time = {
-          ...session.time,
-          archived: undefined,
-        };
-      }
+      applyStickyStatusStabilization(session, stickyNow, stickyBusyDelayMs);
     }
     pruneStickyState(stickyNow, activeStickyIds);
 
