@@ -41,6 +41,25 @@ async function fetchProfiles(): Promise<ProfilesResponse> {
   }
 }
 
+function triggerJsonDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function readFileText(file: File): Promise<string> {
+  if (typeof file.text === 'function') {
+    return file.text();
+  }
+
+  return new Response(file).text();
+}
+
 export function ProfileManager({ onSaveSuccess }: ProfileManagerProps) {
   const queryClient = useQueryClient();
   const [editingProfile, setEditingProfile] = React.useState<Profile | null>(null);
@@ -188,6 +207,69 @@ export function ProfileManager({ onSaveSuccess }: ProfileManagerProps) {
     },
   });
 
+  const exportMutation = useMutation({
+    mutationFn: async (profile: Profile) => {
+      const res = await fetch(`/api/profiles/${profile.id}/export`);
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to export profile');
+      }
+
+      const blob = await res.blob();
+      return { blob, profile };
+    },
+    onSuccess: ({ blob, profile }) => {
+      triggerJsonDownload(blob, `${profile.id}.vibepulse-profile.json`);
+      setToast({ type: 'success', message: `Exported ${profile.name}` });
+    },
+    onError: (err: Error) => {
+      setToast({ type: 'error', message: err.message });
+    },
+  });
+
+  const importMutation = useMutation({
+    mutationFn: async (file: File) => {
+      let payload: unknown;
+
+      try {
+        payload = JSON.parse(await readFileText(file));
+      } catch {
+        throw new Error('Profile file must be valid JSON');
+      }
+
+      const res = await fetch('/api/profiles/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to import profile');
+      }
+
+      return res.json();
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['profiles'] });
+      const importedName =
+        result &&
+        typeof result === 'object' &&
+        'profile' in result &&
+        result.profile &&
+        typeof result.profile === 'object' &&
+        'name' in result.profile &&
+        typeof result.profile.name === 'string'
+          ? result.profile.name
+          : 'profile';
+      setToast({ type: 'success', message: `Imported ${importedName}` });
+    },
+    onError: (err: Error) => {
+      setToast({ type: 'error', message: err.message });
+    },
+  });
+
   const handleApply = (profileId: string) => {
     applyMutation.mutate(profileId);
   };
@@ -234,6 +316,14 @@ export function ProfileManager({ onSaveSuccess }: ProfileManagerProps) {
 
   const handleDelete = (profileId: string) => {
     deleteMutation.mutate(profileId);
+  };
+
+  const handleExport = (profile: Profile) => {
+    exportMutation.mutate(profile);
+  };
+
+  const handleImport = (file: File) => {
+    importMutation.mutate(file);
   };
 
   if (isLoading) {
@@ -303,6 +393,8 @@ export function ProfileManager({ onSaveSuccess }: ProfileManagerProps) {
           onApply={handleApply}
           onEdit={handleEdit}
           onDelete={handleDelete}
+          onExport={handleExport}
+          onImport={handleImport}
           onCreateNew={handleCreate}
         />
       )}
