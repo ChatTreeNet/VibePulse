@@ -44,6 +44,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
             { status: 503 }
         );
     }
+    const errors: Error[] = [];
     for (const port of ports) {
         try {
             const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
@@ -51,12 +52,18 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
             clearSessionForceUnarchived(sessionId);
             clearSessionStickyStatusBlocked(sessionId);
             return Response.json({ success: true });
-        } catch {
+        } catch (err) {
+            errors.push(err as Error);
         }
     }
 
+    const lastError = errors[errors.length - 1];
     return Response.json(
-        { error: 'Session not found' },
-        { status: 404 }
+        {
+            error: 'Failed to delete session',
+            message: lastError?.message,
+            portsTried: ports.length,
+        },
+        { status: 500 }
     );
 }

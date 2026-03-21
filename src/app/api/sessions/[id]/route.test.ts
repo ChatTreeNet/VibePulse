@@ -39,6 +39,12 @@ type SideEffectMock = {
   mock: { calls: unknown[][] };
 };
 
+type SessionDeleteMock = {
+  mock: { calls: unknown[][] };
+  mockRejectedValueOnce: (error: Error) => void;
+  mockResolvedValueOnce: (value?: unknown) => void;
+};
+
 type FetchMock = {
   (...args: unknown[]): Promise<Response>;
   mock: { calls: unknown[][] };
@@ -162,5 +168,54 @@ describe('/api/sessions/[id] composite id handling', () => {
     expect(response.status).toBe(404);
     expect(data).toEqual({ error: 'Session not found' });
     expect(mockCreateOpencodeClient.mock.calls).toHaveLength(0);
+  });
+
+  it('falls back to next port when first port fails during delete', async () => {
+    mockDiscoverPortsWithMeta.mockReturnValue({ ports: [7777, 7778], timedOut: false });
+    const sessionDelete = vi.fn(async () => undefined) as unknown as SessionDeleteMock;
+    sessionDelete.mockRejectedValueOnce(new Error('Connection refused'));
+
+    mockCreateOpencodeClient.mockReturnValue({
+      session: {
+        delete: sessionDelete,
+      },
+    } as never);
+
+    const response = await deleteSession(new Request('http://localhost/api/sessions/local:abc/delete', { method: 'POST' }), {
+      params: Promise.resolve({ id: 'local:abc' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(sessionDelete.mock.calls).toHaveLength(2);
+    expect(sessionDelete.mock.calls[0]).toEqual([{ path: { id: 'abc' } }]);
+    expect(mockClearSessionForceUnarchived).toHaveBeenCalledWith('abc');
+    expect(mockClearSessionStickyStatusBlocked).toHaveBeenCalledWith('abc');
+  });
+
+  it('returns informed error when all ports fail during delete', async () => {
+    mockDiscoverPortsWithMeta.mockReturnValue({ ports: [7777, 7778], timedOut: false });
+    const sessionDelete = vi.fn(async () => undefined) as unknown as SessionDeleteMock;
+    sessionDelete.mockRejectedValueOnce(new Error('Connection refused'));
+    sessionDelete.mockRejectedValueOnce(new Error('Timeout'));
+
+    mockCreateOpencodeClient.mockReturnValue({
+      session: {
+        delete: sessionDelete,
+      },
+    } as never);
+
+    const response = await deleteSession(new Request('http://localhost/api/sessions/local:abc/delete', { method: 'POST' }), {
+      params: Promise.resolve({ id: 'local:abc' }),
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(data).toEqual({
+      error: 'Failed to delete session',
+      message: 'Timeout',
+      portsTried: 2,
+    });
+    expect(mockClearSessionForceUnarchived.mock.calls).toHaveLength(0);
+    expect(mockClearSessionStickyStatusBlocked.mock.calls).toHaveLength(0);
   });
 });
