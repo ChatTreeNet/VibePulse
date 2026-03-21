@@ -163,9 +163,10 @@ export function FullscreenConfigPanel({ open, onClose }: FullscreenConfigPanelPr
     return AGENTS.filter(
       (agent) =>
         agent.name.toLowerCase().includes(query) ||
-        agent.description.toLowerCase().includes(query)
+        agent.description.toLowerCase().includes(query) ||
+        (configData?.agents?.[agent.key]?.model || '').toLowerCase().includes(query)
     );
-  }, [searchQuery]);
+  }, [searchQuery, configData]);
 
   const selectedAgentData = AGENTS.find((a) => a.key === selectedAgent);
 
@@ -277,12 +278,15 @@ export function FullscreenConfigPanel({ open, onClose }: FullscreenConfigPanelPr
              </div>
 
              <nav className="flex-1 overflow-y-auto p-2">
-               <div className="space-y-1">
-                 {filteredAgents.map((agent) => (
-                   <button
-                     key={agent.key}
-                     type="button"
-                     onClick={() => setSelectedAgent(agent.key)}
+                <div className="space-y-1">
+                  {filteredAgents.map((agent) => {
+                    const agentModel = configData?.agents?.[agent.key]?.model;
+
+                    return (
+                    <button
+                      key={agent.key}
+                      type="button"
+                      onClick={() => setSelectedAgent(agent.key)}
                      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${
                        selectedAgent === agent.key
                          ? 'bg-blue-600 text-white'
@@ -314,22 +318,37 @@ export function FullscreenConfigPanel({ open, onClose }: FullscreenConfigPanelPr
                             return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${selectedAgent === agent.key ? 'bg-emerald-300' : 'bg-emerald-500'}`} title="Configured" />;
                           })()}
                        </div>
-                       <div
-                         className={`truncate text-xs ${
-                           selectedAgent === agent.key
-                             ? 'text-blue-100'
-                             : 'text-zinc-500 dark:text-zinc-500'
-                         }`}
-                       >
-                         {agent.description}
-                       </div>
-                     </div>
-                     {selectedAgent === agent.key && (
-                       <ChevronRight className="h-4 w-4 shrink-0 text-blue-200" />
-                     )}
-                   </button>
-                 ))}
-               </div>
+                        <div
+                          className={`truncate text-xs ${
+                            selectedAgent === agent.key
+                              ? 'text-blue-100'
+                              : 'text-zinc-500 dark:text-zinc-500'
+                          }`}
+                        >
+                          {agent.description}
+                        </div>
+                        {agentModel && (
+                          <div
+                            className={`mt-1 inline-flex max-w-full items-start rounded-md px-1.5 py-0.5 text-[11px] leading-4 ${
+                              selectedAgent === agent.key
+                                ? 'bg-white/15 text-blue-50/95'
+                                : 'bg-zinc-200/70 text-zinc-700 dark:bg-zinc-800/80 dark:text-zinc-300'
+                            }`}
+                            title={agentModel}
+                          >
+                            <span className="font-mono break-all [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
+                              {agentModel}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      {selectedAgent === agent.key && (
+                        <ChevronRight className="h-4 w-4 shrink-0 text-blue-200" />
+                      )}
+                    </button>
+                    );
+                  })}
+                </div>
 
                {filteredAgents.length === 0 && (
                  <div className="py-8 text-center">

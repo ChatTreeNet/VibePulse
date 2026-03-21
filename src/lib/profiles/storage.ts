@@ -189,6 +189,14 @@ async function createBuiltinProfileConfigs(): Promise<void> {
 }
 
 export async function readProfileIndex(): Promise<ProfileIndex> {
+  return readProfileIndexInternal(true);
+}
+
+export async function readProfileIndexStrict(): Promise<ProfileIndex> {
+  return readProfileIndexInternal(false);
+}
+
+async function readProfileIndexInternal(fallbackOnError: boolean): Promise<ProfileIndex> {
   try {
     ensureProfilesDir();
 
@@ -228,7 +236,10 @@ export async function readProfileIndex(): Promise<ProfileIndex> {
     }
     
     return index;
-  } catch {
+  } catch (error) {
+    if (!fallbackOnError) {
+      throw error;
+    }
     return createDefaultProfileIndex();
   }
 }

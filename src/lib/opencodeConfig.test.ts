@@ -51,11 +51,21 @@ describe('opencodeConfig', () => {
       }, TEST_CONFIG_PATH);
 
       const loaded = await readConfig(TEST_CONFIG_PATH);
+      const loadedAgents =
+        typeof loaded.agents === 'object' && loaded.agents !== null
+          ? loaded.agents
+          : {};
+      const loadedSisyphus = loadedAgents.sisyphus;
+      const sisyphusConfig =
+        typeof loadedSisyphus === 'object' && loadedSisyphus !== null
+          ? loadedSisyphus
+          : {};
+
       const updated = {
         ...loaded,
         agents: {
-          ...loaded.agents,
-          sisyphus: { ...loaded.agents?.sisyphus, temperature: 0.9 },
+          ...loadedAgents,
+          sisyphus: { ...sisyphusConfig, temperature: 0.9 },
         },
       };
 

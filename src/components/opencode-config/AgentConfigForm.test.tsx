@@ -4,8 +4,16 @@ import userEvent from '@testing-library/user-event';
 import { AgentConfigForm } from './AgentConfigForm';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-const mockFetch = vi.fn();
+const mockFetch = vi.fn<typeof fetch>();
 global.fetch = mockFetch;
+
+function jsonResponse(data: unknown): Response {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => data,
+  } as Response;
+}
 
 describe('AgentConfigForm - echo bug fix', () => {
   let queryClient: QueryClient;
@@ -24,21 +32,19 @@ describe('AgentConfigForm - echo bug fix', () => {
     const user = userEvent.setup();
     
     mockFetch
-      .mockResolvedValueOnce({
-        json: async () => ({
+      .mockResolvedValueOnce(
+        jsonResponse({
           agents: { sisyphus: { model: 'anthropic/claude-3.5-sonnet', temperature: 0.5 } },
           categories: {},
-        }),
-        ok: true,
-      })
-      .mockResolvedValueOnce({ json: async () => ({ success: true }), ok: true })
-      .mockResolvedValueOnce({
-        json: async () => ({
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ success: true }))
+      .mockResolvedValueOnce(
+        jsonResponse({
           agents: { sisyphus: { model: 'openai/gpt-4o', temperature: 0.8 } },
           categories: {},
-        }),
-        ok: true,
-      });
+        })
+      );
 
     render(
       <QueryClientProvider client={queryClient}>
