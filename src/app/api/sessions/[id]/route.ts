@@ -1,10 +1,31 @@
 import { createOpencodeClient } from '@opencode-ai/sdk';
 import { discoverOpencodePortsWithMeta } from '@/lib/opencodeDiscovery';
+import { parseSourceKey } from '@/lib/hostIdentity';
+
+function resolveLocalSessionId(id: string): string | null {
+    if (!id.includes(':')) {
+        return id;
+    }
+
+    try {
+        const { hostId, sessionId } = parseSourceKey(id);
+        return hostId === 'local' ? sessionId : null;
+    } catch {
+        return null;
+    }
+}
 
 export async function GET(
     _: Request,
     { params }: { params: Promise<{ id: string }> }
 ) {
+    const { id } = await params;
+    const sessionId = resolveLocalSessionId(id);
+
+    if (!sessionId) {
+        return Response.json({ error: 'Session not found' }, { status: 404 });
+    }
+
     const { ports, timedOut } = discoverOpencodePortsWithMeta();
     
     if (!ports.length) {
@@ -28,11 +49,10 @@ export async function GET(
     }
 
     try {
-        const { id } = await params;
         for (const port of ports) {
             try {
                 const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
-                const result = await client.session.get({ path: { id } });
+                const result = await client.session.get({ path: { id: sessionId } });
                 if (result.data) {
                     return Response.json({ session: result.data });
                 }

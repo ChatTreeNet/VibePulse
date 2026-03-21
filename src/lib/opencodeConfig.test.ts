@@ -8,6 +8,10 @@ import { tmpdir } from 'os';
 const TEST_CONFIG_DIR = join(tmpdir(), 'vibepulse-test-' + Date.now());
 const TEST_CONFIG_PATH = join(TEST_CONFIG_DIR, 'oh-my-opencode.jsonc');
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 async function cleanup() {
   try {
     if (existsSync(TEST_CONFIG_PATH)) {
@@ -51,11 +55,13 @@ describe('opencodeConfig', () => {
       }, TEST_CONFIG_PATH);
 
       const loaded = await readConfig(TEST_CONFIG_PATH);
+      const existingAgents = isRecord(loaded.agents) ? loaded.agents : {};
+      const existingSisyphus = isRecord(existingAgents.sisyphus) ? existingAgents.sisyphus : {};
       const updated = {
         ...loaded,
         agents: {
-          ...loaded.agents,
-          sisyphus: { ...loaded.agents?.sisyphus, temperature: 0.9 },
+          ...existingAgents,
+          sisyphus: { ...existingSisyphus, temperature: 0.9 },
         },
       };
 

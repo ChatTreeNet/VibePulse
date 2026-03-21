@@ -6,11 +6,13 @@ import { ProjectCard } from './ProjectCard';
 import { transformSessions } from '@/lib/transform';
 import { LoadingState } from './LoadingState';
 import { playCompleteSound } from '@/lib/notificationSound';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getSseStatusSnapshot } from '@/hooks/useOpencodeSync';
+import { useHostSources } from '@/hooks/useHostSources';
+import { composeSourceKey } from '@/lib/hostIdentity';
 
-const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
-const SNAPSHOT_STORAGE_KEY = 'vibepulse:last-sessions-snapshot';
+const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions:v2';
+const SNAPSHOT_STORAGE_KEY = 'vibepulse:last-sessions-snapshot:v2';
 const START_COMMAND_TEMPLATE = 'opencode --port <PORT>';
 const CARD_ANIMATION_DURATION_MS = 250;
 const SESSIONS_ERROR_DISPLAY_THRESHOLD = 3;
@@ -27,6 +29,9 @@ const COLUMNS: { id: KanbanColumn; title: string }[] = [
 interface KanbanBoardProps {
     filterDays: number;
     onProcessHintsChange?: (hints: ProcessHint[]) => void;
+    hostSources: ReturnType<typeof useHostSources>;
+    showHostFilter?: boolean;
+    onHostStatusesChange?: (statuses: SessionHostStatus[]) => void;
 }
 
 type SessionsFetchError = Error & {
@@ -46,6 +51,16 @@ type SessionSnapshot = {
     savedAt: number;
     sessions: OpencodeSession[];
     processHints: ProcessHint[];
+    hostStatuses?: SessionHostStatus[];
+};
+
+export type SessionHostStatus = {
+    hostId: string;
+    hostLabel: string;
+    hostKind: 'local' | 'remote';
+    online: boolean;
+    degraded?: boolean;
+    reason?: string;
 };
 
 type SessionsResponse = {
@@ -53,13 +68,54 @@ type SessionsResponse = {
     processHints?: ProcessHint[];
     failedPorts?: Array<{ port: number; reason: string }>;
     degraded?: boolean;
+    hostStatuses?: SessionHostStatus[];
 };
 
-export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardProps) {
+function getLocalWaitingPersistenceKey(
+    session: Pick<OpencodeSession, 'id' | 'sourceSessionKey' | 'hostId' | 'hostKind'>
+): string | null {
+    const sourceKey = session.sourceSessionKey || session.id;
+    if (session.hostKind === 'local' || session.hostId === 'local' || sourceKey.startsWith('local:')) {
+        return sourceKey;
+    }
+
+    return null;
+}
+
+function getCanonicalSessionIdentity(
+    session: Pick<OpencodeSession, 'id' | 'hostId' | 'rawSessionId' | 'sourceSessionKey'>
+): string {
+    if (session.sourceSessionKey) {
+        return session.sourceSessionKey;
+    }
+
+    if (session.hostId && session.rawSessionId) {
+        return composeSourceKey(session.hostId, session.rawSessionId);
+    }
+
+    if (session.hostId && !session.id.includes(':')) {
+        return composeSourceKey(session.hostId, session.id);
+    }
+
+    if (!session.id.includes(':')) {
+        return composeSourceKey('local', session.id);
+    }
+
+    return session.id;
+}
+
+export function KanbanBoard({
+    filterDays,
+    onProcessHintsChange,
+    hostSources,
+    showHostFilter = true,
+    onHostStatusesChange,
+}: KanbanBoardProps) {
     const cardStatusStateRef = useRef<Record<string, KanbanColumn>>({});
     const cardStatusInitRef = useRef(false);
     const [copyFeedback, setCopyFeedback] = useState<'idle' | 'copied' | 'failed'>('idle');
     const [staleSnapshot, setStaleSnapshot] = useState<SessionSnapshot | null>(null);
+    const { enabledSources, activeFilter, setActiveFilter, filteredHostIds } = hostSources;
 
     const { data: config } = useQuery({
         queryKey: ['opencode-config'],
@@ -77,10 +133,15 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
             : 5000;
 
     const { data, isLoading, error, dataUpdatedAt, refetch, isFetching, failureCount } = useQuery<SessionsResponse>({
-        queryKey: ['sessions'],
+        queryKey: ['sessions', enabledSources],
         queryFn: async ({ signal }: { signal: AbortSignal }) => {
             try {
-                const res = await fetch('/api/sessions', { signal });
+                const res = await fetch('/api/sessions', { 
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sources: enabledSources }),
+                    signal 
+                });
                 if (!res.ok) {
                     let payload: { error?: string; hint?: string } | null = null;
                     try {
@@ -139,6 +200,9 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
             if (!Array.isArray(parsed.processHints)) {
                 parsed.processHints = [];
             }
+            if (!Array.isArray(parsed.hostStatuses)) {
+                parsed.hostStatuses = [];
+            }
             if (parsed.sessions.length === 0) return;
             setStaleSnapshot(parsed);
         } catch {
@@ -158,6 +222,7 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
             savedAt: Date.now(),
             sessions: data.sessions,
             processHints: data.processHints ?? [],
+            hostStatuses: data.hostStatuses ?? [],
         };
 
         try {
@@ -166,7 +231,7 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
         } catch {
             setStaleSnapshot(snapshot);
         }
-    }, [data?.degraded, data?.processHints, data?.sessions, staleSnapshot?.sessions?.length]);
+    }, [data?.degraded, data?.processHints, data?.sessions, data?.hostStatuses, staleSnapshot?.sessions?.length]);
 
     const handleCopyStartCommand = async () => {
         try {
@@ -185,11 +250,12 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
                 const snapshotAgeMs = Date.now() - staleSnapshot.savedAt;
                 if (snapshotAgeMs <= DEGRADED_MERGE_MAX_SNAPSHOT_AGE_MS) {
                     const merged = [...data.sessions];
-                    const seen = new Set(merged.map((session) => session.id));
+                    const seen = new Set(merged.map((session) => getCanonicalSessionIdentity(session)));
                     for (const session of staleSnapshot.sessions) {
-                        if (seen.has(session.id)) continue;
+                        const canonicalIdentity = getCanonicalSessionIdentity(session);
+                        if (seen.has(canonicalIdentity)) continue;
                         merged.push(session);
-                        seen.add(session.id);
+                        seen.add(canonicalIdentity);
                     }
                     return merged;
                 }
@@ -203,6 +269,37 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
     }, [activeError, data?.degraded, data?.sessions, staleSnapshot?.savedAt, staleSnapshot?.sessions]);
 
     const isShowingStaleData = !!activeError && !data?.sessions && !!staleSnapshot?.sessions?.length;
+
+    const currentHostStatuses = useMemo(() => {
+        if (data?.hostStatuses?.length) {
+            return data.hostStatuses;
+        }
+        if (isShowingStaleData && staleSnapshot?.hostStatuses?.length) {
+            return staleSnapshot.hostStatuses;
+        }
+
+        if (
+            data &&
+            !activeError &&
+            enabledSources.length === 1 &&
+            enabledSources[0].hostId === 'local' &&
+            enabledSources[0].hostKind === 'local'
+        ) {
+            return [{
+                hostId: 'local',
+                hostLabel: 'Local',
+                hostKind: 'local' as const,
+                online: true,
+            }];
+        }
+
+        return [];
+    }, [activeError, data, data?.hostStatuses, enabledSources, isShowingStaleData, staleSnapshot?.hostStatuses]);
+
+    useEffect(() => {
+        onHostStatusesChange?.(currentHostStatuses);
+    }, [currentHostStatuses, onHostStatusesChange]);
+
     const shouldShowHardError =
         !!activeError &&
         !isShowingStaleData &&
@@ -255,23 +352,29 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
         };
 
         return sourceSessions.map((s) => {
-            const persisted = !!persistedWaiting[s.id];
+            const waitingPersistenceKey = getLocalWaitingPersistenceKey(s);
+            const persisted = waitingPersistenceKey ? !!persistedWaiting[waitingPersistenceKey] : false;
             const updatedAt = s.time?.updated || s.time?.created || 0;
-            const keepWaitingFromPersistence = isPersistedWaitingStillValid(s.realTimeStatus, updatedAt, persisted);
+            const keepWaitingFromPersistence = waitingPersistenceKey
+                ? isPersistedWaitingStillValid(s.realTimeStatus, updatedAt, persisted)
+                : false;
 
-            const sseEntry = sseSnapshot.get(s.id);
+            const sseEntry = waitingPersistenceKey ? sseSnapshot.get(waitingPersistenceKey) : undefined;
             const sessionStatus = sseEntry ? sseEntry.status : s.realTimeStatus;
 
             const children = (s.children || []).map((child) => {
-                const childPersisted = !!persistedWaiting[child.id];
+                const childWaitingPersistenceKey = getLocalWaitingPersistenceKey(child);
+                const childPersisted = childWaitingPersistenceKey ? !!persistedWaiting[childWaitingPersistenceKey] : false;
                 const childUpdatedAt = child.time?.updated || child.time?.created || 0;
-                const childSseEntry = sseSnapshot.get(child.id);
+                const childSseEntry = childWaitingPersistenceKey ? sseSnapshot.get(childWaitingPersistenceKey) : undefined;
                 const childStatus = childSseEntry ? childSseEntry.status : child.realTimeStatus;
-                const keepChildWaitingFromPersistence = isPersistedWaitingStillValid(
-                    childStatus,
-                    childUpdatedAt,
-                    childPersisted
-                );
+                const keepChildWaitingFromPersistence = childWaitingPersistenceKey
+                    ? isPersistedWaitingStillValid(
+                        childStatus,
+                        childUpdatedAt,
+                        childPersisted
+                    )
+                    : false;
 
                 return {
                     ...child,
@@ -293,13 +396,15 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
         if (typeof window === 'undefined') return;
         const nextPersistedWaiting: Record<string, boolean> = {};
         for (const session of enrichedSessions as Array<{ id: string; waitingForUser?: boolean; children?: Array<{ id: string; waitingForUser?: boolean }> }>) {
-            if (session.waitingForUser) {
-                nextPersistedWaiting[session.id] = true;
+            const sessionKey = getLocalWaitingPersistenceKey(session);
+            if (session.waitingForUser && sessionKey) {
+                nextPersistedWaiting[sessionKey] = true;
             }
 
             for (const child of session.children || []) {
-                if (child.waitingForUser) {
-                    nextPersistedWaiting[child.id] = true;
+                const childKey = getLocalWaitingPersistenceKey(child);
+                if (child.waitingForUser && childKey) {
+                    nextPersistedWaiting[childKey] = true;
                 }
             }
         }
@@ -308,12 +413,20 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
 
     const cards: KanbanCard[] = useMemo(() => {
         const allCards = transformSessions(enrichedSessions);
+        let filtered = allCards;
+        if (filteredHostIds) {
+            filtered = filtered.filter(card => {
+                const cardHostId = card.hostId || 'local';
+                return filteredHostIds.has(cardHostId);
+            });
+        }
+
         if (filterDays === 0) {
-            return allCards;
+            return filtered;
         }
         const cutoff = dataUpdatedAt - filterDays * 24 * 60 * 60 * 1000;
 
-        return allCards.filter((card) => {
+        return filtered.filter((card) => {
             if (card.status === 'busy' || card.status === 'review') {
                 return true;
             }
@@ -325,7 +438,7 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
             );
             return lastActivityAt >= cutoff;
         });
-    }, [dataUpdatedAt, enrichedSessions, filterDays]);
+    }, [dataUpdatedAt, enrichedSessions, filterDays, filteredHostIds]);
 
     useEffect(() => {
         const nextCardStatus: Record<string, KanbanColumn> = {};
@@ -351,8 +464,60 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
         }
     }, [cards, isShowingStaleData]);
 
+
+    const renderHostFilter = () => (
+        <div className="shrink-0 flex items-center justify-end px-4 py-2 bg-zinc-50 dark:bg-black border-b border-gray-200 dark:border-zinc-800">
+            <div className="flex items-center gap-1 bg-gray-100 dark:bg-zinc-800 rounded-lg p-0.5" data-testid="host-filter">
+                <button
+                    type="button"
+                    onClick={() => setActiveFilter('all')}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all duration-150 ${
+                        activeFilter === 'all'
+                            ? 'bg-white dark:bg-zinc-600 text-gray-900 dark:text-white shadow-sm'
+                            : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                    }`}
+                    data-testid="host-filter-option-all"
+                >
+                    All Hosts
+                </button>
+                {enabledSources.map(source => {
+                    const status = currentHostStatuses.find((s: SessionHostStatus) => s.hostId === source.hostId);
+                    const isOnline = status?.online ?? false;
+                    
+                    return (
+                        <button
+                            key={source.hostId}
+                            type="button"
+                            onClick={() => setActiveFilter(source.hostId)}
+                            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-all duration-150 ${
+                                activeFilter === source.hostId
+                                    ? 'bg-white dark:bg-zinc-600 text-gray-900 dark:text-white shadow-sm'
+                                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                            }`}
+                            data-testid={`host-filter-option-${source.hostId}`}
+                        >
+                            <span 
+                                className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-gray-400'}`} 
+                                data-testid={`host-status-${source.hostId}`}
+                                title={isOnline ? 'Online' : 'Offline'}
+                            />
+                            {source.hostLabel}
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+
+    const hostFilterNode: ReactNode = showHostFilter ? renderHostFilter() : null;
+
     if (isLoading) {
-        return <LoadingState />;
+        return (
+            <div className="flex flex-col flex-1 h-full min-h-0">
+                {hostFilterNode}
+                <LoadingState />
+            </div>
+        );
     }
 
     if (shouldShowHardError) {
@@ -363,7 +528,9 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
             : activeError?.message || 'An error occurred while loading sessions';
 
         return (
-            <div className="flex-1 flex items-center justify-center p-8">
+            <div className="flex flex-col flex-1 h-full min-h-0">
+                {hostFilterNode}
+                <div className="flex-1 flex items-center justify-center p-8">
                 <div className="max-w-md w-full text-center">
                     <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-red-100 dark:bg-red-900/30 rounded-full">
                         <svg
@@ -412,12 +579,15 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
                     </div>
                 </div>
             </div>
+            </div>
         );
     }
 
     if (shouldShowTransientRecovery) {
         return (
-            <div className="flex-1 flex items-center justify-center p-8">
+            <div className="flex flex-col flex-1 h-full min-h-0">
+                {hostFilterNode}
+                <div className="flex-1 flex items-center justify-center p-8">
                 <div className="max-w-md w-full text-center">
                     <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-amber-100 dark:bg-amber-900/30 rounded-full">
                         <svg
@@ -451,12 +621,15 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
                     </button>
                 </div>
             </div>
+            </div>
         );
     }
 
     if (!cards || cards.length === 0) {
         return (
-            <div className="flex-1 flex items-center justify-center p-8">
+            <div className="flex flex-col flex-1 h-full min-h-0">
+                {hostFilterNode}
+                <div className="flex-1 flex items-center justify-center p-8">
                 <div className="max-w-md w-full text-center">
                     <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-gray-100 dark:bg-zinc-800 rounded-full">
                         <svg
@@ -485,23 +658,56 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
                     </p>
                 </div>
             </div>
+            </div>
         );
     }
 
     // Group cards by project
     const groupByProject = (columnCards: KanbanCard[]) => {
-        const groups = new Map<string, KanbanCard[]>();
+        const groups = new Map<string, {
+            projectName: string;
+            branch?: string;
+            hostLabel?: string;
+            readOnly: boolean;
+            cards: KanbanCard[];
+        }>();
+
         for (const card of columnCards) {
-            const key = card.projectName || 'Unknown Project';
-            if (!groups.has(key)) groups.set(key, []);
-            groups.get(key)!.push(card);
+            const projectName = card.projectName || 'Unknown Project';
+            const hostId = card.hostId || 'local';
+            const key = `${hostId}::${projectName}`;
+
+            if (!groups.has(key)) {
+                groups.set(key, {
+                    projectName,
+                    branch: card.branch,
+                    hostLabel: card.hostLabel,
+                    readOnly: !!card.readOnly,
+                    cards: [],
+                });
+            }
+
+            const group = groups.get(key)!;
+            group.cards.push(card);
+            group.readOnly = group.readOnly || !!card.readOnly;
+
+            if (!group.branch && card.branch) {
+                group.branch = card.branch;
+            }
+
+            if (!group.hostLabel && card.hostLabel) {
+                group.hostLabel = card.hostLabel;
+            }
         }
+
         return groups;
     };
 
     return (
-        <div className="flex-1 overflow-x-auto scrollbar-thin scroll-smooth">
-            {isShowingStaleData ? (
+        <div className="flex flex-col flex-1 h-full min-h-0">
+            {hostFilterNode}
+            <div className="flex-1 overflow-x-auto scrollbar-thin scroll-smooth relative">
+                {isShowingStaleData ? (
                 <div className="px-4 pt-4 pb-0">
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
                         <div className="flex items-center gap-2 text-xs font-medium">
@@ -538,20 +744,23 @@ export function KanbanBoard({ filterDays, onProcessHintsChange }: KanbanBoardPro
                             </div>
                             <div className="flex-1 overflow-y-auto scrollbar-thin pr-1">
                                 <div className="space-y-3">
-                                    {Array.from(projectGroups.entries()).map(([projectName, groupCards]) => (
-                                        <ProjectCard
-                                            key={projectName}
-                                            projectName={projectName}
-                                            branch={groupCards[0].branch}
-                                            cards={groupCards}
-                                            readOnly={isShowingStaleData}
-                                        />
-                                    ))}
+                                    {Array.from(projectGroups.entries()).map(([groupKey, group]) => (
+                                         <ProjectCard
+                                            key={groupKey}
+                                            projectName={group.projectName}
+                                            branch={group.branch}
+                                            cards={group.cards}
+                                            readOnly={isShowingStaleData || group.readOnly}
+                                            hostLabel={group.hostLabel}
+                                            multipleHostsEnabled={enabledSources.length > 1}
+                                         />
+                                     ))}
                                 </div>
                             </div>
                         </div>
                     );
                 })}
+            </div>
             </div>
         </div>
     );

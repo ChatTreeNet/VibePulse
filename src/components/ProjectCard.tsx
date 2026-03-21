@@ -9,6 +9,8 @@ interface ProjectCardProps {
     branch?: string;
     cards: KanbanCard[];
     readOnly?: boolean;
+    hostLabel?: string;
+    multipleHostsEnabled?: boolean;
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -287,7 +289,11 @@ function SessionRow({ card, isLast, readOnly = false }: { card: KanbanCard; isLa
     );
 }
 
-export function ProjectCard({ projectName, branch, cards, readOnly = false }: ProjectCardProps) {
+export function ProjectCard({ projectName, branch, cards, readOnly: _readOnly, hostLabel: _hostLabel, multipleHostsEnabled }: ProjectCardProps) {
+    const firstCard = cards[0];
+    const readOnly = _readOnly ?? firstCard?.readOnly ?? false;
+    const hostLabel = _hostLabel ?? firstCard?.hostLabel;
+    const showHostBadge = hostLabel && (multipleHostsEnabled || hostLabel !== 'Local');
     const [openTool, setOpenTool] = useState(() => {
         if (typeof window === 'undefined') return 'vscode';
         return window.localStorage.getItem('vibepulse:open-tool') || 'vscode';
@@ -330,6 +336,14 @@ export function ProjectCard({ projectName, branch, cards, readOnly = false }: Pr
                 <span className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate flex-1">
                     {projectName}
                 </span>
+                {showHostBadge && (
+                    <span
+                        className="text-[10px] font-medium bg-blue-50 text-blue-600 border border-blue-100 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20 px-1.5 py-0.5 rounded flex-shrink-0"
+                        title={`Source: ${hostLabel}`}
+                    >
+                        {hostLabel}
+                    </span>
+                )}
                 {branch && (
                     <span className="text-[10px] bg-gray-100 dark:bg-zinc-700 text-gray-500 dark:text-gray-400 px-1.5 py-0.5 rounded flex-shrink-0">
                         {branch}
@@ -360,32 +374,34 @@ export function ProjectCard({ projectName, branch, cards, readOnly = false }: Pr
             </div>
 
             {/* Footer */}
-            <div className="flex items-center justify-end gap-1.5 px-3 py-1.5 border-t border-gray-100 dark:border-zinc-700/50 bg-gray-50/50 dark:bg-zinc-800/50">
-                <select
-                    className="text-[10px] rounded border border-gray-200 bg-white px-1 py-0.5 text-gray-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-gray-400 focus:outline-none"
-                    value={openTool}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => {
-                        setOpenTool(e.target.value);
-                        window.localStorage.setItem('vibepulse:open-tool', e.target.value);
-                    }}
-                    title="Select open tool"
-                >
-                    <option value="vscode">VSCode</option>
-                    <option value="antigravity">Antigravity</option>
-                </select>
-                <button
-                    type="button"
-                    onClick={handleOpenProject}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:text-gray-400 dark:hover:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
-                    title="Open project"
-                >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
-                    Open
-                </button>
-            </div>
+            {!readOnly && (
+                <div className="flex items-center justify-end gap-1.5 px-3 py-1.5 border-t border-gray-100 dark:border-zinc-700/50 bg-gray-50/50 dark:bg-zinc-800/50">
+                    <select
+                        className="text-[10px] rounded border border-gray-200 bg-white px-1 py-0.5 text-gray-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-gray-400 focus:outline-none"
+                        value={openTool}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                            setOpenTool(e.target.value);
+                            window.localStorage.setItem('vibepulse:open-tool', e.target.value);
+                        }}
+                        title="Select open tool"
+                    >
+                        <option value="vscode">VSCode</option>
+                        <option value="antigravity">Antigravity</option>
+                    </select>
+                    <button
+                        type="button"
+                        onClick={handleOpenProject}
+                        className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:text-gray-400 dark:hover:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+                        title="Open project"
+                    >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                        Open
+                    </button>
+                </div>
+            )}
         </article>
     );
 }

@@ -4,10 +4,17 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { OpencodeEvent, OpencodeSession } from '@/types';
 import { playAlertSound, playAttentionSound } from '@/lib/notificationSound';
+import { composeSourceKey, getSessionIdFromSourceKey } from '@/lib/hostIdentity';
 
-const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions';
+const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions:v2';
 const WAITING_ENTER_DELAY_MS = 1500;
 const ATTENTION_SOUND_DELAY_MS = 250;
+const LOCAL_HOST_ID = 'local';
+const LOCAL_HOST_LABEL = 'Local';
+
+type SessionsQueryData = {
+    sessions: OpencodeSession[];
+};
 
 export type SseStatusEntry = {
     status: 'idle' | 'busy' | 'retry';
@@ -73,6 +80,34 @@ function buildOptimisticSession(info: OpencodeSession): OpencodeSession {
     };
 }
 
+function toLocalSourceKey(sessionId: string): string {
+    const rawSessionId = getSessionIdFromSourceKey(sessionId) ?? sessionId;
+    return composeSourceKey(LOCAL_HOST_ID, rawSessionId);
+}
+
+function normalizeLocalSession(info: OpencodeSession): OpencodeSession {
+    const rawSessionId = info.rawSessionId ?? getSessionIdFromSourceKey(info.id) ?? info.id;
+    const sourceSessionKey = composeSourceKey(LOCAL_HOST_ID, rawSessionId);
+
+    return {
+        ...info,
+        id: sourceSessionKey,
+        parentID: info.parentID ? toLocalSourceKey(info.parentID) : info.parentID,
+        hostId: LOCAL_HOST_ID,
+        hostLabel: info.hostLabel ?? LOCAL_HOST_LABEL,
+        hostKind: 'local',
+        rawSessionId,
+        sourceSessionKey,
+        readOnly: false,
+        children: info.children?.map((child) =>
+            normalizeLocalSession({
+                ...child,
+                parentID: child.parentID ?? rawSessionId,
+            })
+        ),
+    };
+}
+
 export function useOpencodeSync() {
     const queryClient = useQueryClient();
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -106,8 +141,12 @@ export function useOpencodeSync() {
         }
     }, []);
 
+    const updateSessionCaches = useCallback((updater: (old: SessionsQueryData | undefined) => SessionsQueryData | undefined) => {
+        queryClient.setQueriesData<SessionsQueryData>({ queryKey: ['sessions'] }, updater);
+    }, [queryClient]);
+
     const setWaitingInCache = useCallback((id: string, waiting: boolean) => {
-        queryClient.setQueryData(['sessions'], (old: { sessions: OpencodeSession[] } | undefined) => {
+        updateSessionCaches((old) => {
             if (!old?.sessions) return old;
 
             let found = false;
@@ -136,7 +175,7 @@ export function useOpencodeSync() {
 
             return { ...old, sessions };
         });
-    }, [queryClient]);
+    }, [updateSessionCaches]);
 
     const scheduleWaitingActivation = useCallback((id: string) => {
         clearWaitingActivation(id);
@@ -156,19 +195,20 @@ export function useOpencodeSync() {
             return;
         }
         const sessionId = event.properties?.sessionID;
+        const localSessionId = sessionId ? toLocalSourceKey(sessionId) : null;
         const isAskEvent = event.type === 'question.asked' || event.type === 'permission.asked';
         const isResolvedInteractionEvent =
             event.type === 'question.replied' ||
             event.type === 'question.rejected' ||
             event.type === 'permission.replied';
 
-        if (sessionId && isAskEvent) {
-            persistWaiting(sessionId, true);
+        if (localSessionId && isAskEvent) {
+            persistWaiting(localSessionId, true);
         }
 
-        if (sessionId && isResolvedInteractionEvent) {
-            clearWaitingActivation(sessionId);
-            persistWaiting(sessionId, false);
+        if (localSessionId && isResolvedInteractionEvent) {
+            clearWaitingActivation(localSessionId);
+            persistWaiting(localSessionId, false);
         }
         
         const handledEvents = [
@@ -191,7 +231,7 @@ export function useOpencodeSync() {
         }
 
         // Update cache based on event type
-        queryClient.setQueryData(['sessions'], (old: { sessions: OpencodeSession[] } | undefined) => {
+        updateSessionCaches((old) => {
             if (!old?.sessions) {
                 scheduleRefetch();
                 return old;
@@ -202,12 +242,13 @@ export function useOpencodeSync() {
                 case 'session.created': {
                     const info = event.properties?.info as OpencodeSession | undefined;
                     if (!info) { scheduleRefetch(); return old; }
+                    const normalizedInfo = normalizeLocalSession(info);
                     
-                    if (info.parentID) {
+                    if (normalizedInfo.parentID) {
                         let updated = false;
                         const sessions = old.sessions.map((parent) => {
-                            const hasTargetChild = parent.children?.some((child) => child.id === info.id);
-                            const isTargetParent = parent.id === info.parentID;
+                            const hasTargetChild = parent.children?.some((child) => child.id === normalizedInfo.id);
+                            const isTargetParent = parent.id === normalizedInfo.parentID;
 
                             if (!hasTargetChild && !isTargetParent) {
                                 return parent;
@@ -215,18 +256,18 @@ export function useOpencodeSync() {
 
                             updated = true;
                             const children = parent.children || [];
-                            const existingChild = children.find((child) => child.id === info.id);
+                            const existingChild = children.find((child) => child.id === normalizedInfo.id);
                             const child = buildOptimisticSession({
                                 ...existingChild,
-                                ...info,
-                                realTimeStatus: info.realTimeStatus ?? existingChild?.realTimeStatus ?? 'busy',
-                                waitingForUser: info.waitingForUser ?? existingChild?.waitingForUser,
+                                ...normalizedInfo,
+                                realTimeStatus: normalizedInfo.realTimeStatus ?? existingChild?.realTimeStatus ?? 'busy',
+                                waitingForUser: normalizedInfo.waitingForUser ?? existingChild?.waitingForUser,
                             } as OpencodeSession);
 
                             if (existingChild) {
                                 return {
                                     ...parent,
-                                    children: children.map((entry) => (entry.id === info.id ? child : entry)),
+                                    children: children.map((entry) => (entry.id === normalizedInfo.id ? child : entry)),
                                 };
                             }
 
@@ -247,35 +288,37 @@ export function useOpencodeSync() {
                         };
                     }
                     
-                    const existing = old.sessions.find(s => s.id === info.id);
+                    const existing = old.sessions.find(s => s.id === normalizedInfo.id);
                     if (!existing) {
                         scheduleRefetch();
                         return {
                             ...old,
-                            sessions: [buildOptimisticSession(info), ...old.sessions],
+                            sessions: [buildOptimisticSession(normalizedInfo), ...old.sessions],
                         };
                     }
                     const merged = { 
-                        ...info, 
+                        ...existing,
+                        ...normalizedInfo,
                         projectName: existing.projectName, 
                         branch: existing.branch, 
-                        realTimeStatus: info.realTimeStatus ?? existing.realTimeStatus, 
-                        waitingForUser: info.waitingForUser ?? existing.waitingForUser,
+                        realTimeStatus: normalizedInfo.realTimeStatus ?? existing.realTimeStatus, 
+                        waitingForUser: normalizedInfo.waitingForUser ?? existing.waitingForUser,
                         children: existing.children,
                     };
                     return {
                         ...old,
-                        sessions: old.sessions.map(s => (s.id === info.id ? merged : s)),
+                        sessions: old.sessions.map(s => (s.id === normalizedInfo.id ? merged : s)),
                     };
                 }
                 case 'session.deleted': {
                     const info = event.properties?.info as OpencodeSession | undefined;
                     const id = info?.id ?? event.properties?.sessionID;
                     if (!id) { scheduleRefetch(); return old; }
-                    return { ...old, sessions: old.sessions.filter(s => s.id !== id) };
+                    const localId = toLocalSourceKey(id);
+                    return { ...old, sessions: old.sessions.filter(s => s.id !== localId) };
                 }
                 default: {
-                    if (!sessionId) {
+                    if (!localSessionId) {
                         scheduleRefetch();
                         return old;
                     }
@@ -325,22 +368,22 @@ export function useOpencodeSync() {
                                 if (!initialLoadRef.current) {
                                     setTimeout(() => playAttentionSound(), ATTENTION_SOUND_DELAY_MS);
                                 }
-                                persistWaiting(sessionId!, true);
-                                scheduleWaitingActivation(sessionId!);
+                                persistWaiting(localSessionId, true);
+                                scheduleWaitingActivation(localSessionId);
                                 return {
                                     ...s,
                                     time: { ...(s.time || {}), archived: undefined },
                                     waitingForUser: true,
                                 };
                             case 'permission.updated':
-                                clearWaitingActivation(sessionId!);
+                                clearWaitingActivation(localSessionId);
                                 scheduleRefetch();
                                 return s;
                             case 'question.replied':
                             case 'question.rejected':
                             case 'permission.replied':
-                                clearWaitingActivation(sessionId!);
-                                persistWaiting(sessionId!, false);
+                                clearWaitingActivation(localSessionId);
+                                persistWaiting(localSessionId, false);
                                 return { ...s, waitingForUser: false };
                             case 'session.archived':
                                 return { 
@@ -354,24 +397,24 @@ export function useOpencodeSync() {
 
                     let found = false;
                     const newSessions = old.sessions.map((session: OpencodeSession) => {
-                        if (session.id === sessionId) {
+                        if (session.id === localSessionId) {
                             found = true;
                             return applyEvent(session);
                         }
-                        if (session.children?.some(c => c.id === sessionId)) {
+                        if (session.children?.some(c => c.id === localSessionId)) {
                             found = true;
                             // If the event is a status update to 'idle', we should filter the child out
                             // so it disappears from the UI without needing a full refetch, matching backend logic.
                             if (event.type === 'session.status' && event.properties?.status?.type === 'idle') {
                                 return {
                                     ...session,
-                                    children: session.children.filter(c => c.id !== sessionId)
+                                    children: session.children.filter(c => c.id !== localSessionId)
                                 };
                             }
                             
                             return {
                                 ...session,
-                                children: session.children.map(c => c.id === sessionId ? applyEvent(c) : c)
+                                children: session.children.map(c => c.id === localSessionId ? applyEvent(c) : c)
                             };
                         }
                         return session;
@@ -386,7 +429,7 @@ export function useOpencodeSync() {
                 }
             }
         });
-    }, [queryClient, scheduleRefetch, clearWaitingActivation, scheduleWaitingActivation]);
+    }, [updateSessionCaches, scheduleRefetch, clearWaitingActivation, scheduleWaitingActivation]);
 
     // After initial connection, mark as no longer initial load after 3 seconds
     useEffect(() => {

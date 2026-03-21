@@ -14,6 +14,9 @@ import {
   shouldForceSessionUnarchived,
   takeSessionStickyStatusBlocked,
 } from '@/lib/sessionArchiveOverrides';
+import { composeSourceKey } from '@/lib/hostIdentity';
+import { normalizeRemoteHostConfig } from '@/lib/hostSourcesStorage';
+import type { BuiltInHostSource, RemoteHostConfig } from '@/types';
 
 type SessionLike = {
   id: string;
@@ -37,6 +40,9 @@ const STATUS_STICKY_RETENTION_MS = 24 * 60 * 60 * 1000;
 const STATUS_STICKY_ABSENT_RETENTION_MS = 30 * 60 * 1000;
 const DEFAULT_STATUS_STICKY_MAX_ENTRIES = 5000;
 const GIT_COMMAND_TIMEOUT_MS = 1200;
+const sessionListTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_LIST_TIMEOUT_MS', 6000);
+const sessionStatusTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_STATUS_TIMEOUT_MS', 4000);
+const sessionMessagesTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_MESSAGES_TIMEOUT_MS', 2500);
 
 type StableRealtimeStatus = 'idle' | 'busy' | 'retry';
 
@@ -52,7 +58,7 @@ function clearStickyStatusState(sessionId: string): void {
   statusStickyState.delete(`child:${sessionId}`);
 }
 
-type ChildEntry = {
+type ChildEntry = HostAwareFields & {
   id: string;
   slug?: string;
   title?: string;
@@ -64,7 +70,7 @@ type ChildEntry = {
   waitingForUser: boolean;
 };
 
-type EnrichedSession = SessionLike & {
+type EnrichedSession = SessionLike & HostAwareFields & {
   projectName: string;
   branch: string | null;
   realTimeStatus: 'idle' | 'busy' | 'retry';
@@ -95,6 +101,64 @@ type ProcessHint = {
   projectName: string;
   reason: 'process_without_api_port';
 };
+
+type SessionSource = BuiltInHostSource | (RemoteHostConfig & { hostKind: 'remote' });
+
+type HostAwareFields = {
+  hostId?: string;
+  hostLabel?: string;
+  hostKind?: SessionSource['hostKind'];
+  rawSessionId?: string;
+  sourceSessionKey?: string;
+  readOnly?: boolean;
+};
+
+type SessionHostStatus = {
+  hostId: string;
+  hostLabel: string;
+  hostKind: SessionSource['hostKind'];
+  online: boolean;
+  degraded?: boolean;
+  reason?: string;
+  baseUrl?: string;
+};
+
+type SourceResultMeta = {
+  online: boolean;
+  degraded?: boolean;
+  reason?: string;
+};
+
+type SessionsSuccessPayload = {
+  sessions: EnrichedSession[];
+  processHints: ProcessHint[];
+  failedPorts?: Array<{ port: number; reason: string }>;
+  degraded?: boolean;
+  hosts?: SessionHostStatus[];
+  hostStatuses?: SessionHostStatus[];
+};
+
+type SessionsRouteResult = {
+  payload: SessionsSuccessPayload | Record<string, unknown>;
+  status?: number;
+  sourceMeta?: SourceResultMeta;
+};
+
+const LOCAL_SOURCE: BuiltInHostSource = {
+  hostId: 'local',
+  hostLabel: 'Local',
+  hostKind: 'local',
+};
+
+export const dynamic = 'force-dynamic';
+
+export async function GET() {
+  return handleGet();
+}
+
+export async function POST(request: Request) {
+  return handlePost(request);
+}
 
 type MessageStateStatus = string;
 
@@ -394,8 +458,7 @@ function getGitBranch(directory: string): string | null {
   }
 }
 
-export async function GET() {
-  // Read config to get stickyBusyDelayMs setting
+async function readStickyBusyDelayMs(): Promise<number> {
   let stickyBusyDelayMs = 1000; // default 1s
   try {
     const config = await readConfig();
@@ -411,6 +474,309 @@ export async function GET() {
     // Use default if config read fails
   }
 
+  return stickyBusyDelayMs;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isRemoteSource(source: SessionSource): source is RemoteHostConfig & { hostKind: 'remote' } {
+  return source.hostKind === 'remote';
+}
+
+function parseSource(value: unknown): SessionSource | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const hostId = typeof value['hostId'] === 'string' ? value['hostId'].trim() : value['hostId'];
+  const hostLabel = typeof value['hostLabel'] === 'string' ? value['hostLabel'].trim() : value['hostLabel'];
+  const hostKind = value['hostKind'];
+
+  if (hostId === LOCAL_SOURCE.hostId && hostLabel === LOCAL_SOURCE.hostLabel && hostKind === LOCAL_SOURCE.hostKind) {
+    return LOCAL_SOURCE;
+  }
+
+  const baseUrl = value['baseUrl'];
+  const enabled = value['enabled'];
+
+  if (
+    typeof hostId !== 'string' ||
+    typeof hostLabel !== 'string' ||
+    hostKind !== 'remote' ||
+    typeof baseUrl !== 'string' ||
+    typeof enabled !== 'boolean'
+  ) {
+    return null;
+  }
+
+  const normalizedHost = normalizeRemoteHostConfig({
+    hostId,
+    hostLabel,
+    baseUrl,
+    enabled,
+  });
+
+  if (!normalizedHost) {
+    return null;
+  }
+
+  return {
+    hostId: normalizedHost.hostId,
+    hostLabel: normalizedHost.hostLabel,
+    hostKind,
+    baseUrl: normalizedHost.baseUrl,
+    enabled: normalizedHost.enabled,
+  };
+}
+
+function parseRequestedSources(body: unknown): SessionSource[] {
+  if (!isRecord(body) || !Array.isArray(body['sources']) || body['sources'].length === 0) {
+    throw new Error('Invalid sources payload');
+  }
+
+  const sources = body['sources'].map(parseSource);
+  if (sources.some((source) => source === null)) {
+    throw new Error('Invalid sources payload');
+  }
+
+  return sources as SessionSource[];
+}
+
+function toRouteResponse(result: SessionsRouteResult): Response {
+  if (result.status) {
+    return Response.json(result.payload, { status: result.status });
+  }
+
+  return Response.json(result.payload);
+}
+
+function toHostStatus(source: SessionSource, meta: SourceResultMeta): SessionHostStatus {
+  return {
+    hostId: source.hostId,
+    hostLabel: source.hostLabel,
+    hostKind: source.hostKind,
+    online: meta.online,
+    ...(meta.degraded ? { degraded: true } : {}),
+    ...(meta.reason ? { reason: meta.reason } : {}),
+    ...(isRemoteSource(source) ? { baseUrl: source.baseUrl } : {}),
+  };
+}
+
+function withHostAliases(payload: Record<string, unknown>, hostStatuses: SessionHostStatus[]): Record<string, unknown> {
+  return {
+    ...payload,
+    hosts: hostStatuses,
+    hostStatuses,
+  };
+}
+
+function readSuccessPayload(result: SessionsRouteResult): SessionsSuccessPayload {
+  if (!isRecord(result.payload)) {
+    return { sessions: [], processHints: [] };
+  }
+
+  const sessions = Array.isArray(result.payload['sessions'])
+    ? (result.payload['sessions'] as EnrichedSession[])
+    : [];
+  const processHints = Array.isArray(result.payload['processHints'])
+    ? (result.payload['processHints'] as ProcessHint[])
+    : [];
+  const failedPorts = Array.isArray(result.payload['failedPorts'])
+    ? (result.payload['failedPorts'] as Array<{ port: number; reason: string }>)
+    : undefined;
+  const degraded = result.payload['degraded'] === true;
+
+  return {
+    sessions,
+    processHints,
+    ...(failedPorts ? { failedPorts } : {}),
+    ...(degraded ? { degraded: true } : {}),
+  };
+}
+
+function addHostMetadataToChildEntry(child: ChildEntry, source: SessionSource): ChildEntry {
+  const rawSessionId = child.rawSessionId ?? child.id;
+  const sourceSessionKey = composeSourceKey(source.hostId, rawSessionId);
+
+  return {
+    ...child,
+    id: sourceSessionKey,
+    parentID: child.parentID ? composeSourceKey(source.hostId, child.parentID) : child.parentID,
+    hostId: source.hostId,
+    hostLabel: source.hostLabel,
+    hostKind: source.hostKind,
+    rawSessionId,
+    sourceSessionKey,
+    readOnly: source.hostKind === 'remote',
+  };
+}
+
+function addHostMetadataToSession(session: EnrichedSession, source: SessionSource): EnrichedSession {
+  const rawSessionId = session.rawSessionId ?? session.id;
+  const sourceSessionKey = composeSourceKey(source.hostId, rawSessionId);
+
+  return {
+    ...session,
+    id: sourceSessionKey,
+    parentID: session.parentID ? composeSourceKey(source.hostId, session.parentID) : session.parentID,
+    hostId: source.hostId,
+    hostLabel: source.hostLabel,
+    hostKind: source.hostKind,
+    rawSessionId,
+    sourceSessionKey,
+    readOnly: source.hostKind === 'remote',
+    children: session.children.map((child) => addHostMetadataToChildEntry(child, source)),
+  };
+}
+
+function addHostMetadataToPayload(payload: Record<string, unknown>, source: SessionSource): Record<string, unknown> {
+  if (!Array.isArray(payload['sessions'])) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    sessions: (payload['sessions'] as EnrichedSession[]).map((session) => addHostMetadataToSession(session, source)),
+  };
+}
+
+function sortChildEntries(children: ChildEntry[]): void {
+  children.sort((a, b) => {
+    const aActive = a.realTimeStatus === 'busy' || a.realTimeStatus === 'retry';
+    const bActive = b.realTimeStatus === 'busy' || b.realTimeStatus === 'retry';
+
+    if (aActive && !bActive) return -1;
+    if (!aActive && bActive) return 1;
+
+    const aTime = a.time?.updated || a.time?.created || 0;
+    const bTime = b.time?.updated || b.time?.created || 0;
+    return bTime - aTime;
+  });
+}
+
+function buildRemoteEnrichedSessions(
+  sessions: SessionLike[],
+  statusMap: Record<string, { type: 'idle' | 'busy' | 'retry' }>
+): EnrichedSession[] {
+  const seen = new Set<string>();
+  const uniqueSessions = sessions.filter((session) => {
+    if (seen.has(session.id)) {
+      return false;
+    }
+    seen.add(session.id);
+    return true;
+  });
+
+  const parentSessions = uniqueSessions.filter((session) => !session.parentID);
+  const childSessions = uniqueSessions.filter((session) => !!session.parentID);
+  const now = Date.now();
+
+  const enrichedSessions: EnrichedSession[] = parentSessions.map((session) => ({
+    ...session,
+    projectName: getProjectName(session.directory),
+    branch: null,
+    realTimeStatus: statusMap[session.id]?.type || (hasRecentActivity(session, now) ? 'busy' : 'idle'),
+    waitingForUser: false,
+    children: [],
+  }));
+
+  const parentById = new Map(enrichedSessions.map((session) => [session.id, session]));
+
+  for (const child of childSessions) {
+    let parent = child.parentID ? parentById.get(child.parentID) : undefined;
+
+    if (!parent) {
+      const candidates = enrichedSessions
+        .filter((session) => session.directory === child.directory)
+        .sort((a, b) => getUpdatedAt(b) - getUpdatedAt(a));
+
+      parent =
+        candidates.find((session) => session.realTimeStatus === 'busy' || session.realTimeStatus === 'retry') ||
+        candidates[0];
+    }
+
+    if (!parent) {
+      continue;
+    }
+
+    const statusFromMap = statusMap[child.id]?.type;
+    const childUpdatedAt = getUpdatedAt(child);
+    const isRecent = childUpdatedAt > 0 && now - childUpdatedAt <= CHILD_ACTIVE_WINDOW_MS;
+    const shouldSkipArchivedChild = !!child.time?.archived && !statusFromMap && !isRecent;
+
+    if (shouldSkipArchivedChild) {
+      continue;
+    }
+
+    if (statusFromMap && statusFromMap !== 'idle') {
+      parent.children.push(toChildEntry(child, statusFromMap));
+      continue;
+    }
+
+    if (isRecent) {
+      parent.children.push(toChildEntry(child, 'busy'));
+    }
+  }
+
+  for (const session of enrichedSessions) {
+    if (session.children.length > 0) {
+      sortChildEntries(session.children);
+    }
+  }
+
+  return enrichedSessions;
+}
+
+async function getRemoteSessionsResult(source: RemoteHostConfig & { hostKind: 'remote' }): Promise<SessionsRouteResult> {
+  let statusFailureReason: string | undefined;
+
+  try {
+    const client = createOpencodeClient({ baseUrl: source.baseUrl });
+    const sessionsResult = await withTimeout(
+      client.session.list(),
+      sessionListTimeoutMs,
+      `session.list(${source.hostId})`
+    );
+    const statusResult = await withTimeout(
+      client.session.status(),
+      sessionStatusTimeoutMs,
+      `session.status(${source.hostId})`
+    ).catch((error) => {
+      statusFailureReason = error instanceof Error ? error.message : String(error);
+      return { data: {} };
+    });
+
+    return {
+      payload: {
+        sessions: buildRemoteEnrichedSessions(
+          (sessionsResult.data || []) as SessionLike[],
+          (statusResult.data || {}) as Record<string, { type: 'idle' | 'busy' | 'retry' }>
+        ),
+        processHints: [],
+        ...(statusFailureReason ? { degraded: true } : {}),
+      },
+      sourceMeta: {
+        online: true,
+        ...(statusFailureReason ? { degraded: true, reason: statusFailureReason } : {}),
+      },
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      payload: { sessions: [], processHints: [], degraded: true },
+      sourceMeta: {
+        online: false,
+        degraded: true,
+        reason,
+      },
+    };
+  }
+}
+
+async function getLocalSessionsResult(stickyBusyDelayMs: number): Promise<SessionsRouteResult> {
+  
   const { processes: rawProcessHints, timedOut: processDiscoveryTimedOut } =
     discoverOpencodeProcessCwdsWithoutPortWithMeta();
   const processHintsByDirectory = new Map<string, ProcessHint>();
@@ -435,64 +801,79 @@ export async function GET() {
     const processHints = Array.from(processHintsByDirectory.values());
 
     if (portDiscoveryTimedOut || processDiscoveryTimedOut) {
-      return Response.json(
-        {
+      return {
+        payload: {
           error: 'OpenCode discovery timed out',
           hint: 'Host process discovery exceeded timeout. Retry shortly, or increase OPENCODE_DISCOVERY_TIMEOUT_MS.',
           ...(processHints.length > 0 ? { processHints } : {}),
         },
-        { status: 503 }
-      );
+        status: 503,
+        sourceMeta: {
+          online: false,
+          degraded: true,
+          reason: 'OpenCode discovery timed out',
+        },
+      };
     }
 
     if (processHints.length > 0) {
-      return Response.json({ sessions: [], processHints });
+      return {
+        payload: { sessions: [], processHints },
+        sourceMeta: {
+          online: false,
+          reason: 'OpenCode server not found',
+        },
+      };
     }
 
-    return Response.json(
-      {
+    return {
+      payload: {
         error: 'OpenCode server not found',
         hint: 'Make sure OpenCode is running with an exposed API port. Example: opencode --port <PORT> (VibePulse auto-detects active ports).'
       },
-      { status: 503 }
-    );
+      status: 503,
+      sourceMeta: {
+        online: false,
+        reason: 'OpenCode server not found',
+      },
+    };
   }
 
-   try {
-     const results = await Promise.allSettled(ports.map(async (port) => {
-       const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
-       const sessionsResult = await withTimeout(
-         client.session.list(),
-         sessionListTimeoutMs,
-         `session.list(${port})`
-       );
-       const statusResult = await withTimeout(
-         client.session.status(),
-         sessionStatusTimeoutMs,
-         `session.status(${port})`
-       ).catch(() => ({ data: {} }));
-       return { port, client, sessions: sessionsResult.data || [], status: statusResult.data || {} };
-     }));
+  try {
+    const results = await Promise.allSettled(ports.map(async (port) => {
+      const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
+      const sessionsResult = await withTimeout(
+        client.session.list(),
+        sessionListTimeoutMs,
+        `session.list(${port})`
+      );
+      const statusResult = await withTimeout(
+        client.session.status(),
+        sessionStatusTimeoutMs,
+        `session.status(${port})`
+      ).catch(() => ({ data: {} }));
+      return { port, client, sessions: sessionsResult.data || [], status: statusResult.data || {} };
+    }));
 
-     const allSessions: SessionLike[] = [];
-     const statusMap: Record<string, { type: 'idle' | 'busy' | 'retry' }> = {};
-     const clientByPort: Record<number, ReturnType<typeof createOpencodeClient>> = {};
-     const sessionPortMap: Record<string, number> = {};
-     const failedPorts: Array<{ port: number; reason: string }> = [];
+    const allSessions: SessionLike[] = [];
+    const statusMap: Record<string, { type: 'idle' | 'busy' | 'retry' }> = {};
+    const clientByPort: Record<number, ReturnType<typeof createOpencodeClient>> = {};
+    const sessionPortMap: Record<string, number> = {};
+    const failedPorts: Array<{ port: number; reason: string }> = [];
 
-     for (let i = 0; i < results.length; i++) {
-       const r = results[i];
-       const port = ports[i];
-       if (r.status !== 'fulfilled') {
-         failedPorts.push({
-           port,
-           reason: r.reason instanceof Error ? r.reason.message : String(r.reason),
-         });
-         continue;
-       }
-       allSessions.push(...r.value.sessions);
-       Object.assign(statusMap, r.value.status);
-       clientByPort[r.value.port] = r.value.client;
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      const port = ports[i];
+      if (r.status !== 'fulfilled') {
+        failedPorts.push({
+          port,
+          reason: r.reason instanceof Error ? r.reason.message : String(r.reason),
+        });
+        continue;
+      }
+      allSessions.push(...r.value.sessions);
+      Object.assign(statusMap, r.value.status);
+      clientByPort[r.value.port] = r.value.client;
       for (const session of r.value.sessions as SessionLike[]) {
         if (!(session.id in sessionPortMap)) {
           sessionPortMap[session.id] = r.value.port;
@@ -502,9 +883,9 @@ export async function GET() {
 
     // Deduplicate by session.id
     const seen = new Set<string>();
-    const sessions = allSessions.filter(s => {
-      if (seen.has(s.id)) return false;
-      seen.add(s.id);
+    const sessions = allSessions.filter((session) => {
+      if (seen.has(session.id)) return false;
+      seen.add(session.id);
       return true;
     });
 
@@ -535,26 +916,37 @@ export async function GET() {
 
     if (results.length > 0 && failedPorts.length === results.length) {
       pruneStickyState(Date.now(), new Set<string>());
-      return Response.json(
-        {
+      return {
+        payload: {
           error: 'Failed to fetch sessions from OpenCode ports',
           hint: 'All discovered OpenCode API ports timed out or failed. Retry shortly or increase OPENCODE_SESSIONS_LIST_TIMEOUT_MS.',
           failedPorts,
         },
-        { status: 503 }
-      );
+        status: 503,
+        sourceMeta: {
+          online: false,
+          degraded: true,
+          reason: 'Failed to fetch sessions from OpenCode ports',
+        },
+      };
     }
 
     if (failedPorts.length > 0 && parentSessions.length === 0 && childSessions.length === 0) {
       pruneStickyState(Date.now(), new Set<string>());
       const processHints = Array.from(processHintsByDirectory.values());
-      return Response.json({
-        sessions: [],
-        processHints,
-        failedPorts,
-        degraded: true,
-      });
-    }
+        return {
+          payload: {
+            sessions: [],
+            processHints,
+            failedPorts,
+            degraded: true,
+          },
+          sourceMeta: {
+            online: true,
+            degraded: true,
+          },
+        };
+      }
 
     // Enrich parent sessions
     const enrichedSessions: EnrichedSession[] = parentSessions.map((session) => {
@@ -579,16 +971,16 @@ export async function GET() {
     for (const child of childSessions) {
       // Find parent by parentID
       let parent = child.parentID
-        ? enrichedSessions.find((s) => s.id === child.parentID)
+        ? enrichedSessions.find((session) => session.id === child.parentID)
         : null;
 
       if (!parent) {
         const candidates = enrichedSessions
-          .filter((s) => s.directory === child.directory)
+          .filter((session) => session.directory === child.directory)
           .sort((a, b) => getUpdatedAt(b) - getUpdatedAt(a));
 
         parent =
-          candidates.find((s) => s.realTimeStatus === 'busy' || s.realTimeStatus === 'retry') ||
+          candidates.find((session) => session.realTimeStatus === 'busy' || session.realTimeStatus === 'retry') ||
           candidates[0];
       }
 
@@ -739,26 +1131,15 @@ export async function GET() {
     // Sort children for each parent: active first, then by updated time
     for (const session of enrichedSessions) {
       if (session.children.length > 0) {
-        session.children.sort((a, b) => {
-          const aActive = a.realTimeStatus === 'busy' || a.realTimeStatus === 'retry';
-          const bActive = b.realTimeStatus === 'busy' || b.realTimeStatus === 'retry';
-          
-          if (aActive && !bActive) return -1;
-          if (!aActive && bActive) return 1;
-          
-          // Both active or both idle: sort by update time (newest first)
-          const aTime = a.time?.updated || a.time?.created || 0;
-          const bTime = b.time?.updated || b.time?.created || 0;
-          return bTime - aTime;
-        });
+        sortChildEntries(session.children);
       }
     }
 
     const sessionsForInteractionChecks = enrichedSessions.filter(
-      (s) =>
-        s.realTimeStatus === 'busy' ||
-        !!s.time?.archived ||
-        s.children.some((child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry')
+      (session) =>
+        session.realTimeStatus === 'busy' ||
+        !!session.time?.archived ||
+        session.children.some((child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry')
     );
     if (sessionsForInteractionChecks.length > 0) {
       const pendingChecks = await Promise.allSettled(
@@ -834,7 +1215,7 @@ export async function GET() {
 
       for (const result of pendingChecks) {
         if (result.status === 'fulfilled') {
-          const session = enrichedSessions.find((s) => s.id === result.value.sessionId);
+          const session = enrichedSessions.find((candidate) => candidate.id === result.value.sessionId);
           if (!session) continue;
           for (const child of session.children) {
             if (result.value.waitingChildIds.has(child.id)) {
@@ -881,12 +1262,7 @@ export async function GET() {
       (hint) => !knownDirectories.has(hint.directory)
     );
 
-    const payload: {
-      sessions: EnrichedSession[];
-      processHints: ProcessHint[];
-      failedPorts?: Array<{ port: number; reason: string }>;
-      degraded?: boolean;
-    } = {
+    const payload: SessionsSuccessPayload = {
       sessions: enrichedSessions,
       processHints,
     };
@@ -896,19 +1272,143 @@ export async function GET() {
       payload.degraded = true;
     }
 
-    return Response.json(payload);
+    return {
+      payload,
+      sourceMeta: {
+        online: true,
+        ...(failedPorts.length > 0 ? { degraded: true } : {}),
+      },
+    };
   } catch (error) {
     console.error('Error fetching sessions:', error);
-    return Response.json(
-      {
+    return {
+      payload: {
         error: 'Failed to fetch sessions',
         details: error instanceof Error ? error.message : String(error),
         hint: 'Make sure OpenCode is running with an exposed API port. Example: opencode --port <PORT> (VibePulse auto-detects active ports).'
       },
-      { status: 500 }
-    );
+      status: 500,
+      sourceMeta: {
+        online: false,
+        degraded: true,
+        reason: 'Failed to fetch sessions',
+      },
+    };
   }
 }
-  const sessionListTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_LIST_TIMEOUT_MS', 6000);
-  const sessionStatusTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_STATUS_TIMEOUT_MS', 4000);
-  const sessionMessagesTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_MESSAGES_TIMEOUT_MS', 2500);
+
+async function handleGet() {
+  const stickyBusyDelayMs = await readStickyBusyDelayMs();
+  return toRouteResponse(await getLocalSessionsResult(stickyBusyDelayMs));
+}
+
+async function handlePost(request: Request) {
+  let requestedSources: SessionSource[];
+
+  try {
+    const body = await request.json();
+    requestedSources = parseRequestedSources(body);
+  } catch {
+    return Response.json(
+      {
+        error: 'Invalid sources payload',
+        hint: 'POST /api/sessions expects a JSON body with a non-empty sources array.',
+      },
+      { status: 400 }
+    );
+  }
+
+  const enabledSources = requestedSources.filter((source) => source.hostKind === 'local' || source.enabled);
+
+  if (enabledSources.length === 0) {
+    return Response.json({ sessions: [], processHints: [], hosts: [], hostStatuses: [] });
+  }
+
+  if (enabledSources.length === 1 && enabledSources[0].hostKind === 'local') {
+    const stickyBusyDelayMs = await readStickyBusyDelayMs();
+    const localResult = await getLocalSessionsResult(stickyBusyDelayMs);
+    const rawLocalMeta = localResult.sourceMeta ?? {
+      online: !localResult.status,
+      ...(localResult.status ? { degraded: true } : {}),
+    };
+    const localMeta = rawLocalMeta.online
+      ? rawLocalMeta
+      : {
+          ...rawLocalMeta,
+          degraded: true,
+        };
+    const localStatus = toHostStatus(LOCAL_SOURCE, localMeta);
+    const normalizedOfflinePayload =
+      !localMeta.online && isRecord(localResult.payload)
+        ? withHostAliases(
+            {
+              sessions: [],
+              processHints: Array.isArray(localResult.payload['processHints'])
+                ? (localResult.payload['processHints'] as ProcessHint[])
+                : [],
+              degraded: true,
+            },
+            [localStatus]
+          )
+        : null;
+
+    if (normalizedOfflinePayload) {
+      return Response.json(normalizedOfflinePayload);
+    }
+
+    return toRouteResponse({
+      ...localResult,
+      payload: isRecord(localResult.payload)
+        ? withHostAliases(addHostMetadataToPayload(localResult.payload, LOCAL_SOURCE), [localStatus])
+        : localResult.payload,
+    });
+  }
+
+  const stickyBusyDelayMs = enabledSources.some((source) => source.hostKind === 'local')
+    ? await readStickyBusyDelayMs()
+    : 0;
+
+  const sourceResults = await Promise.allSettled(
+    enabledSources.map(async (source) => ({
+      source,
+      result: source.hostKind === 'local'
+        ? await getLocalSessionsResult(stickyBusyDelayMs)
+        : await getRemoteSessionsResult(source),
+    }))
+  );
+
+  const hostStatuses: SessionHostStatus[] = [];
+  const aggregateSessions: EnrichedSession[] = [];
+  const aggregateProcessHints: ProcessHint[] = [];
+  let degraded = false;
+
+  for (const sourceResult of sourceResults) {
+    if (sourceResult.status !== 'fulfilled') {
+      degraded = true;
+      continue;
+    }
+
+    const { source, result } = sourceResult.value;
+    const meta = result.sourceMeta ?? {
+      online: !result.status,
+      ...(result.status ? { degraded: true } : {}),
+    };
+    const payload = readSuccessPayload(result);
+
+    hostStatuses.push(toHostStatus(source, meta));
+    aggregateProcessHints.push(...payload.processHints);
+    aggregateSessions.push(...payload.sessions.map((session) => addHostMetadataToSession(session, source)));
+
+    if (!meta.online || meta.degraded || payload.degraded) {
+      degraded = true;
+    }
+  }
+
+  return Response.json({
+    sessions: aggregateSessions,
+    processHints: aggregateProcessHints,
+    hosts: hostStatuses,
+    hostStatuses,
+    ...(degraded ? { degraded: true } : {}),
+  });
+}

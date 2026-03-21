@@ -1,13 +1,15 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { KanbanBoard } from "@/components/KanbanBoard";
+import { KanbanBoard, type SessionHostStatus } from "@/components/KanbanBoard";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useOpencodeSync } from "@/hooks/useOpencodeSync";
 import { isMuted, playToggleFeedbackSound, setMuted, unlockAudio } from "@/lib/notificationSound";
-import { Info } from 'lucide-react';
+import { Info, Server } from 'lucide-react';
 import { ConfigButton } from "@/components/opencode-config/ConfigButton";
 import { FullscreenConfigPanel } from "@/components/opencode-config/FullscreenConfigPanel";
+import { HostManagerDialog } from "@/components/host-config/HostManagerDialog";
+import { useHostSources } from "@/hooks/useHostSources";
 
 const DATE_FILTERS = [
     { label: '1d', days: 1 },
@@ -27,6 +29,7 @@ type ProcessHint = {
 };
 
 export default function Home() {
+    const hostSourcesState = useHostSources();
     useOpencodeSync();
     const [filterDays, setFilterDays] = useState(7);
     const [muted, setMutedState] = useState(() => isMuted());
@@ -34,6 +37,8 @@ export default function Home() {
     const [isProcessHintOpen, setIsProcessHintOpen] = useState(false);
     const [copyFeedback, setCopyFeedback] = useState<'idle' | 'copied' | 'failed'>('idle');
     const [configPanelOpen, setConfigPanelOpen] = useState(false);
+    const [hostManagerOpen, setHostManagerOpen] = useState(false);
+    const [hostStatuses, setHostStatuses] = useState<SessionHostStatus[]>([]);
     const processHintButtonRef = useRef<HTMLButtonElement | null>(null);
     const processHintPopoverRef = useRef<HTMLDivElement | null>(null);
 
@@ -46,6 +51,11 @@ export default function Home() {
     const processHintSummary = processHintProjects.length === 1
         ? `${processHintProjects[0]} has an OpenCode process without an exposed API port.`
         : `${processHintProjects.length} projects have OpenCode processes without exposed API ports.`;
+
+    const hostStatusById = useMemo(
+        () => new Map(hostStatuses.map((status) => [status.hostId, status] as const)),
+        [hostStatuses]
+    );
 
     useEffect(() => {
         const unlock = () => {
@@ -129,7 +139,7 @@ export default function Home() {
                     <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
                         VibePulse
                     </h1>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-wrap justify-end">
                         <button
                             type="button"
                             onClick={toggleMute}
@@ -223,15 +233,73 @@ export default function Home() {
                                 </button>
                             ))}
                         </div>
+                        <div className="flex items-center gap-1 bg-gray-100 dark:bg-zinc-800 rounded-lg p-0.5" data-testid="host-filter">
+                            <button
+                                type="button"
+                                onClick={() => hostSourcesState.setActiveFilter('all')}
+                                className={`px-3 py-1 text-xs font-medium rounded-md transition-all duration-150 ${
+                                    hostSourcesState.activeFilter === 'all'
+                                        ? 'bg-white dark:bg-zinc-600 text-gray-900 dark:text-white shadow-sm'
+                                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                                }`}
+                                data-testid="host-filter-option-all"
+                            >
+                                All Hosts
+                            </button>
+                            {hostSourcesState.enabledSources.map((source) => {
+                                const status = hostStatusById.get(source.hostId);
+                                const isOnline = status?.online ?? (source.hostId === 'local' && hostSourcesState.enabledSources.length === 1);
+
+                                return (
+                                    <button
+                                        key={source.hostId}
+                                        type="button"
+                                        onClick={() => hostSourcesState.setActiveFilter(source.hostId)}
+                                        className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-all duration-150 ${
+                                            hostSourcesState.activeFilter === source.hostId
+                                                ? 'bg-white dark:bg-zinc-600 text-gray-900 dark:text-white shadow-sm'
+                                                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                                        }`}
+                                        data-testid={`host-filter-option-${source.hostId}`}
+                                    >
+                                        <span
+                                            className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-gray-400'}`}
+                                            data-testid={`host-status-${source.hostId}`}
+                                            title={isOnline ? 'Online' : 'Offline'}
+                                        />
+                                        {source.hostLabel}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setHostManagerOpen(true)}
+                            className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700 dark:hover:text-white"
+                        >
+                            <Server className="h-3.5 w-3.5" />
+                            Hosts
+                        </button>
                         <ConfigButton onClick={() => setConfigPanelOpen(true)} />
                     </div>
                 </header>
                 <ErrorBoundary>
-                    <KanbanBoard filterDays={filterDays} onProcessHintsChange={setProcessHints} />
+                    <KanbanBoard
+                        filterDays={filterDays}
+                        onProcessHintsChange={setProcessHints}
+                        hostSources={hostSourcesState}
+                        showHostFilter={false}
+                        onHostStatusesChange={setHostStatuses}
+                    />
                 </ErrorBoundary>
                 <FullscreenConfigPanel
                     open={configPanelOpen}
                     onClose={() => setConfigPanelOpen(false)}
+                />
+                <HostManagerDialog
+                    hostSources={hostSourcesState}
+                    open={hostManagerOpen}
+                    onClose={() => setHostManagerOpen(false)}
                 />
             </main>
         </div>
