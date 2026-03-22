@@ -28,9 +28,14 @@ type ProcessHint = {
     reason: 'process_without_api_port';
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
 export default function Home() {
-    const hostSourcesState = useHostSources();
     useOpencodeSync();
+    const [runtimeRole, setRuntimeRole] = useState<'unknown' | 'hub' | 'node'>('unknown');
+    const hostSourcesState = useHostSources({ runtimeRole });
     const [filterDays, setFilterDays] = useState(7);
     const [muted, setMutedState] = useState(() => isMuted());
     const [processHints, setProcessHints] = useState<ProcessHint[]>([]);
@@ -39,8 +44,42 @@ export default function Home() {
     const [configPanelOpen, setConfigPanelOpen] = useState(false);
     const [hostManagerOpen, setHostManagerOpen] = useState(false);
     const [hostStatuses, setHostStatuses] = useState<SessionHostStatus[]>([]);
+    const isNodeMode = runtimeRole === 'node';
+    
     const processHintButtonRef = useRef<HTMLButtonElement | null>(null);
     const processHintPopoverRef = useRef<HTMLDivElement | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        fetch('/api/nodes')
+            .then(async res => {
+                if (cancelled) {
+                    return;
+                }
+
+                let body: unknown = null;
+                if (res.status === 404) {
+                    try {
+                        body = await res.json();
+                    } catch {
+                        body = null;
+                    }
+                }
+
+                const isNodeModeResponse = res.status === 404 && isRecord(body) && body.error === 'Route unavailable in node mode';
+                setRuntimeRole(isNodeModeResponse ? 'node' : 'hub');
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setRuntimeRole('hub');
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     const processHintProjects = useMemo(
         () => Array.from(new Set(processHints.map((hint) => hint.projectName))),
@@ -137,7 +176,7 @@ export default function Home() {
             <main className="h-screen flex flex-col">
                 <header className="flex items-center justify-between px-4 py-4 border-b border-gray-200 dark:border-zinc-800">
                     <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
-                        VibePulse
+                        VibePulse {isNodeMode ? '(Node)' : ''}
                     </h1>
                     <div className="flex items-center gap-3 flex-wrap justify-end">
                         <button
@@ -272,14 +311,16 @@ export default function Home() {
                                 );
                             })}
                         </div>
-                        <button
-                            type="button"
-                            onClick={() => setHostManagerOpen(true)}
-                            className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700 dark:hover:text-white"
-                        >
-                            <Server className="h-3.5 w-3.5" />
-                            Hosts
-                        </button>
+                        {!isNodeMode && (
+                            <button
+                                type="button"
+                                onClick={() => setHostManagerOpen(true)}
+                                className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700 dark:hover:text-white"
+                            >
+                                <Server className="h-3.5 w-3.5" />
+                                Nodes
+                            </button>
+                        )}
                         <ConfigButton onClick={() => setConfigPanelOpen(true)} />
                     </div>
                 </header>
@@ -288,6 +329,7 @@ export default function Home() {
                         filterDays={filterDays}
                         onProcessHintsChange={setProcessHints}
                         hostSources={hostSourcesState}
+                        isNodeMode={isNodeMode}
                         showHostFilter={false}
                         onHostStatusesChange={setHostStatuses}
                     />
@@ -300,6 +342,7 @@ export default function Home() {
                     hostSources={hostSourcesState}
                     open={hostManagerOpen}
                     onClose={() => setHostManagerOpen(false)}
+                    isNodeMode={isNodeMode}
                 />
             </main>
         </div>

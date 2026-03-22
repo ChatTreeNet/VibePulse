@@ -1,21 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { X, Server, Globe, Plus, Trash2, Edit2, Check, AlertCircle } from 'lucide-react';
+import { X, Server, Globe, Plus, Trash2, Edit2, Check, AlertCircle, Key } from 'lucide-react';
 import { useHostSources } from '@/hooks/useHostSources';
-import { normalizeRemoteHostConfig, validateRemoteBaseUrl } from '@/lib/hostSourcesStorage';
+import { validateNodeUrl } from '@/lib/hostSourcesStorage';
 import type { RemoteHostConfig } from '@/types';
 
 interface HostManagerDialogProps {
   open: boolean;
   onClose: () => void;
   hostSources: ReturnType<typeof useHostSources>;
+  isNodeMode?: boolean;
 }
 
-export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDialogProps) {
+export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = false }: HostManagerDialogProps) {
   const { remoteHosts, addRemoteHost, editRemoteHost, deleteRemoteHost, toggleRemoteHost } = hostSources;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
-  const [formData, setFormData] = useState({ hostLabel: '', baseUrl: '' });
+  const [formData, setFormData] = useState({ hostLabel: '', baseUrl: '', token: '' });
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -28,7 +30,8 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
       setIsAdding(false);
       setEditingId(null);
       setError(null);
-      setFormData({ hostLabel: '', baseUrl: '' });
+      setFormData({ hostLabel: '', baseUrl: '', token: '' });
+      setIsSubmitting(false);
     }
   }, [open]);
 
@@ -45,25 +48,25 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [open, onClose]);
 
-  const getBaseUrlError = (url: string) => {
-    const result = validateRemoteBaseUrl(url);
+  const getNodeUrlError = (url: string) => {
+    const result = validateNodeUrl(url);
 
     if (result.ok) {
       return null;
     }
 
     if (result.error === 'unsupported_protocol') {
-      return 'Base URL must use http:// or https://';
+      return 'Node URL must use http:// or https://';
     }
 
     if (result.error === 'credentials_not_allowed') {
-      return 'Base URL must not include a username or password';
+      return 'Node URL must not include a username or password';
     }
 
-    return 'A valid base URL is required (e.g., http://localhost:3000)';
+    return 'A valid Node URL is required (e.g., http://localhost:3000)';
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setError(null);
     const normalizedLabel = formData.hostLabel.trim();
 
@@ -72,51 +75,52 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
       return;
     }
 
-    const baseUrlError = getBaseUrlError(formData.baseUrl);
-    if (baseUrlError) {
-      setError(baseUrlError);
+    const nodeUrlError = getNodeUrlError(formData.baseUrl);
+    if (nodeUrlError) {
+      setError(nodeUrlError);
       return;
     }
 
-    if (isAdding) {
-      const newHost = normalizeRemoteHostConfig({
-        hostId: `remote-${Date.now()}`,
-        hostLabel: normalizedLabel,
-        baseUrl: formData.baseUrl,
-        enabled: true,
-      });
-
-      if (!newHost) {
-        setError('A valid base URL is required (e.g., http://localhost:3000)');
-        return;
-      }
-
-      addRemoteHost(newHost);
-      setIsAdding(false);
-    } else if (editingId) {
-      const existingHost = remoteHosts.find((h) => h.hostId === editingId);
-      if (existingHost) {
-        const updatedHost = normalizeRemoteHostConfig({
-          ...existingHost,
-          hostLabel: normalizedLabel,
-          baseUrl: formData.baseUrl,
-        });
-
-        if (!updatedHost) {
-          setError('A valid base URL is required (e.g., http://localhost:3000)');
-          return;
+    setIsSubmitting(true);
+    try {
+      if (isAdding) {
+        if (!formData.token.trim()) {
+           setError('Token is required for new nodes');
+           setIsSubmitting(false);
+           return;
         }
 
-        editRemoteHost(editingId, updatedHost);
+        await addRemoteHost({
+          hostId: '', // Handled by backend
+          hostLabel: normalizedLabel,
+          baseUrl: formData.baseUrl,
+          enabled: true,
+          token: formData.token.trim(),
+        });
+        setIsAdding(false);
+      } else if (editingId) {
+        const existingHost = remoteHosts.find((h) => h.hostId === editingId);
+        if (existingHost) {
+          await editRemoteHost(editingId, {
+            ...existingHost,
+            hostLabel: normalizedLabel,
+            baseUrl: formData.baseUrl,
+            token: formData.token.trim() || undefined,
+          });
+        }
+        setEditingId(null);
       }
-      setEditingId(null);
+      setFormData({ hostLabel: '', baseUrl: '', token: '' });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setIsSubmitting(false);
     }
-    setFormData({ hostLabel: '', baseUrl: '' });
   };
 
   const startEdit = (host: RemoteHostConfig) => {
     setEditingId(host.hostId);
-    setFormData({ hostLabel: host.hostLabel, baseUrl: host.baseUrl });
+    setFormData({ hostLabel: host.hostLabel, baseUrl: host.baseUrl, token: '' });
     setIsAdding(false);
     setError(null);
   };
@@ -124,14 +128,14 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
   const startAdd = () => {
     setIsAdding(true);
     setEditingId(null);
-    setFormData({ hostLabel: '', baseUrl: '' });
+    setFormData({ hostLabel: '', baseUrl: '', token: '' });
     setError(null);
   };
 
   const cancelForm = () => {
     setIsAdding(false);
     setEditingId(null);
-    setFormData({ hostLabel: '', baseUrl: '' });
+    setFormData({ hostLabel: '', baseUrl: '', token: '' });
     setError(null);
   };
 
@@ -143,19 +147,34 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
         <header className="flex h-14 items-center justify-between border-b border-zinc-200 px-5 dark:border-zinc-800">
           <div className="flex items-center gap-2.5">
             <Server className="h-5 w-5 text-blue-600 dark:text-blue-500" />
-            <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Host Manager</h2>
+            <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+               Nodes
+            </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-            aria-label="Close host manager"
+            aria-label="Close node manager"
           >
             <X className="h-4 w-4" />
           </button>
         </header>
 
         <main className="flex-1 overflow-y-auto p-5">
+          {isNodeMode ? (
+             <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4 dark:border-yellow-900/50 dark:bg-yellow-900/20">
+               <div className="flex items-start gap-3">
+                 <AlertCircle className="mt-0.5 h-5 w-5 text-yellow-600 dark:text-yellow-500" />
+                 <div>
+                   <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-400">Node Mode Active</h3>
+                   <p className="mt-1 text-sm text-yellow-700 dark:text-yellow-500">
+                     Remote node configuration is disabled while running in node mode to prevent nested hub configurations.
+                   </p>
+                 </div>
+               </div>
+             </div>
+          ) : (
           <div className="space-y-3">
             <div
               data-testid="host-row-local"
@@ -195,7 +214,7 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
                     <div className="space-y-3">
                       <div className="space-y-2">
                         <label htmlFor="edit-hostLabel" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                          Label
+                          Node Label
                         </label>
                         <input
                           id="edit-hostLabel"
@@ -204,12 +223,13 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
                           value={formData.hostLabel}
                            onChange={(e) => setFormData({ ...formData, hostLabel: e.target.value })}
                           className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                          placeholder="e.g., Production Server"
+                          placeholder="e.g., Production Node"
+                          disabled={isSubmitting}
                         />
                       </div>
                       <div className="space-y-2">
                         <label htmlFor="edit-baseUrl" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                          Base URL
+                          Node URL
                         </label>
                         <input
                           id="edit-baseUrl"
@@ -218,7 +238,24 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
                           value={formData.baseUrl}
                            onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })}
                           className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                          placeholder="https://api.example.com"
+                          placeholder="https://node.example.com"
+                          disabled={isSubmitting}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label htmlFor="edit-token" className="text-xs font-medium text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
+                          <Key className="h-3.5 w-3.5" />
+                          Update Token (optional)
+                        </label>
+                        <input
+                          id="edit-token"
+                          data-testid="host-form-token"
+                          type="password"
+                          value={formData.token}
+                          onChange={(e) => setFormData({ ...formData, token: e.target.value })}
+                          className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                          placeholder="Leave blank to keep existing token"
+                          disabled={isSubmitting}
                         />
                       </div>
                       {error && (
@@ -231,17 +268,19 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
                         <button
                           type="button"
                           onClick={cancelForm}
-                          className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                          disabled={isSubmitting}
+                          className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800"
                         >
                           Cancel
                         </button>
                         <button
                           type="button"
                           onClick={handleSave}
-                          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                          disabled={isSubmitting}
+                          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                         >
                           <Check className="h-3.5 w-3.5" />
-                          Save
+                          {isSubmitting ? 'Saving...' : 'Save'}
                         </button>
                       </div>
                     </div>
@@ -252,14 +291,19 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
                           <Globe className="h-4 w-4" />
                         </div>
                         <div className={host.enabled ? '' : 'opacity-60'}>
-                          <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{host.hostLabel}</div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{host.hostLabel}</div>
+                            {host.tokenConfigured && (
+                              <Key className="h-3 w-3 text-zinc-400" aria-label="Token configured" />
+                            )}
+                          </div>
                           <div className="text-xs text-zinc-500 dark:text-zinc-400">{host.baseUrl}</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => toggleRemoteHost(host.hostId)}
+                          onClick={() => toggleRemoteHost(host.hostId, !host.enabled)}
                           className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                             host.enabled
                               ? 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800'
@@ -272,7 +316,7 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
                           type="button"
                           onClick={() => startEdit(host)}
                           className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                          aria-label="Edit host"
+                          aria-label="Edit node"
                         >
                           <Edit2 className="h-3.5 w-3.5" />
                         </button>
@@ -280,7 +324,7 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
                           type="button"
                           onClick={() => deleteRemoteHost(host.hostId)}
                           className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                          aria-label="Delete host"
+                          aria-label="Delete node"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -295,7 +339,7 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
               <div className="flex flex-col gap-3 rounded-lg border border-blue-500 bg-blue-50/30 p-3 dark:border-blue-500/50 dark:bg-blue-900/10">
                 <div className="space-y-2">
                   <label htmlFor="add-hostLabel" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                    Label
+                    Node Label
                   </label>
                   <input
                     id="add-hostLabel"
@@ -304,12 +348,13 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
                     value={formData.hostLabel}
                      onChange={(e) => setFormData({ ...formData, hostLabel: e.target.value })}
                     className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                    placeholder="e.g., Remote Server"
+                    placeholder="e.g., Remote Node"
+                    disabled={isSubmitting}
                   />
                 </div>
                 <div className="space-y-2">
                   <label htmlFor="add-baseUrl" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                    Base URL
+                    Node URL
                   </label>
                   <input
                     id="add-baseUrl"
@@ -318,7 +363,24 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
                     value={formData.baseUrl}
                      onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })}
                     className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                    placeholder="https://api.example.com"
+                    placeholder="https://node.example.com"
+                    disabled={isSubmitting}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="add-token" className="text-xs font-medium text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
+                    <Key className="h-3.5 w-3.5" />
+                    Access Token
+                  </label>
+                  <input
+                    id="add-token"
+                    data-testid="host-form-token"
+                    type="password"
+                    value={formData.token}
+                    onChange={(e) => setFormData({ ...formData, token: e.target.value })}
+                    className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                    placeholder="Enter node access token"
+                    disabled={isSubmitting}
                   />
                 </div>
                 {error && (
@@ -331,17 +393,19 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
                   <button
                     type="button"
                     onClick={cancelForm}
-                    className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                    disabled={isSubmitting}
+                    className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800"
                   >
                     Cancel
                   </button>
                   <button
                     type="button"
                     onClick={handleSave}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                    disabled={isSubmitting}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                   >
                     <Check className="h-3.5 w-3.5" />
-                    Add Host
+                    {isSubmitting ? 'Adding...' : 'Add Node'}
                   </button>
                 </div>
               </div>
@@ -352,10 +416,11 @@ export function HostManagerDialog({ open, onClose, hostSources }: HostManagerDia
                 className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-300 py-3 text-sm font-medium text-zinc-600 transition-colors hover:border-zinc-400 hover:bg-zinc-50 hover:text-zinc-900 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-zinc-600 dark:hover:bg-zinc-900/50 dark:hover:text-zinc-100"
               >
                 <Plus className="h-4 w-4" />
-                Add Remote Host
+                Add Remote Node
               </button>
             )}
           </div>
+          )}
         </main>
       </div>
     </div>
