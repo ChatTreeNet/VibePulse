@@ -229,6 +229,24 @@ describe('/api/node/sessions', () => {
     expect(mockCreateOpencodeClient.mock.calls).toHaveLength(0);
   });
 
+  it('accepts version-only requests when node token is unset', async () => {
+    process.env.VIBEPULSE_NODE_TOKEN = '  ';
+
+    const response = await GET(
+      new Request('http://localhost/api/node/sessions', {
+        headers: { 'x-vibepulse-node-version': '1' },
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.ok).toBe(true);
+    expect(data.role).toBe('node');
+    expect(data.protocolVersion).toBe('1');
+    expect(mockDiscoverPortsWithMeta.mock.calls.length).toBeGreaterThan(0);
+    expect(mockCreateOpencodeClient.mock.calls).toEqual([[{ baseUrl: 'http://localhost:7777' }]]);
+  });
+
   it('fails hub-mode requests as node_misconfigured', async () => {
     process.env.VIBEPULSE_RUNTIME_ROLE = 'hub';
 

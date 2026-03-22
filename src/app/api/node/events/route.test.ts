@@ -61,6 +61,39 @@ describe('/api/node/events', () => {
     expect(mockGlobalEvent.mock.calls).toHaveLength(0);
   });
 
+  it('accepts version-only requests when node token is unset', async () => {
+    process.env.VIBEPULSE_NODE_TOKEN = '   ';
+
+    mockGlobalEvent.mockResolvedValue({
+      stream: {
+        [Symbol.asyncIterator]() {
+          let emitted = false;
+          return {
+            async next() {
+              if (!emitted) {
+                emitted = true;
+                return { done: false, value: { type: 'session.status', timestamp: 1 } };
+              }
+              return { done: true, value: undefined };
+            },
+            async return() {
+              return { done: true, value: undefined };
+            },
+          };
+        },
+      },
+    });
+
+    const response = await GET(
+      new Request('http://localhost/api/node/events', {
+        headers: { 'x-vibepulse-node-version': '1' },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('text/event-stream');
+  });
+
   it('streams local-only envelopes and aborts cleanly', async () => {
     let receivedSignal: AbortSignal | undefined;
     let returnCalls = 0;

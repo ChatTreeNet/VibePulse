@@ -60,6 +60,26 @@ describe('/api/node/health', () => {
     expect(mockDiscoverOpencodePortsWithMeta.mock.calls).toHaveLength(0);
   });
 
+  it('accepts requests without bearer auth when node token is unset', async () => {
+    process.env.VIBEPULSE_NODE_TOKEN = '   ';
+
+    const response = await GET(new Request('http://localhost/api/node/health', {
+      headers: { 'x-vibepulse-node-version': '1' },
+    }));
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({
+      ok: true,
+      role: 'node',
+      protocolVersion: '1',
+      upstream: {
+        kind: 'opencode',
+        reachable: true,
+      },
+    });
+  });
+
   it('rejects requests with the wrong bearer token', async () => {
     const response = await GET(new Request('http://localhost/api/node/health', {
       headers: createNodeRequestHeaders('wrong-secret'),
