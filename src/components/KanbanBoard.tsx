@@ -78,6 +78,36 @@ type SessionsResponse = {
     hostStatuses?: SessionHostStatus[];
 };
 
+function areHostStatusesEqual(
+    previous: SessionHostStatus[] | null,
+    next: SessionHostStatus[]
+): boolean {
+    if (!previous) {
+        return false;
+    }
+
+    if (previous.length !== next.length) {
+        return false;
+    }
+
+    for (let index = 0; index < previous.length; index += 1) {
+        const left = previous[index];
+        const right = next[index];
+        if (
+            left.hostId !== right.hostId ||
+            left.hostLabel !== right.hostLabel ||
+            left.hostKind !== right.hostKind ||
+            left.online !== right.online ||
+            left.degraded !== right.degraded ||
+            left.reason !== right.reason
+        ) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 function getLocalWaitingPersistenceKey(
     session: Pick<OpencodeSession, 'id' | 'sourceSessionKey' | 'hostId' | 'hostKind'>
 ): string | null {
@@ -314,16 +344,19 @@ export function KanbanBoard({
         return [];
     }, [activeError, data, data?.hostStatuses, requestSources, isShowingStaleData, staleSnapshot?.hostStatuses]);
 
-    const previousHostStatusesRef = useRef<string>('');
+    const previousHostStatusesRef = useRef<SessionHostStatus[] | null>(null);
 
     useEffect(() => {
-        const serializedStatuses = JSON.stringify(currentHostStatuses);
-        if (previousHostStatusesRef.current === serializedStatuses) {
+        if (!onHostStatusesChange) {
             return;
         }
 
-        previousHostStatusesRef.current = serializedStatuses;
-        onHostStatusesChange?.(currentHostStatuses);
+        if (areHostStatusesEqual(previousHostStatusesRef.current, currentHostStatuses)) {
+            return;
+        }
+
+        previousHostStatusesRef.current = currentHostStatuses.map((status) => ({ ...status }));
+        onHostStatusesChange(currentHostStatuses);
     }, [currentHostStatuses, onHostStatusesChange]);
 
     const shouldShowHardError =

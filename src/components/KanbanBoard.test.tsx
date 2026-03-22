@@ -553,10 +553,52 @@ describe('KanbanBoard Fetch Behavior and Error UX', () => {
         });
     });
 
-    it('does not repeatedly emit unchanged host statuses', () => {
+    it('does not repeatedly emit unchanged host statuses but emits when status values change', () => {
         const onHostStatusesChange = vi.fn() as unknown as (statuses: import('./KanbanBoard').SessionHostStatus[]) => void;
 
-        render(
+        let statuses = [
+            { hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true },
+            { hostId: 'remote-1', hostLabel: 'Remote 1', hostKind: 'remote', online: false, degraded: true },
+        ];
+        mockUseQuery.mockImplementation((opts: unknown) => {
+            const options = opts as { queryKey: string[] };
+            if (options.queryKey[0] === 'sessions') {
+                return {
+                    data: {
+                        sessions: [],
+                        processHints: [],
+                        hostStatuses: statuses.map((status) => ({ ...status })),
+                    },
+                    isLoading: false,
+                    error: null,
+                    dataUpdatedAt: Date.now(),
+                    refetch: vi.fn(),
+                    isFetching: false,
+                    failureCount: 0,
+                };
+            }
+
+            return {
+                data: undefined,
+                isLoading: false,
+            };
+        });
+
+        const renderResult = render(
+            <KanbanBoard
+                filterDays={7}
+                hostSources={hostSourcesState}
+                onHostStatusesChange={onHostStatusesChange}
+            />
+        ) as unknown as { rerender: (ui: React.ReactElement) => void };
+
+        expect(onHostStatusesChange).toHaveBeenCalledTimes(1);
+        expect(onHostStatusesChange).toHaveBeenLastCalledWith([
+            { hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true },
+            { hostId: 'remote-1', hostLabel: 'Remote 1', hostKind: 'remote', online: false, degraded: true },
+        ]);
+
+        renderResult.rerender(
             <KanbanBoard
                 filterDays={7}
                 hostSources={hostSourcesState}
@@ -565,13 +607,24 @@ describe('KanbanBoard Fetch Behavior and Error UX', () => {
         );
 
         expect(onHostStatusesChange).toHaveBeenCalledTimes(1);
+
+        statuses = [
+            { hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true },
+            { hostId: 'remote-1', hostLabel: 'Remote 1', hostKind: 'remote', online: true },
+        ];
+
+        renderResult.rerender(
+            <KanbanBoard
+                filterDays={7}
+                hostSources={hostSourcesState}
+                onHostStatusesChange={onHostStatusesChange}
+            />
+        );
+
+        expect(onHostStatusesChange).toHaveBeenCalledTimes(2);
         expect(onHostStatusesChange).toHaveBeenLastCalledWith([
             { hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true },
-            { hostId: 'remote-1', hostLabel: 'Remote 1', hostKind: 'remote', online: false, degraded: true },
+            { hostId: 'remote-1', hostLabel: 'Remote 1', hostKind: 'remote', online: true },
         ]);
-
-        fireEvent.click(screen.getByTestId('host-filter-option-all'));
-
-        expect(onHostStatusesChange).toHaveBeenCalledTimes(1);
     });
 });
