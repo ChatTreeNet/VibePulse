@@ -1,16 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  getHostFilter,
-  getRemoteHosts,
-  normalizeRemoteHostConfig,
-  saveHostFilter,
-  saveRemoteHosts,
-} from '@/lib/hostSourcesStorage';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getHostFilter, saveHostFilter } from '@/lib/hostSourcesStorage';
 import type { BuiltInHostSource, HostFilterValue, RemoteHostConfig } from '@/types';
+import type { PublicNodeRecord } from '@/lib/nodeRegistry';
 
 export type HostSource = BuiltInHostSource | (RemoteHostConfig & { hostKind: 'remote' });
+
+interface UseHostSourcesOptions {
+  runtimeRole?: 'hub' | 'node' | 'unknown';
+}
 
 interface UseHostSourcesResult {
   sources: HostSource[];
@@ -20,10 +20,12 @@ interface UseHostSourcesResult {
   activeSource: HostSource | null;
   filteredHostIds: Set<string> | null;
   setActiveFilter: (filter: HostFilterValue) => void;
-  addRemoteHost: (host: RemoteHostConfig) => void;
-  editRemoteHost: (hostId: string, nextHost: RemoteHostConfig) => void;
-  deleteRemoteHost: (hostId: string) => void;
-  toggleRemoteHost: (hostId: string) => void;
+  addRemoteHost: (host: RemoteHostConfig & { token?: string }) => Promise<void>;
+  editRemoteHost: (hostId: string, nextHost: RemoteHostConfig & { token?: string }) => Promise<void>;
+  deleteRemoteHost: (hostId: string) => Promise<void>;
+  toggleRemoteHost: (hostId: string, enabled?: boolean) => Promise<void>;
+  isLoading: boolean;
+  error: Error | null;
 }
 
 const LOCAL_SOURCE: BuiltInHostSource = {
@@ -33,11 +35,6 @@ const LOCAL_SOURCE: BuiltInHostSource = {
 };
 
 const HOST_SOURCES_CHANGED_EVENT = 'vibepulse:host-sources-changed';
-
-interface PersistedHostSourcesState {
-  remoteHosts: RemoteHostConfig[];
-  activeFilter: HostFilterValue;
-}
 
 function toHostSource(host: RemoteHostConfig): HostSource {
   return {
@@ -59,14 +56,6 @@ function normalizeFilter(filter: HostFilterValue, remoteHosts: RemoteHostConfig[
   return matchingHost.hostId;
 }
 
-function readPersistedState(): PersistedHostSourcesState {
-  const remoteHosts = getRemoteHosts();
-  return {
-    remoteHosts,
-    activeFilter: normalizeFilter(getHostFilter(), remoteHosts),
-  };
-}
-
 function broadcastHostSourcesChange(): void {
   if (typeof window === 'undefined') {
     return;
@@ -75,42 +64,49 @@ function broadcastHostSourcesChange(): void {
   window.dispatchEvent(new Event(HOST_SOURCES_CHANGED_EVENT));
 }
 
-function persistState(remoteHosts: RemoteHostConfig[], filter: HostFilterValue): void {
-  saveRemoteHosts(remoteHosts);
-  saveHostFilter(filter);
-  broadcastHostSourcesChange();
-}
-
 function persistFilter(filter: HostFilterValue): void {
   saveHostFilter(filter);
   broadcastHostSourcesChange();
 }
 
-export function useHostSources(): UseHostSourcesResult {
-  const [remoteHosts, setRemoteHosts] = useState<RemoteHostConfig[]>([]);
+async function fetchNodes(): Promise<RemoteHostConfig[]> {
+  const response = await fetch('/api/nodes');
+  if (!response.ok) {
+    throw new Error('Failed to fetch nodes');
+  }
+  const data = await response.json();
+  return (data.nodes || []).map((node: PublicNodeRecord) => ({
+    hostId: node.nodeId,
+    hostLabel: node.nodeLabel,
+    baseUrl: node.baseUrl,
+    enabled: node.enabled,
+    tokenConfigured: node.tokenConfigured,
+  }));
+}
+
+export function useHostSources(options: UseHostSourcesOptions = {}): UseHostSourcesResult {
+  const runtimeRole = options.runtimeRole ?? 'hub';
+  const localOnlyRuntime = runtimeRole !== 'hub';
+  const queryClient = useQueryClient();
   const [activeFilter, setActiveFilterState] = useState<HostFilterValue>('all');
-  const remoteHostsRef = useRef(remoteHosts);
-  const activeFilterRef = useRef(activeFilter);
 
-  useEffect(() => {
-    remoteHostsRef.current = remoteHosts;
-  }, [remoteHosts]);
-
-  useEffect(() => {
-    activeFilterRef.current = activeFilter;
-  }, [activeFilter]);
+  const { data: remoteHosts = [], isLoading, error } = useQuery<RemoteHostConfig[], Error>({
+    queryKey: ['nodes'],
+    queryFn: fetchNodes,
+    enabled: !localOnlyRuntime,
+  });
 
   useEffect(() => {
     const syncPersistedState = () => {
-      const persistedState = readPersistedState();
-
-      remoteHostsRef.current = persistedState.remoteHosts;
-      activeFilterRef.current = persistedState.activeFilter;
-      setRemoteHosts(persistedState.remoteHosts);
-      setActiveFilterState(persistedState.activeFilter);
-
-      if (persistedState.activeFilter !== getHostFilter()) {
-        saveHostFilter(persistedState.activeFilter);
+      const persistedFilter = getHostFilter();
+      const normalizedFilter = normalizeFilter(persistedFilter, remoteHosts);
+      
+      if (normalizedFilter !== activeFilter) {
+          setActiveFilterState(normalizedFilter);
+      }
+      
+      if (normalizedFilter !== persistedFilter) {
+          saveHostFilter(normalizedFilter);
       }
     };
 
@@ -123,7 +119,7 @@ export function useHostSources(): UseHostSourcesResult {
       window.removeEventListener(HOST_SOURCES_CHANGED_EVENT, syncPersistedState);
       window.removeEventListener('storage', syncPersistedState);
     };
-  }, []);
+  }, [remoteHosts, activeFilter]);
 
   useEffect(() => {
     const normalizedFilter = normalizeFilter(activeFilter, remoteHosts);
@@ -137,126 +133,132 @@ export function useHostSources(): UseHostSourcesResult {
 
   const setActiveFilter = useCallback(
     (filter: HostFilterValue) => {
-      const normalizedFilter = normalizeFilter(filter, remoteHostsRef.current);
-      activeFilterRef.current = normalizedFilter;
+      const normalizedFilter = normalizeFilter(filter, remoteHosts);
       setActiveFilterState(normalizedFilter);
       persistFilter(normalizedFilter);
     },
-    []
+    [remoteHosts]
   );
 
-  const addRemoteHost = useCallback((host: RemoteHostConfig) => {
-    const normalizedHost = normalizeRemoteHostConfig(host);
+  const addMutation = useMutation({
+    mutationFn: async (host: RemoteHostConfig & { token?: string }) => {
+      const response = await fetch('/api/nodes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nodeLabel: host.hostLabel,
+          baseUrl: host.baseUrl,
+          token: host.token || '',
+          enabled: host.enabled,
+        }),
+      });
+      if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error || 'Failed to add node');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['nodes'] });
+    },
+  });
 
-    if (!normalizedHost || normalizedHost.hostId === LOCAL_SOURCE.hostId) {
-      return;
-    }
-
-    const nextHosts = [...remoteHostsRef.current, normalizedHost];
-    const nextFilter = normalizeFilter(activeFilterRef.current, nextHosts);
-
-    remoteHostsRef.current = nextHosts;
-    activeFilterRef.current = nextFilter;
-    setRemoteHosts(nextHosts);
-    setActiveFilterState(nextFilter);
-    persistState(nextHosts, nextFilter);
-  }, []);
-
-  const editRemoteHost = useCallback((hostId: string, nextHost: RemoteHostConfig) => {
-    const normalizedHostId = hostId.trim();
-    const normalizedNextHost = normalizeRemoteHostConfig(nextHost);
-
-    if (
-      normalizedHostId === LOCAL_SOURCE.hostId ||
-      !normalizedNextHost ||
-      normalizedNextHost.hostId === LOCAL_SOURCE.hostId
-    ) {
-      return;
-    }
-
-    const currentHosts = remoteHostsRef.current;
-    const targetIndex = currentHosts.findIndex((host) => host.hostId === normalizedHostId);
-    if (targetIndex === -1) {
-      return;
-    }
-
-    const nextHosts = currentHosts.map((host, index) => (index === targetIndex ? normalizedNextHost : host));
-    const currentFilter = activeFilterRef.current;
-    const nextFilter =
-      currentFilter === normalizedHostId
-        ? normalizeFilter(normalizedNextHost.hostId, nextHosts)
-        : normalizeFilter(currentFilter, nextHosts);
-
-    remoteHostsRef.current = nextHosts;
-    activeFilterRef.current = nextFilter;
-    setRemoteHosts(nextHosts);
-    setActiveFilterState(nextFilter);
-    persistState(nextHosts, nextFilter);
-  }, []);
-
-  const deleteRemoteHost = useCallback((hostId: string) => {
-    const normalizedHostId = hostId.trim();
-
-    if (normalizedHostId === LOCAL_SOURCE.hostId) {
-      return;
-    }
-
-    const currentHosts = remoteHostsRef.current;
-    const nextHosts = currentHosts.filter((host) => host.hostId !== normalizedHostId);
-    if (nextHosts.length === currentHosts.length) {
-      return;
-    }
-
-    const nextFilter = normalizeFilter(activeFilterRef.current, nextHosts);
-
-    remoteHostsRef.current = nextHosts;
-    activeFilterRef.current = nextFilter;
-    setRemoteHosts(nextHosts);
-    setActiveFilterState(nextFilter);
-    persistState(nextHosts, nextFilter);
-  }, []);
-
-  const toggleRemoteHost = useCallback((hostId: string) => {
-    const normalizedHostId = hostId.trim();
-
-    if (normalizedHostId === LOCAL_SOURCE.hostId) {
-      return;
-    }
-
-    const currentHosts = remoteHostsRef.current;
-    let changed = false;
-    const nextHosts = currentHosts.map((host) => {
-      if (host.hostId !== normalizedHostId) {
-        return host;
+  const editMutation = useMutation({
+    mutationFn: async ({ hostId, nextHost }: { hostId: string; nextHost: RemoteHostConfig & { token?: string } }) => {
+      const payload: any = {
+        nodeId: hostId,
+        nodeLabel: nextHost.hostLabel,
+        baseUrl: nextHost.baseUrl,
+        enabled: nextHost.enabled,
+      };
+      if (nextHost.token) {
+          payload.token = nextHost.token;
       }
 
-      changed = true;
-      return {
-        ...host,
-        enabled: !host.enabled,
-      };
-    });
+      const response = await fetch(`/api/nodes`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error || 'Failed to edit node');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['nodes'] });
+    },
+  });
 
-    if (!changed) {
-      return;
-    }
+  const deleteMutation = useMutation({
+    mutationFn: async (hostId: string) => {
+      const response = await fetch(`/api/nodes`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nodeId: hostId }),
+      });
+      if (!response.ok) {
+          throw new Error('Failed to delete node');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['nodes'] });
+    },
+  });
 
-    const nextFilter = normalizeFilter(activeFilterRef.current, nextHosts);
+  const toggleMutation = useMutation({
+    mutationFn: async ({ hostId, enabled }: { hostId: string; enabled: boolean }) => {
+      const response = await fetch(`/api/nodes`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nodeId: hostId, enabled }),
+      });
+      if (!response.ok) {
+          throw new Error('Failed to toggle node');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['nodes'] });
+    },
+  });
 
-    remoteHostsRef.current = nextHosts;
-    activeFilterRef.current = nextFilter;
-    setRemoteHosts(nextHosts);
-    setActiveFilterState(nextFilter);
-    persistState(nextHosts, nextFilter);
-  }, []);
+  const addRemoteHost = useCallback(async (host: RemoteHostConfig & { token?: string }) => {
+      await addMutation.mutateAsync(host);
+  }, [addMutation]);
+
+  const editRemoteHost = useCallback(async (hostId: string, nextHost: RemoteHostConfig & { token?: string }) => {
+      await editMutation.mutateAsync({ hostId, nextHost });
+  }, [editMutation]);
+
+  const deleteRemoteHost = useCallback(async (hostId: string) => {
+      await deleteMutation.mutateAsync(hostId);
+  }, [deleteMutation]);
+
+  const toggleRemoteHost = useCallback(async (hostId: string, enabled?: boolean) => {
+      const host = remoteHosts.find(h => h.hostId === hostId);
+      if (host) {
+          await toggleMutation.mutateAsync({ hostId, enabled: enabled ?? !host.enabled });
+      }
+  }, [toggleMutation, remoteHosts]);
 
   const sources = useMemo<HostSource[]>(() => {
+    if (localOnlyRuntime) {
+      return [LOCAL_SOURCE];
+    }
+
     return [LOCAL_SOURCE, ...remoteHosts.map(toHostSource)];
-  }, [remoteHosts]);
+  }, [localOnlyRuntime, remoteHosts]);
 
   const enabledSources = useMemo<HostSource[]>(() => {
+    if (localOnlyRuntime) {
+      return [LOCAL_SOURCE];
+    }
+
     return [LOCAL_SOURCE, ...remoteHosts.filter((host) => host.enabled).map(toHostSource)];
-  }, [remoteHosts]);
+  }, [localOnlyRuntime, remoteHosts]);
 
   const activeSource = useMemo<HostSource | null>(() => {
     if (activeFilter === 'all') {
@@ -286,5 +288,7 @@ export function useHostSources(): UseHostSourcesResult {
     editRemoteHost,
     deleteRemoteHost,
     toggleRemoteHost,
+    isLoading,
+    error,
   };
 }

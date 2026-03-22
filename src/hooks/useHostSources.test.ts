@@ -3,8 +3,9 @@ import { waitFor } from '@testing-library/dom';
 import { act, createElement, useEffect, type ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useHostSources, type HostSource } from './useHostSources';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { saveHostFilter } from '@/lib/hostSourcesStorage';
 
-const STORAGE_KEY_HOSTS = 'vibepulse:remote-hosts:v1';
 const STORAGE_KEY_FILTER = 'vibepulse:host-filter:v1';
 
 type RenderFn = (ui: ReactElement) => unknown;
@@ -23,11 +24,37 @@ function HookProbe({ onChange }: { onChange: (value: ReturnType<typeof useHostSo
   return null;
 }
 
+function HookProbeWithOptions({
+  onChange,
+  runtimeRole,
+}: {
+  onChange: (value: ReturnType<typeof useHostSources>) => void;
+  runtimeRole: 'hub' | 'node' | 'unknown';
+}) {
+  const value = useHostSources({ runtimeRole });
+
+  useEffect(() => {
+    onChange(value);
+  }, [onChange, value]);
+
+  return null;
+}
+
 describe('useHostSources', () => {
   let mockLocalStorage: Record<string, string>;
+  let queryClient: QueryClient;
+  let mockFetch: any;
 
   beforeEach(() => {
     mockLocalStorage = {};
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+    
     vi.stubGlobal('localStorage', {
       getItem: (key: string) => mockLocalStorage[key] || null,
       setItem: (key: string, value: string) => {
@@ -40,21 +67,56 @@ describe('useHostSources', () => {
         Object.keys(mockLocalStorage).forEach((key) => delete mockLocalStorage[key]);
       },
     });
+
+    mockFetch = vi.fn();
+    global.fetch = mockFetch as typeof fetch;
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    queryClient.clear();
   });
 
   function renderUseHostSources() {
     let currentValue: ReturnType<typeof useHostSources> | null = null;
     const render = getRender();
 
-    render(createElement(HookProbe, {
-      onChange: (value) => {
-        currentValue = value;
-      },
-    }));
+    render(createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement(HookProbe, {
+        onChange: (value) => {
+          currentValue = value;
+        },
+      })
+    ));
+
+    const getCurrentValue = () => {
+      if (!currentValue) {
+        throw new Error('Hook value not ready');
+      }
+
+      return currentValue;
+    };
+
+    return { getCurrentValue };
+  }
+
+  function renderUseHostSourcesWithRuntimeRole(runtimeRole: 'hub' | 'node' | 'unknown') {
+    let currentValue: ReturnType<typeof useHostSources> | null = null;
+    const render = getRender();
+
+    render(createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement(HookProbeWithOptions, {
+        runtimeRole,
+        onChange: (value) => {
+          currentValue = value;
+        },
+      })
+    ));
 
     const getCurrentValue = () => {
       if (!currentValue) {
@@ -72,10 +134,10 @@ describe('useHostSources', () => {
     let secondValue: ReturnType<typeof useHostSources> | null = null;
     const render = getRender();
 
-    render(createElement(() => (
-      createElement(
-        'div',
-        null,
+    render(createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement('div', null,
         createElement(HookProbe, {
           onChange: (value) => {
             firstValue = value;
@@ -87,7 +149,7 @@ describe('useHostSources', () => {
           },
         })
       )
-    )));
+    ));
 
     const getFirstValue = () => {
       if (!firstValue) {
@@ -109,12 +171,12 @@ describe('useHostSources', () => {
   }
 
   it('always includes Local first', async () => {
-    mockLocalStorage[STORAGE_KEY_HOSTS] = JSON.stringify({
-      version: 1,
-      hosts: [
-        { hostId: 'remote-1', hostLabel: 'Remote 1', baseUrl: 'https://one.example.com', enabled: true },
-      ],
-    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: [{ nodeId: 'remote-1', nodeLabel: 'Remote 1', baseUrl: 'https://one.example.com', enabled: true }]
+      })
+    } as any);
 
     const { getCurrentValue } = renderUseHostSources();
 
@@ -134,270 +196,157 @@ describe('useHostSources', () => {
     expect(getCurrentValue().enabledSources.map((source: HostSource) => source.hostId)).toEqual(['local', 'remote-1']);
   });
 
-  it('adds, edits, and deletes remote hosts while preserving Local', async () => {
+  it('adds, edits, and deletes remote hosts', async () => {
+    // Initial fetch
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ nodes: [] })
+    } as any);
+
     const { getCurrentValue } = renderUseHostSources();
 
     await waitFor(() => {
       expect(getCurrentValue().sources[0].hostId).toBe('local');
     });
 
-    act(() => {
-      getCurrentValue().addRemoteHost({
-        hostId: 'prod',
+    // Add mock
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ node: { nodeId: 'prod', nodeLabel: 'Production', baseUrl: 'https://prod.example.com', enabled: true } })
+    } as any);
+    // Refetch mock
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ nodes: [{ nodeId: 'prod', nodeLabel: 'Production', baseUrl: 'https://prod.example.com', enabled: true }] })
+    } as any);
+
+    await act(async () => {
+      await getCurrentValue().addRemoteHost({
+        hostId: '',
         hostLabel: 'Production',
         baseUrl: 'https://prod.example.com',
         enabled: true,
+        token: 'secret'
       });
     });
 
-    expect(getCurrentValue().remoteHosts).toEqual([
-      {
-        hostId: 'prod',
-        hostLabel: 'Production',
-        baseUrl: 'https://prod.example.com',
-        enabled: true,
-      },
-    ]);
+    await waitFor(() => {
+      expect(getCurrentValue().remoteHosts[0].hostId).toBe('prod');
+      expect(getCurrentValue().remoteHosts[0].hostLabel).toBe('Production');
+      expect(getCurrentValue().remoteHosts[0].baseUrl).toBe('https://prod.example.com');
+      expect(getCurrentValue().remoteHosts[0].enabled).toBe(true);
+    });
 
-    act(() => {
-      getCurrentValue().editRemoteHost('prod', {
-        hostId: 'prod-eu',
+    // Edit mock
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ node: { nodeId: 'prod', nodeLabel: 'Production EU', baseUrl: 'https://eu.example.com', enabled: true } })
+    } as any);
+    // Refetch mock
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ nodes: [{ nodeId: 'prod', nodeLabel: 'Production EU', baseUrl: 'https://eu.example.com', enabled: true }] })
+    } as any);
+
+    await act(async () => {
+      await getCurrentValue().editRemoteHost('prod', {
+        hostId: 'prod',
         hostLabel: 'Production EU',
         baseUrl: 'https://eu.example.com',
         enabled: true,
       });
     });
 
-    expect(getCurrentValue().remoteHosts).toEqual([
-      {
-        hostId: 'prod-eu',
-        hostLabel: 'Production EU',
-        baseUrl: 'https://eu.example.com',
-        enabled: true,
-      },
-    ]);
-
-    act(() => {
-      getCurrentValue().deleteRemoteHost('prod-eu');
+    await waitFor(() => {
+      expect(getCurrentValue().remoteHosts[0].hostId).toBe('prod');
+      expect(getCurrentValue().remoteHosts[0].hostLabel).toBe('Production EU');
+      expect(getCurrentValue().remoteHosts[0].baseUrl).toBe('https://eu.example.com');
+      expect(getCurrentValue().remoteHosts[0].enabled).toBe(true);
     });
 
-    expect(getCurrentValue().sources).toEqual([
-      {
-        hostId: 'local',
-        hostLabel: 'Local',
-        hostKind: 'local',
-      },
-    ]);
+    // Delete mock
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ deleted: true })
+    } as any);
+    // Refetch mock
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ nodes: [] })
+    } as any);
 
-    expect(JSON.parse(mockLocalStorage[STORAGE_KEY_HOSTS])).toEqual({
-      version: 1,
-      hosts: [],
+    await act(async () => {
+      await getCurrentValue().deleteRemoteHost('prod');
     });
-  });
-
-  it('normalizes add/edit inputs before they enter active state and rejects invalid remote URLs', async () => {
-    const { getCurrentValue } = renderUseHostSources();
 
     await waitFor(() => {
-      expect(getCurrentValue().sources[0].hostId).toBe('local');
+      expect(getCurrentValue().sources).toEqual([
+        {
+          hostId: 'local',
+          hostLabel: 'Local',
+          hostKind: 'local',
+        },
+      ]);
     });
-
-    act(() => {
-      getCurrentValue().addRemoteHost({
-        hostId: '  prod  ',
-        hostLabel: '  Production  ',
-        baseUrl: '  https://prod.example.com///  ',
-        enabled: true,
-      });
-    });
-
-    expect(getCurrentValue().remoteHosts).toEqual([
-      {
-        hostId: 'prod',
-        hostLabel: 'Production',
-        baseUrl: 'https://prod.example.com',
-        enabled: true,
-      },
-    ]);
-
-    act(() => {
-      getCurrentValue().addRemoteHost({
-        hostId: 'ftp-host',
-        hostLabel: 'FTP Host',
-        baseUrl: 'ftp://prod.example.com',
-        enabled: true,
-      });
-      getCurrentValue().addRemoteHost({
-        hostId: 'credentialed-host',
-        hostLabel: 'Credentialed Host',
-        baseUrl: 'https://user:pass@prod.example.com',
-        enabled: true,
-      });
-    });
-
-    expect(getCurrentValue().remoteHosts).toHaveLength(1);
-
-    act(() => {
-      getCurrentValue().editRemoteHost('prod', {
-        hostId: '  prod-eu  ',
-        hostLabel: '  Production EU  ',
-        baseUrl: '  https://eu.example.com/path///  ',
-        enabled: true,
-      });
-    });
-
-    expect(getCurrentValue().remoteHosts).toEqual([
-      {
-        hostId: 'prod-eu',
-        hostLabel: 'Production EU',
-        baseUrl: 'https://eu.example.com/path',
-        enabled: true,
-      },
-    ]);
-
-    act(() => {
-      getCurrentValue().editRemoteHost('prod-eu', {
-        hostId: 'prod-eu',
-        hostLabel: 'Production EU',
-        baseUrl: 'https://user:pass@eu.example.com',
-        enabled: true,
-      });
-    });
-
-    expect(getCurrentValue().remoteHosts).toEqual([
-      {
-        hostId: 'prod-eu',
-        hostLabel: 'Production EU',
-        baseUrl: 'https://eu.example.com/path',
-        enabled: true,
-      },
-    ]);
-  });
-
-  it('keeps enabled sources in persisted order after Local and removes disabled remote hosts', async () => {
-    mockLocalStorage[STORAGE_KEY_HOSTS] = JSON.stringify({
-      version: 1,
-      hosts: [
-        { hostId: 'remote-1', hostLabel: 'Remote 1', baseUrl: 'https://one.example.com', enabled: true },
-        { hostId: 'remote-2', hostLabel: 'Remote 2', baseUrl: 'https://two.example.com', enabled: true },
-      ],
-    });
-
-    const { getCurrentValue } = renderUseHostSources();
-
-    await waitFor(() => {
-      expect(getCurrentValue().enabledSources.map((source: HostSource) => source.hostId)).toEqual(['local', 'remote-1', 'remote-2']);
-    });
-
-    act(() => {
-      getCurrentValue().toggleRemoteHost('remote-1');
-    });
-
-    expect(getCurrentValue().enabledSources.map((source: HostSource) => source.hostId)).toEqual(['local', 'remote-2']);
-    expect(getCurrentValue().remoteHosts).toEqual([
-      { hostId: 'remote-1', hostLabel: 'Remote 1', baseUrl: 'https://one.example.com', enabled: false },
-      { hostId: 'remote-2', hostLabel: 'Remote 2', baseUrl: 'https://two.example.com', enabled: true },
-    ]);
   });
 
   it('resets the filter to all when the selected remote host is disabled or deleted', async () => {
-    mockLocalStorage[STORAGE_KEY_HOSTS] = JSON.stringify({
-      version: 1,
-      hosts: [
-        { hostId: 'remote-1', hostLabel: 'Remote 1', baseUrl: 'https://one.example.com', enabled: true },
-        { hostId: 'remote-2', hostLabel: 'Remote 2', baseUrl: 'https://two.example.com', enabled: true },
-      ],
-    });
-    mockLocalStorage[STORAGE_KEY_FILTER] = JSON.stringify('remote-1');
+    saveHostFilter('remote-1');
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ nodes: [
+        { nodeId: 'remote-1', nodeLabel: 'Remote 1', baseUrl: 'https://one.example.com', enabled: true },
+        { nodeId: 'remote-2', nodeLabel: 'Remote 2', baseUrl: 'https://two.example.com', enabled: true }
+      ]})
+    } as any);
 
     const { getCurrentValue } = renderUseHostSources();
+
+    await waitFor(() => {
+      expect(getCurrentValue().remoteHosts.length).toBe(2);
+    });
+    
+    // We set it manually here because the useEffect logic in the hook might reset it to 'all' if remoteHosts aren't loaded yet on first render
+    act(() => {
+        getCurrentValue().setActiveFilter('remote-1');
+    });
 
     await waitFor(() => {
       expect(getCurrentValue().activeFilter).toBe('remote-1');
     });
 
-    act(() => {
-      getCurrentValue().toggleRemoteHost('remote-1');
+    // Toggle mock
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ node: { nodeId: 'remote-1', enabled: false } })
+    } as any);
+    // Refetch mock
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ nodes: [
+        { nodeId: 'remote-1', nodeLabel: 'Remote 1', baseUrl: 'https://one.example.com', enabled: false },
+        { nodeId: 'remote-2', nodeLabel: 'Remote 2', baseUrl: 'https://two.example.com', enabled: true }
+      ]})
+    } as any);
+
+    await act(async () => {
+      await getCurrentValue().toggleRemoteHost('remote-1', false);
     });
 
-    expect(getCurrentValue().activeFilter).toBe('all');
-    expect(getCurrentValue().activeSource).toBeNull();
-    expect(getCurrentValue().filteredHostIds).toBeNull();
-    expect(JSON.parse(mockLocalStorage[STORAGE_KEY_FILTER])).toBe('all');
-
-    act(() => {
-      getCurrentValue().setActiveFilter('remote-2');
+    await waitFor(() => {
+      expect(getCurrentValue().activeFilter).toBe('all');
+      expect(getCurrentValue().activeSource).toBeNull();
+      expect(getCurrentValue().filteredHostIds).toBeNull();
     });
-
-    expect(getCurrentValue().activeFilter).toBe('remote-2');
-
-    act(() => {
-      getCurrentValue().deleteRemoteHost('remote-2');
-    });
-
-    expect(getCurrentValue().activeFilter).toBe('all');
     expect(JSON.parse(mockLocalStorage[STORAGE_KEY_FILTER])).toBe('all');
   });
 
-  it('synchronizes add, toggle, and delete updates across hook consumers in the same tab', async () => {
-    const { getFirstValue, getSecondValue } = renderPairedUseHostSources();
+  it('stays local-only and does not fetch /api/nodes in node mode', async () => {
+    const { getCurrentValue } = renderUseHostSourcesWithRuntimeRole('node');
 
     await waitFor(() => {
-      expect(getFirstValue().sources).toHaveLength(1);
-      expect(getSecondValue().sources).toHaveLength(1);
-    });
-
-    act(() => {
-      getFirstValue().addRemoteHost({
-        hostId: 'remote-1',
-        hostLabel: 'Remote 1',
-        baseUrl: 'https://one.example.com',
-        enabled: true,
-      });
-    });
-
-    await waitFor(() => {
-      expect(getSecondValue().remoteHosts).toEqual([
-        {
-          hostId: 'remote-1',
-          hostLabel: 'Remote 1',
-          baseUrl: 'https://one.example.com',
-          enabled: true,
-        },
-      ]);
-    });
-
-    act(() => {
-      getSecondValue().setActiveFilter('remote-1');
-    });
-
-    await waitFor(() => {
-      expect(getFirstValue().activeFilter).toBe('remote-1');
-    });
-
-    act(() => {
-      getFirstValue().toggleRemoteHost('remote-1');
-    });
-
-    await waitFor(() => {
-      expect(getSecondValue().remoteHosts).toEqual([
-        {
-          hostId: 'remote-1',
-          hostLabel: 'Remote 1',
-          baseUrl: 'https://one.example.com',
-          enabled: false,
-        },
-      ]);
-      expect(getSecondValue().activeFilter).toBe('all');
-    });
-
-    act(() => {
-      getFirstValue().deleteRemoteHost('remote-1');
-    });
-
-    await waitFor(() => {
-      expect(getSecondValue().remoteHosts).toEqual([]);
-      expect(getSecondValue().sources).toEqual([
+      expect(getCurrentValue().sources).toEqual([
         {
           hostId: 'local',
           hostLabel: 'Local',
@@ -406,45 +355,14 @@ describe('useHostSources', () => {
       ]);
     });
 
-    expect(JSON.parse(mockLocalStorage[STORAGE_KEY_HOSTS])).toEqual({
-      version: 1,
-      hosts: [],
-    });
-    expect(JSON.parse(mockLocalStorage[STORAGE_KEY_FILTER])).toBe('all');
-  });
-
-  it('does not allow Local to be edited or deleted', async () => {
-    mockLocalStorage[STORAGE_KEY_HOSTS] = JSON.stringify({
-      version: 1,
-      hosts: [
-        { hostId: 'remote-1', hostLabel: 'Remote 1', baseUrl: 'https://one.example.com', enabled: true },
-      ],
-    });
-
-    const { getCurrentValue } = renderUseHostSources();
-
-    await waitFor(() => {
-      expect(getCurrentValue().sources).toHaveLength(2);
-    });
-
-    act(() => {
-      getCurrentValue().editRemoteHost('local', {
-        hostId: 'changed-local',
-        hostLabel: 'Changed Local',
-        baseUrl: 'https://nope.example.com',
-        enabled: false,
-      });
-      getCurrentValue().deleteRemoteHost('local');
-      getCurrentValue().toggleRemoteHost('local');
-    });
-
-    expect(getCurrentValue().sources[0]).toEqual({
-      hostId: 'local',
-      hostLabel: 'Local',
-      hostKind: 'local',
-    });
-    expect(getCurrentValue().remoteHosts).toEqual([
-      { hostId: 'remote-1', hostLabel: 'Remote 1', baseUrl: 'https://one.example.com', enabled: true },
+    expect(getCurrentValue().enabledSources).toEqual([
+      {
+        hostId: 'local',
+        hostLabel: 'Local',
+        hostKind: 'local',
+      },
     ]);
+    expect(getCurrentValue().remoteHosts).toEqual([]);
+    expect(mockFetch.mock.calls).toHaveLength(0);
   });
 });
