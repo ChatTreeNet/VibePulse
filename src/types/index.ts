@@ -115,20 +115,26 @@ export interface BuiltInHostSource {
   hostKind: 'local';
 }
 
-export interface RemoteHostConfig {
+export interface RemoteNodeConfig {
   hostId: string;
   hostLabel: string;
   baseUrl: string;
   enabled: boolean;
+  tokenConfigured?: boolean;
 }
 
-export type HostFilterValue = 'all' | 'local' | string; // string = remote hostId
+export type RemoteHostConfig = RemoteNodeConfig;
+
+export type HostFilterValue = 'all' | 'local' | string;
 
 export interface HostStatus {
   hostId: string;
   hostLabel: string;
   hostKind: HostSourceKind;
   online: boolean;
+  degraded?: boolean;
+  reason?: string;
+  baseUrl?: string;
 }
 
 // Host-aware fields that appear directly on sessions/cards
