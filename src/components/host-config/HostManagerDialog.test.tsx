@@ -107,6 +107,16 @@ describe('HostManagerDialog', () => {
         expect(addedHost.enabled).toBe(true);
     });
 
+    it('shows optional token warning copy in add form', async () => {
+        const user = userEvent.setup();
+        render(<HostManagerDialog open={true} onClose={noop} hostSources={hostSourcesState} />);
+
+        await user.click(screen.getByRole('button', { name: /add remote node/i }));
+
+        expect(screen.getByText(/Access Token \(optional\)/i)).toBeTruthy();
+        expect(screen.getByText(/Recommended: set a token unless this node is only reachable on a trusted private network\./i)).toBeTruthy();
+    });
+
     it('edits a remote node', async () => {
         const user = userEvent.setup();
         render(<HostManagerDialog open={true} onClose={noop} hostSources={hostSourcesState} />);
@@ -168,7 +178,7 @@ describe('HostManagerDialog', () => {
         expect(mockAddRemoteHostCalls.length).toBe(0);
     });
     
-    it('requires token on add', async () => {
+    it('allows blank token on add', async () => {
         const user = userEvent.setup();
         render(<HostManagerDialog open={true} onClose={noop} hostSources={hostSourcesState} />);
 
@@ -179,12 +189,12 @@ describe('HostManagerDialog', () => {
 
         await user.type(labelInput, 'New Host');
         await user.type(urlInput, 'http://new-host.com');
-        // no token
-
         await user.click(screen.getByRole('button', { name: /add node/i }));
 
-        expect(screen.getByText(/Token is required for new nodes/i)).toBeTruthy();
-        expect(mockAddRemoteHostCalls.length).toBe(0);
+        expect(mockAddRemoteHostCalls.length).toBeGreaterThan(0);
+        const addArgs = mockAddRemoteHostCalls[0];
+        const addedHost = addArgs[0] as Record<string, unknown>;
+        expect(addedHost.token).toBe('');
     });
 
     it('disables controls in node mode', () => {

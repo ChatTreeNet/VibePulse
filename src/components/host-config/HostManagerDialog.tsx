@@ -84,12 +84,6 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
     setIsSubmitting(true);
     try {
       if (isAdding) {
-        if (!formData.token.trim()) {
-           setError('Token is required for new nodes');
-           setIsSubmitting(false);
-           return;
-        }
-
         await addRemoteHost({
           hostId: '', // Handled by backend
           hostLabel: normalizedLabel,
@@ -370,7 +364,7 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
                 <div className="space-y-2">
                   <label htmlFor="add-token" className="text-xs font-medium text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
                     <Key className="h-3.5 w-3.5" />
-                    Access Token
+                    Access Token (optional)
                   </label>
                   <input
                     id="add-token"
@@ -379,9 +373,12 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
                     value={formData.token}
                     onChange={(e) => setFormData({ ...formData, token: e.target.value })}
                     className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                    placeholder="Enter node access token"
+                    placeholder="Leave blank only on trusted networks"
                     disabled={isSubmitting}
                   />
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    Recommended: set a token unless this node is only reachable on a trusted private network.
+                  </p>
                 </div>
                 {error && (
                   <div className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
