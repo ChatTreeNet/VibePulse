@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@opencode-ai/sdk', () => ({
   createOpencodeClient: vi.fn(),
@@ -11,6 +11,10 @@ vi.mock('@/lib/opencodeDiscovery', () => ({
 
 vi.mock('@/lib/opencodeConfig', () => ({
   readConfig: vi.fn(),
+}));
+
+vi.mock('@/lib/nodeRegistry', () => ({
+  listNodeRecords: vi.fn(),
 }));
 
 vi.mock('child_process', async () => {
@@ -39,6 +43,7 @@ import {
   discoverOpencodeProcessCwdsWithoutPortWithMeta,
 } from '@/lib/opencodeDiscovery';
 import { readConfig } from '@/lib/opencodeConfig';
+import { listNodeRecords } from '@/lib/nodeRegistry';
 
 import {
   GET,
@@ -55,6 +60,7 @@ const mockCreateOpencodeClient: any = createOpencodeClient;
 const mockDiscoverPortsWithMeta: any = discoverOpencodePortsWithMeta;
 const mockDiscoverProcessCwdsWithoutPortWithMeta: any = discoverOpencodeProcessCwdsWithoutPortWithMeta;
 const mockReadConfig: any = readConfig;
+const mockListNodeRecords: any = listNodeRecords;
 const mockExecSync: any = execSync;
 
 function resetDefaultClientMock(): void {
@@ -166,6 +172,7 @@ function setupLocalSessionsMocks(): void {
 afterEach(() => {
   vi.clearAllMocks();
   resetDefaultClientMock();
+  vi.unstubAllGlobals();
 });
 
 describe('/api/sessions status stabilization ordering', () => {
@@ -240,6 +247,64 @@ describe('/api/sessions status stabilization ordering', () => {
 });
 
 describe('/api/sessions route source handling', () => {
+  const originalRuntimeRole = process.env.VIBEPULSE_RUNTIME_ROLE;
+
+  beforeEach(() => {
+    process.env.VIBEPULSE_RUNTIME_ROLE = 'hub';
+  });
+
+  afterEach(() => {
+    process.env.VIBEPULSE_RUNTIME_ROLE = originalRuntimeRole;
+  });
+
+  it('enforces local-only aggregation in node mode even when remote sources are requested', async () => {
+    process.env.VIBEPULSE_RUNTIME_ROLE = 'node';
+    setupLocalSessionsMocks();
+    mockListNodeRecords.mockResolvedValue([
+      {
+        nodeId: 'remote-a',
+        nodeLabel: 'Remote A',
+        baseUrl: 'https://remote-a.test',
+        enabled: true,
+        token: 'token-a',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const mockFetch: any = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(
+      new Request('http://localhost/api/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sources: [
+            { hostId: 'local', hostLabel: 'Local', hostKind: 'local' },
+            {
+              hostId: 'remote-a',
+              hostLabel: 'Remote A',
+              hostKind: 'remote',
+              baseUrl: 'https://remote-a.test',
+              enabled: true,
+            },
+          ],
+        }),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.hostStatuses).toEqual([
+      { hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true },
+    ]);
+    expect(data.hosts).toEqual(data.hostStatuses);
+    expect(data.sessions.every((session: any) => session.hostId === 'local')).toBe(true);
+    expect(mockFetch.mock.calls).toHaveLength(0);
+    expect(mockListNodeRecords.mock.calls).toHaveLength(0);
+  });
+
   it('keeps GET local aggregation behavior working without request host config', async () => {
     setupLocalSessionsMocks();
 
@@ -434,6 +499,79 @@ describe('/api/sessions route source handling', () => {
 
   it('isolates remote host failures while returning local and successful remote sessions', async () => {
     setupLocalSessionsMocks();
+    mockListNodeRecords.mockResolvedValue([
+      {
+        nodeId: 'remote-a',
+        nodeLabel: 'Remote A',
+        baseUrl: 'https://remote-a.test',
+        enabled: true,
+        token: 'token-a',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        nodeId: 'remote-b',
+        nodeLabel: 'Remote B',
+        baseUrl: 'https://remote-b.test',
+        enabled: true,
+        token: 'token-b',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://remote-a.test/api/node/sessions') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            role: 'node',
+            protocolVersion: '1',
+            source: { hostId: 'local', hostLabel: 'Local', hostKind: 'local' },
+            upstream: { kind: 'opencode', reachable: true },
+            sessions: [
+              {
+                id: 'local:remote-parent-1',
+                rawSessionId: 'remote-parent-1',
+                sourceSessionKey: 'local:remote-parent-1',
+                title: 'Remote Parent',
+                directory: '/remote/project-one',
+                projectName: 'project-one',
+                branch: null,
+                realTimeStatus: 'busy',
+                waitingForUser: false,
+                time: { created: 2_000, updated: Date.now() - 1_000 },
+                children: [
+                  {
+                    id: 'local:remote-child-1',
+                    rawSessionId: 'remote-child-1',
+                    sourceSessionKey: 'local:remote-child-1',
+                    parentID: 'local:remote-parent-1',
+                    title: 'Remote Child',
+                    directory: '/remote/project-one',
+                    realTimeStatus: 'busy',
+                    waitingForUser: false,
+                    time: { created: 2_100, updated: Date.now() - 900 },
+                  },
+                ],
+              },
+            ],
+            processHints: [],
+            hosts: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+            hostStatuses: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+
+      if (url === 'https://remote-b.test/api/node/sessions') {
+        throw new Error('remote-b offline');
+      }
+
+      throw new Error(`Unexpected node sessions URL: ${url}`);
+    });
+    vi.stubGlobal('fetch', mockFetch);
 
     mockCreateOpencodeClient.mockImplementation(({ baseUrl }: { baseUrl: string }) => {
       if (baseUrl === 'http://localhost:7777') {
@@ -442,46 +580,6 @@ describe('/api/sessions route source handling', () => {
             list: mockSessionList,
             status: mockSessionStatus,
             messages: mockSessionMessages,
-          },
-        } as never;
-      }
-
-      if (baseUrl === 'https://remote-a.test') {
-        return {
-          session: {
-            list: vi.fn(async () => ({
-              data: [
-                {
-                  id: 'remote-parent-1',
-                  title: 'Remote Parent',
-                  directory: '/remote/project-one',
-                  time: { created: 2_000, updated: Date.now() - 1_000 },
-                },
-                {
-                  id: 'remote-child-1',
-                  title: 'Remote Child',
-                  directory: '/remote/project-one',
-                  parentID: 'remote-parent-1',
-                  time: { created: 2_100, updated: Date.now() - 900 },
-                },
-              ],
-            })),
-            status: vi.fn(async () => ({
-              data: {
-                'remote-parent-1': { type: 'busy' },
-              },
-            })),
-            messages: vi.fn(),
-          },
-        } as never;
-      }
-
-      if (baseUrl === 'https://remote-b.test') {
-        return {
-          session: {
-            list: vi.fn(() => Promise.reject(new Error('remote-b offline'))),
-            status: vi.fn(),
-            messages: vi.fn(),
           },
         } as never;
       }
@@ -574,6 +672,7 @@ describe('/api/sessions route source handling', () => {
       readOnly: true,
       realTimeStatus: 'busy',
     });
+    expect(mockCreateOpencodeClient.mock.calls).toEqual([[{ baseUrl: 'http://localhost:7777' }]]);
   });
 
   it('returns a degraded 200 payload with host status metadata when all sources are offline', async () => {
@@ -591,19 +690,26 @@ describe('/api/sessions route source handling', () => {
       timedOut: false,
     });
 
-    mockCreateOpencodeClient.mockImplementation(({ baseUrl }: { baseUrl: string }) => {
-      if (baseUrl === 'https://offline-remote.test') {
-        return {
-          session: {
-            list: vi.fn(() => Promise.reject(new Error('remote unavailable'))),
-            status: vi.fn(),
-            messages: vi.fn(),
-          },
-        } as never;
-      }
+    mockListNodeRecords.mockResolvedValue([
+      {
+        nodeId: 'remote-offline',
+        nodeLabel: 'Remote Offline',
+        baseUrl: 'https://offline-remote.test',
+        enabled: true,
+        token: 'offline-token',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
 
-      throw new Error(`Unexpected baseUrl: ${baseUrl}`);
+    const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://offline-remote.test/api/node/sessions') {
+        throw new Error('remote unavailable');
+      }
+      throw new Error(`Unexpected node sessions URL: ${url}`);
     });
+    vi.stubGlobal('fetch', mockFetch);
 
     const response = await POST(
       new Request('http://localhost/api/sessions', {
@@ -663,6 +769,84 @@ describe('/api/sessions route source handling', () => {
           degraded: true,
           reason: 'remote unavailable',
           baseUrl: 'https://offline-remote.test',
+        },
+      ],
+      degraded: true,
+    });
+  });
+
+  it('degrades malformed remote node success payloads instead of trusting 200 responses', async () => {
+    setupLocalSessionsMocks();
+    mockListNodeRecords.mockResolvedValue([
+      {
+        nodeId: 'remote-malformed',
+        nodeLabel: 'Remote Malformed',
+        baseUrl: 'https://remote-malformed.test',
+        enabled: true,
+        token: 'malformed-token',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://remote-malformed.test/api/node/sessions') {
+        return new Response(
+          JSON.stringify({
+            sessions: [{ id: 'missing-envelope-fields' }],
+            processHints: [],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      throw new Error(`Unexpected node sessions URL: ${url}`);
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(
+      new Request('http://localhost/api/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sources: [
+            {
+              hostId: 'remote-malformed',
+              hostLabel: 'Remote Malformed',
+              hostKind: 'remote',
+              baseUrl: 'https://remote-malformed.test',
+              enabled: true,
+            },
+          ],
+        }),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({
+      sessions: [],
+      processHints: [],
+      hosts: [
+        {
+          hostId: 'remote-malformed',
+          hostLabel: 'Remote Malformed',
+          hostKind: 'remote',
+          online: true,
+          degraded: true,
+          reason: 'node_payload_invalid',
+          baseUrl: 'https://remote-malformed.test',
+        },
+      ],
+      hostStatuses: [
+        {
+          hostId: 'remote-malformed',
+          hostLabel: 'Remote Malformed',
+          hostKind: 'remote',
+          online: true,
+          degraded: true,
+          reason: 'node_payload_invalid',
+          baseUrl: 'https://remote-malformed.test',
         },
       ],
       degraded: true,
@@ -770,6 +954,59 @@ describe('/api/sessions route source handling', () => {
     });
   });
 
+  it('degrades non-local sources when node registry has no matching node instead of using direct remote SDK calls', async () => {
+    mockListNodeRecords.mockResolvedValue([]);
+
+    const response = await POST(
+      new Request('http://localhost/api/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sources: [
+            {
+              hostId: 'remote-missing',
+              hostLabel: 'Remote Missing',
+              hostKind: 'remote',
+              baseUrl: 'https://raw-opencode-endpoint.test',
+              enabled: true,
+            },
+          ],
+        }),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({
+      sessions: [],
+      processHints: [],
+      hosts: [
+        {
+          hostId: 'remote-missing',
+          hostLabel: 'Remote Missing',
+          hostKind: 'remote',
+          online: false,
+          degraded: true,
+          reason: 'node_not_configured',
+          baseUrl: 'https://raw-opencode-endpoint.test',
+        },
+      ],
+      hostStatuses: [
+        {
+          hostId: 'remote-missing',
+          hostLabel: 'Remote Missing',
+          hostKind: 'remote',
+          online: false,
+          degraded: true,
+          reason: 'node_not_configured',
+          baseUrl: 'https://raw-opencode-endpoint.test',
+        },
+      ],
+      degraded: true,
+    });
+    expect(mockCreateOpencodeClient.mock.calls).toHaveLength(0);
+  });
+
   it('keeps duplicate raw session ids from different hosts as distinct aggregate sessions', async () => {
     setupLocalSessionsMocks();
     mockSessionList.mockResolvedValue({
@@ -788,6 +1025,54 @@ describe('/api/sessions route source handling', () => {
       },
     });
 
+    mockListNodeRecords.mockResolvedValue([
+      {
+        nodeId: 'remote-shared',
+        nodeLabel: 'Remote Shared',
+        baseUrl: 'https://remote-shared.test',
+        enabled: true,
+        token: 'shared-token',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://remote-shared.test/api/node/sessions') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            role: 'node',
+            protocolVersion: '1',
+            source: { hostId: 'local', hostLabel: 'Local', hostKind: 'local' },
+            upstream: { kind: 'opencode', reachable: true },
+            sessions: [
+              {
+                id: 'local:shared-session',
+                rawSessionId: 'shared-session',
+                sourceSessionKey: 'local:shared-session',
+                title: 'Remote Shared Session',
+                directory: '/remote/project-shared',
+                projectName: 'project-shared',
+                branch: null,
+                realTimeStatus: 'idle',
+                waitingForUser: false,
+                time: { created: 2_000, updated: Date.now() - 800 },
+                children: [],
+              },
+            ],
+            processHints: [],
+            hosts: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+            hostStatuses: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      throw new Error(`Unexpected node sessions URL: ${url}`);
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
     mockCreateOpencodeClient.mockImplementation(({ baseUrl }: { baseUrl: string }) => {
       if (baseUrl === 'http://localhost:7777') {
         return {
@@ -795,29 +1080,6 @@ describe('/api/sessions route source handling', () => {
             list: mockSessionList,
             status: mockSessionStatus,
             messages: mockSessionMessages,
-          },
-        } as never;
-      }
-
-      if (baseUrl === 'https://remote-shared.test') {
-        return {
-          session: {
-            list: vi.fn(async () => ({
-              data: [
-                {
-                  id: 'shared-session',
-                  title: 'Remote Shared Session',
-                  directory: '/remote/project-shared',
-                  time: { created: 2_000, updated: Date.now() - 800 },
-                },
-              ],
-            })),
-            status: vi.fn(async () => ({
-              data: {
-                'shared-session': { type: 'idle' },
-              },
-            })),
-            messages: vi.fn(),
           },
         } as never;
       }

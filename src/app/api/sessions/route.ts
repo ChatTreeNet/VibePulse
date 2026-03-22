@@ -14,8 +14,10 @@ import {
   shouldForceSessionUnarchived,
   takeSessionStickyStatusBlocked,
 } from '@/lib/sessionArchiveOverrides';
-import { composeSourceKey } from '@/lib/hostIdentity';
-import { normalizeRemoteHostConfig } from '@/lib/hostSourcesStorage';
+import { composeSourceKey, parseSourceKey } from '@/lib/hostIdentity';
+import { createNodeRequestHeaders } from '@/lib/nodeProtocol';
+import { listNodeRecords, type StoredNodeRecord } from '@/lib/nodeRegistry';
+import { RUNTIME_ROLE_ENV_VAR } from '@/lib/runtimeMode';
 import type { BuiltInHostSource, RemoteHostConfig } from '@/types';
 
 type SessionLike = {
@@ -43,6 +45,7 @@ const GIT_COMMAND_TIMEOUT_MS = 1200;
 const sessionListTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_LIST_TIMEOUT_MS', 6000);
 const sessionStatusTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_STATUS_TIMEOUT_MS', 4000);
 const sessionMessagesTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_MESSAGES_TIMEOUT_MS', 2500);
+const nodeSessionsTimeoutMs = readPositiveTimeoutEnv('VIBEPULSE_NODE_SESSIONS_TIMEOUT_MS', 6000);
 
 type StableRealtimeStatus = 'idle' | 'busy' | 'retry';
 
@@ -485,6 +488,171 @@ function isRemoteSource(source: SessionSource): source is RemoteHostConfig & { h
   return source.hostKind === 'remote';
 }
 
+function normalizeNodeBaseUrl(baseUrl: string): string | null {
+  const trimmed = baseUrl.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    if (parsed.username || parsed.password) {
+      return null;
+    }
+    parsed.hash = '';
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function isNodeStatus(value: unknown): value is 'idle' | 'busy' | 'retry' {
+  return value === 'idle' || value === 'busy' || value === 'retry';
+}
+
+function isProcessHintValue(value: unknown): value is ProcessHint {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value['pid'] === 'number' &&
+    typeof value['directory'] === 'string' &&
+    typeof value['projectName'] === 'string' &&
+    value['reason'] === 'process_without_api_port'
+  );
+}
+
+function isTimeValue(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const created = value['created'];
+  const updated = value['updated'];
+  const archived = value['archived'];
+  return (
+    typeof created === 'number' &&
+    typeof updated === 'number' &&
+    (archived === undefined || typeof archived === 'number')
+  );
+}
+
+function isChildEntryValue(value: unknown): value is ChildEntry {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  if (typeof value['id'] !== 'string') {
+    return false;
+  }
+  if (!isNodeStatus(value['realTimeStatus'])) {
+    return false;
+  }
+  if (typeof value['waitingForUser'] !== 'boolean') {
+    return false;
+  }
+
+  const parentID = value['parentID'];
+  const directory = value['directory'];
+  const time = value['time'];
+  if (parentID !== undefined && typeof parentID !== 'string') {
+    return false;
+  }
+  if (directory !== undefined && typeof directory !== 'string') {
+    return false;
+  }
+  if (time !== undefined && !isTimeValue(time)) {
+    return false;
+  }
+
+  return true;
+}
+
+function isSessionValue(value: unknown): value is EnrichedSession {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  if (typeof value['id'] !== 'string') {
+    return false;
+  }
+  if (typeof value['directory'] !== 'string') {
+    return false;
+  }
+  if (typeof value['projectName'] !== 'string') {
+    return false;
+  }
+  const branch = value['branch'];
+  if (branch !== null && branch !== undefined && typeof branch !== 'string') {
+    return false;
+  }
+  if (!isNodeStatus(value['realTimeStatus'])) {
+    return false;
+  }
+  if (typeof value['waitingForUser'] !== 'boolean') {
+    return false;
+  }
+
+  const children = value['children'];
+  if (!Array.isArray(children) || children.some((child) => !isChildEntryValue(child))) {
+    return false;
+  }
+
+  const time = value['time'];
+  if (time !== undefined && !isTimeValue(time)) {
+    return false;
+  }
+
+  return true;
+}
+
+function parseRemoteNodeSessionsSuccessPayload(
+  body: unknown
+): { sessions: EnrichedSession[]; processHints: ProcessHint[]; degraded: boolean } | null {
+  if (!isRecord(body)) {
+    return null;
+  }
+
+  if (body['ok'] !== true || body['role'] !== 'node' || body['protocolVersion'] !== '1') {
+    return null;
+  }
+
+  const source = body['source'];
+  if (
+    !isRecord(source) ||
+    source['hostId'] !== 'local' ||
+    source['hostLabel'] !== 'Local' ||
+    source['hostKind'] !== 'local'
+  ) {
+    return null;
+  }
+
+  const upstream = body['upstream'];
+  if (!isRecord(upstream) || upstream['kind'] !== 'opencode' || typeof upstream['reachable'] !== 'boolean') {
+    return null;
+  }
+
+  const sessions = body['sessions'];
+  const processHints = body['processHints'];
+
+  if (!Array.isArray(sessions) || sessions.some((session) => !isSessionValue(session))) {
+    return null;
+  }
+  if (!Array.isArray(processHints) || processHints.some((hint) => !isProcessHintValue(hint))) {
+    return null;
+  }
+
+  return {
+    sessions: sessions as EnrichedSession[],
+    processHints: processHints as ProcessHint[],
+    degraded: body['degraded'] === true,
+  };
+}
+
 function parseSource(value: unknown): SessionSource | null {
   if (!isRecord(value)) {
     return null;
@@ -511,23 +679,17 @@ function parseSource(value: unknown): SessionSource | null {
     return null;
   }
 
-  const normalizedHost = normalizeRemoteHostConfig({
-    hostId,
-    hostLabel,
-    baseUrl,
-    enabled,
-  });
-
-  if (!normalizedHost) {
+  const normalizedBaseUrl = normalizeNodeBaseUrl(baseUrl);
+  if (!normalizedBaseUrl) {
     return null;
   }
 
   return {
-    hostId: normalizedHost.hostId,
-    hostLabel: normalizedHost.hostLabel,
+    hostId,
+    hostLabel,
     hostKind,
-    baseUrl: normalizedHost.baseUrl,
-    enabled: normalizedHost.enabled,
+    baseUrl: normalizedBaseUrl,
+    enabled,
   };
 }
 
@@ -596,14 +758,27 @@ function readSuccessPayload(result: SessionsRouteResult): SessionsSuccessPayload
   };
 }
 
+function toRawSessionId(value: string): string {
+  if (!value.includes(':')) {
+    return value;
+  }
+
+  try {
+    return parseSourceKey(value).sessionId;
+  } catch {
+    return value;
+  }
+}
+
 function addHostMetadataToChildEntry(child: ChildEntry, source: SessionSource): ChildEntry {
-  const rawSessionId = child.rawSessionId ?? child.id;
+  const rawSessionId = child.rawSessionId ?? toRawSessionId(child.id);
+  const rawParentId = child.parentID ? toRawSessionId(child.parentID) : child.parentID;
   const sourceSessionKey = composeSourceKey(source.hostId, rawSessionId);
 
   return {
     ...child,
     id: sourceSessionKey,
-    parentID: child.parentID ? composeSourceKey(source.hostId, child.parentID) : child.parentID,
+    parentID: rawParentId ? composeSourceKey(source.hostId, rawParentId) : rawParentId,
     hostId: source.hostId,
     hostLabel: source.hostLabel,
     hostKind: source.hostKind,
@@ -614,13 +789,14 @@ function addHostMetadataToChildEntry(child: ChildEntry, source: SessionSource): 
 }
 
 function addHostMetadataToSession(session: EnrichedSession, source: SessionSource): EnrichedSession {
-  const rawSessionId = session.rawSessionId ?? session.id;
+  const rawSessionId = session.rawSessionId ?? toRawSessionId(session.id);
+  const rawParentId = session.parentID ? toRawSessionId(session.parentID) : session.parentID;
   const sourceSessionKey = composeSourceKey(source.hostId, rawSessionId);
 
   return {
     ...session,
     id: sourceSessionKey,
-    parentID: session.parentID ? composeSourceKey(source.hostId, session.parentID) : session.parentID,
+    parentID: rawParentId ? composeSourceKey(source.hostId, rawParentId) : rawParentId,
     hostId: source.hostId,
     hostLabel: source.hostLabel,
     hostKind: source.hostKind,
@@ -656,120 +832,101 @@ function sortChildEntries(children: ChildEntry[]): void {
   });
 }
 
-function buildRemoteEnrichedSessions(
-  sessions: SessionLike[],
-  statusMap: Record<string, { type: 'idle' | 'busy' | 'retry' }>
-): EnrichedSession[] {
-  const seen = new Set<string>();
-  const uniqueSessions = sessions.filter((session) => {
-    if (seen.has(session.id)) {
-      return false;
-    }
-    seen.add(session.id);
-    return true;
-  });
-
-  const parentSessions = uniqueSessions.filter((session) => !session.parentID);
-  const childSessions = uniqueSessions.filter((session) => !!session.parentID);
-  const now = Date.now();
-
-  const enrichedSessions: EnrichedSession[] = parentSessions.map((session) => ({
-    ...session,
-    projectName: getProjectName(session.directory),
-    branch: null,
-    realTimeStatus: statusMap[session.id]?.type || (hasRecentActivity(session, now) ? 'busy' : 'idle'),
-    waitingForUser: false,
-    children: [],
-  }));
-
-  const parentById = new Map(enrichedSessions.map((session) => [session.id, session]));
-
-  for (const child of childSessions) {
-    let parent = child.parentID ? parentById.get(child.parentID) : undefined;
-
-    if (!parent) {
-      const candidates = enrichedSessions
-        .filter((session) => session.directory === child.directory)
-        .sort((a, b) => getUpdatedAt(b) - getUpdatedAt(a));
-
-      parent =
-        candidates.find((session) => session.realTimeStatus === 'busy' || session.realTimeStatus === 'retry') ||
-        candidates[0];
-    }
-
-    if (!parent) {
-      continue;
-    }
-
-    const statusFromMap = statusMap[child.id]?.type;
-    const childUpdatedAt = getUpdatedAt(child);
-    const isRecent = childUpdatedAt > 0 && now - childUpdatedAt <= CHILD_ACTIVE_WINDOW_MS;
-    const shouldSkipArchivedChild = !!child.time?.archived && !statusFromMap && !isRecent;
-
-    if (shouldSkipArchivedChild) {
-      continue;
-    }
-
-    if (statusFromMap && statusFromMap !== 'idle') {
-      parent.children.push(toChildEntry(child, statusFromMap));
-      continue;
-    }
-
-    if (isRecent) {
-      parent.children.push(toChildEntry(child, 'busy'));
-    }
-  }
-
-  for (const session of enrichedSessions) {
-    if (session.children.length > 0) {
-      sortChildEntries(session.children);
-    }
-  }
-
-  return enrichedSessions;
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
-async function getRemoteSessionsResult(source: RemoteHostConfig & { hostKind: 'remote' }): Promise<SessionsRouteResult> {
-  let statusFailureReason: string | undefined;
-
+async function readJsonResponseBody(response: Response): Promise<unknown> {
   try {
-    const client = createOpencodeClient({ baseUrl: source.baseUrl });
-    const sessionsResult = await withTimeout(
-      client.session.list(),
-      sessionListTimeoutMs,
-      `session.list(${source.hostId})`
-    );
-    const statusResult = await withTimeout(
-      client.session.status(),
-      sessionStatusTimeoutMs,
-      `session.status(${source.hostId})`
-    ).catch((error) => {
-      statusFailureReason = error instanceof Error ? error.message : String(error);
-      return { data: {} };
-    });
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
 
-    return {
-      payload: {
-        sessions: buildRemoteEnrichedSessions(
-          (sessionsResult.data || []) as SessionLike[],
-          (statusResult.data || {}) as Record<string, { type: 'idle' | 'busy' | 'retry' }>
-        ),
-        processHints: [],
-        ...(statusFailureReason ? { degraded: true } : {}),
-      },
-      sourceMeta: {
-        online: true,
-        ...(statusFailureReason ? { degraded: true, reason: statusFailureReason } : {}),
-      },
-    };
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+async function getRemoteNodeSessionsResult(
+  source: RemoteHostConfig & { hostKind: 'remote' },
+  nodeRecord: StoredNodeRecord | undefined
+): Promise<SessionsRouteResult> {
+  if (!nodeRecord) {
     return {
       payload: { sessions: [], processHints: [], degraded: true },
       sourceMeta: {
         online: false,
         degraded: true,
-        reason,
+        reason: 'node_not_configured',
+      },
+    };
+  }
+
+  if (!nodeRecord.enabled) {
+    return {
+      payload: { sessions: [], processHints: [], degraded: true },
+      sourceMeta: {
+        online: false,
+        degraded: true,
+        reason: 'node_disabled',
+      },
+    };
+  }
+
+  try {
+    const response = await withTimeout(
+      fetch(`${nodeRecord.baseUrl}/api/node/sessions`, {
+        method: 'GET',
+        headers: createNodeRequestHeaders(nodeRecord.token),
+      }),
+      nodeSessionsTimeoutMs,
+      `node.sessions(${source.hostId})`
+    );
+    const body = await readJsonResponseBody(response);
+
+    if (!response.ok) {
+      const reason =
+        isRecord(body) && typeof body['reason'] === 'string'
+          ? body['reason']
+          : `node_request_failed_${response.status}`;
+
+      return {
+        payload: { sessions: [], processHints: [], degraded: true },
+        sourceMeta: {
+          online: true,
+          degraded: true,
+          reason,
+        },
+      };
+    }
+
+    const successPayload = parseRemoteNodeSessionsSuccessPayload(body);
+    if (!successPayload) {
+      return {
+        payload: { sessions: [], processHints: [], degraded: true },
+        sourceMeta: {
+          online: true,
+          degraded: true,
+          reason: 'node_payload_invalid',
+        },
+      };
+    }
+
+    return {
+      payload: {
+        sessions: successPayload.sessions,
+        processHints: successPayload.processHints,
+        ...(successPayload.degraded ? { degraded: true } : {}),
+      },
+      sourceMeta: {
+        online: true,
+        ...(successPayload.degraded ? { degraded: true } : {}),
+      },
+    };
+  } catch (error) {
+    return {
+      payload: { sessions: [], processHints: [], degraded: true },
+      sourceMeta: {
+        online: false,
+        degraded: true,
+        reason: toErrorMessage(error),
       },
     };
   }
@@ -1318,7 +1475,10 @@ async function handlePost(request: Request) {
     );
   }
 
-  const enabledSources = requestedSources.filter((source) => source.hostKind === 'local' || source.enabled);
+  const isNodeRuntime = process.env[RUNTIME_ROLE_ENV_VAR] === 'node';
+  const enabledSources = isNodeRuntime
+    ? [LOCAL_SOURCE]
+    : requestedSources.filter((source) => source.hostKind === 'local' || source.enabled);
 
   if (enabledSources.length === 0) {
     return Response.json({ sessions: [], processHints: [], hosts: [], hostStatuses: [] });
@@ -1368,12 +1528,31 @@ async function handlePost(request: Request) {
     ? await readStickyBusyDelayMs()
     : 0;
 
+  const nodeRecords = await listNodeRecords();
+  const nodeRecordsById = new Map(nodeRecords.map((record) => [record.nodeId, record]));
+  const resolvedSources = enabledSources.map((source) => {
+    if (!isRemoteSource(source)) {
+      return source;
+    }
+
+    const nodeRecord = nodeRecordsById.get(source.hostId);
+    if (!nodeRecord) {
+      return source;
+    }
+
+    return {
+      ...source,
+      baseUrl: nodeRecord.baseUrl,
+      enabled: nodeRecord.enabled,
+    };
+  });
+
   const sourceResults = await Promise.allSettled(
-    enabledSources.map(async (source) => ({
+    resolvedSources.map(async (source) => ({
       source,
       result: source.hostKind === 'local'
         ? await getLocalSessionsResult(stickyBusyDelayMs)
-        : await getRemoteSessionsResult(source),
+        : await getRemoteNodeSessionsResult(source, nodeRecordsById.get(source.hostId)),
     }))
   );
 

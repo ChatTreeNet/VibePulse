@@ -96,9 +96,20 @@ describe('/api/sessions/[id] composite id handling', () => {
     });
   });
 
-  it('rejects remote composite ids for session detail reads', async () => {
+  it('rejects non-local (remote node) composite ids for session detail reads', async () => {
     const response = await GET(new Request('http://localhost/api/sessions/remote-a:abc'), {
       params: Promise.resolve({ id: 'remote-a:abc' }),
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(data).toEqual({ error: 'Session not found' });
+    expect(mockCreateOpencodeClient.mock.calls).toHaveLength(0);
+  });
+
+  it('keeps remote node sessions read-only by rejecting node composite ids for detail reads', async () => {
+    const response = await GET(new Request('http://localhost/api/sessions/node-1:abc'), {
+      params: Promise.resolve({ id: 'node-1:abc' }),
     });
     const data = await response.json();
 
