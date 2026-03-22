@@ -65,10 +65,15 @@ export function getConfiguredNodeToken(env: NodeJS.ProcessEnv = process.env): st
   return trimToNull(env[NODE_SHARED_TOKEN_ENV_VAR]);
 }
 
-export function createNodeRequestHeaders(token: string, headers?: HeadersInit): Headers {
+export function createNodeRequestHeaders(token?: string | null, headers?: HeadersInit): Headers {
   const requestHeaders = new Headers(headers);
   requestHeaders.set(NODE_PROTOCOL_VERSION_HEADER, NODE_PROTOCOL_VERSION);
-  requestHeaders.set('authorization', `Bearer ${token.trim()}`);
+
+  const trimmedToken = trimToNull(token ?? null);
+  if (trimmedToken) {
+    requestHeaders.set('authorization', `Bearer ${trimmedToken}`);
+  }
+
   return requestHeaders;
 }
 
@@ -112,13 +117,6 @@ export function guardNodeRequest(
   }
 
   const expectedToken = trimToNull(options.expectedToken) ?? getConfiguredNodeToken(options.env ?? process.env);
-  if (!expectedToken) {
-    return {
-      ok: false,
-      status: NODE_FAILURE_STATUS.node_misconfigured,
-      body: createNodeFailurePayload('node_misconfigured'),
-    };
-  }
 
   const version = request.headers.get(NODE_PROTOCOL_VERSION_HEADER);
   if (version !== NODE_PROTOCOL_VERSION) {
@@ -129,13 +127,15 @@ export function guardNodeRequest(
     };
   }
 
-  const presentedToken = readBearerToken(request.headers.get('authorization'));
-  if (!presentedToken || presentedToken !== expectedToken) {
-    return {
-      ok: false,
-      status: NODE_FAILURE_STATUS.unauthorized,
-      body: createNodeFailurePayload('unauthorized'),
-    };
+  if (expectedToken) {
+    const presentedToken = readBearerToken(request.headers.get('authorization'));
+    if (!presentedToken || presentedToken !== expectedToken) {
+      return {
+        ok: false,
+        status: NODE_FAILURE_STATUS.unauthorized,
+        body: createNodeFailurePayload('unauthorized'),
+      };
+    }
   }
 
   return { ok: true };

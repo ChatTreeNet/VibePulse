@@ -18,6 +18,17 @@ describe('createNodeRequestHeaders', () => {
     expect(headers.get('authorization')).toBe('Bearer shared-secret');
     expect(headers.get('x-extra')).toBe('kept');
   });
+
+  it('omits bearer auth when token is blank or missing', () => {
+    const blankTokenHeaders = createNodeRequestHeaders('   ', { 'x-extra': 'kept' });
+    const missingTokenHeaders = createNodeRequestHeaders(undefined, { 'x-extra': 'kept' });
+
+    expect(blankTokenHeaders.get(NODE_PROTOCOL_VERSION_HEADER)).toBe(NODE_PROTOCOL_VERSION);
+    expect(blankTokenHeaders.get('authorization')).toBeNull();
+    expect(missingTokenHeaders.get(NODE_PROTOCOL_VERSION_HEADER)).toBe(NODE_PROTOCOL_VERSION);
+    expect(missingTokenHeaders.get('authorization')).toBeNull();
+    expect(blankTokenHeaders.get('x-extra')).toBe('kept');
+  });
 });
 
 describe('getConfiguredNodeToken', () => {
@@ -69,23 +80,15 @@ describe('guardNodeRequest', () => {
     });
   });
 
-  it('fails deterministically when the node shared token is missing', () => {
+  it('accepts requests without bearer auth when node shared token is missing', () => {
     const result = guardNodeRequest(new Request('https://node.test/api/node/health', {
-      headers: createNodeRequestHeaders('secret-token'),
+      headers: { [NODE_PROTOCOL_VERSION_HEADER]: NODE_PROTOCOL_VERSION },
     }), {
       runtimeRole: 'node',
       expectedToken: '   ',
     });
 
-    expect(result).toMatchObject({
-      ok: false,
-      status: 503,
-      body: {
-        ok: false,
-        reason: 'node_misconfigured',
-        degraded: true,
-      },
-    });
+    expect(result).toEqual({ ok: true });
   });
 
   it('rejects requests without the required node protocol version', () => {
