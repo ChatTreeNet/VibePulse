@@ -27,6 +27,8 @@
   },
   "scripts": {
     "dev": "next dev -p 3456",
+    "dev:hub": "node ./bin/dev-runtime.js hub",
+    "dev:node": "node ./bin/dev-runtime.js node",
     "build": "next build",
     "start": "next start -p 3456",
     "lint": "eslint",
