@@ -75,8 +75,8 @@ function createHostSourcesState(overrides: Partial<HostSourcesState> = {}): Host
     } as HostSourcesState;
 }
 
-function renderBoard(filterDays = 7, hostSources = createHostSourcesState()) {
-    return render(<KanbanBoard filterDays={filterDays} hostSources={hostSources} />);
+function renderBoard(filterDays = 7, hostSources = createHostSourcesState(), isNodeMode = false) {
+    return render(<KanbanBoard filterDays={filterDays} hostSources={hostSources} isNodeMode={isNodeMode} />);
 }
 
 describe('KanbanBoard Host Filter', () => {
@@ -326,6 +326,30 @@ describe('KanbanBoard Fetch Behavior and Error UX', () => {
             sources: [
                 { hostId: 'local', hostLabel: 'Local', hostKind: 'local' },
                 { hostId: 'remote-1', hostLabel: 'Remote 1', hostKind: 'remote', baseUrl: 'http://remote-1.test', enabled: true },
+            ],
+        }));
+    });
+
+    it('forces local-only POST payload in node mode even if remote hosts are enabled', async () => {
+        let capturedQueryFn: ((opts: { signal: AbortSignal }) => Promise<unknown>) | undefined;
+        mockUseQuery.mockImplementation((opts: unknown) => {
+            const options = opts as { queryKey: string[]; queryFn: (opts: { signal: AbortSignal }) => Promise<unknown> };
+            if (options.queryKey[0] === 'sessions') {
+                capturedQueryFn = options.queryFn;
+            }
+            return { isLoading: true };
+        });
+
+        renderBoard(7, hostSourcesState, true);
+
+        expect(capturedQueryFn).toBeDefined();
+        await capturedQueryFn!({ signal: new AbortController().signal });
+
+        const fetchArgs = mockFetch.mock.calls[0] as [string, RequestInit];
+        expect(fetchArgs[0]).toBe('/api/sessions');
+        expect(fetchArgs[1].body).toBe(JSON.stringify({
+            sources: [
+                { hostId: 'local', hostLabel: 'Local', hostKind: 'local' },
             ],
         }));
     });

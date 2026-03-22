@@ -19,6 +19,12 @@ const SESSIONS_ERROR_DISPLAY_THRESHOLD = 3;
 const DEGRADED_MERGE_MAX_SNAPSHOT_AGE_MS = 10 * 60 * 1000;
 const WAITING_PERSIST_MAX_AGE_MS = 10 * 60 * 1000;
 
+const LOCAL_SOURCE = {
+    hostId: 'local',
+    hostLabel: 'Local',
+    hostKind: 'local',
+} as const;
+
 const COLUMNS: { id: KanbanColumn; title: string }[] = [
     { id: 'idle', title: 'Idle' },
     { id: 'busy', title: 'Busy' },
@@ -30,6 +36,7 @@ interface KanbanBoardProps {
     filterDays: number;
     onProcessHintsChange?: (hints: ProcessHint[]) => void;
     hostSources: ReturnType<typeof useHostSources>;
+    isNodeMode?: boolean;
     showHostFilter?: boolean;
     onHostStatusesChange?: (statuses: SessionHostStatus[]) => void;
 }
@@ -108,6 +115,7 @@ export function KanbanBoard({
     filterDays,
     onProcessHintsChange,
     hostSources,
+    isNodeMode = false,
     showHostFilter = true,
     onHostStatusesChange,
 }: KanbanBoardProps) {
@@ -116,6 +124,16 @@ export function KanbanBoard({
     const [copyFeedback, setCopyFeedback] = useState<'idle' | 'copied' | 'failed'>('idle');
     const [staleSnapshot, setStaleSnapshot] = useState<SessionSnapshot | null>(null);
     const { enabledSources, activeFilter, setActiveFilter, filteredHostIds } = hostSources;
+    const requestSources = useMemo(() => {
+        if (!isNodeMode) {
+            return enabledSources;
+        }
+
+        const localSources = enabledSources.filter(
+            (source) => source.hostKind === 'local' && source.hostId === 'local'
+        );
+        return localSources.length > 0 ? localSources : [LOCAL_SOURCE];
+    }, [enabledSources, isNodeMode]);
 
     const { data: config } = useQuery({
         queryKey: ['opencode-config'],
@@ -133,13 +151,13 @@ export function KanbanBoard({
             : 5000;
 
     const { data, isLoading, error, dataUpdatedAt, refetch, isFetching, failureCount } = useQuery<SessionsResponse>({
-        queryKey: ['sessions', enabledSources],
+        queryKey: ['sessions', requestSources, isNodeMode],
         queryFn: async ({ signal }: { signal: AbortSignal }) => {
             try {
                 const res = await fetch('/api/sessions', { 
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sources: enabledSources }),
+                    body: JSON.stringify({ sources: requestSources }),
                     signal 
                 });
                 if (!res.ok) {
@@ -281,9 +299,9 @@ export function KanbanBoard({
         if (
             data &&
             !activeError &&
-            enabledSources.length === 1 &&
-            enabledSources[0].hostId === 'local' &&
-            enabledSources[0].hostKind === 'local'
+            requestSources.length === 1 &&
+            requestSources[0].hostId === 'local' &&
+            requestSources[0].hostKind === 'local'
         ) {
             return [{
                 hostId: 'local',
@@ -294,7 +312,7 @@ export function KanbanBoard({
         }
 
         return [];
-    }, [activeError, data, data?.hostStatuses, enabledSources, isShowingStaleData, staleSnapshot?.hostStatuses]);
+    }, [activeError, data, data?.hostStatuses, requestSources, isShowingStaleData, staleSnapshot?.hostStatuses]);
 
     useEffect(() => {
         onHostStatusesChange?.(currentHostStatuses);
@@ -751,10 +769,10 @@ export function KanbanBoard({
                                             branch={group.branch}
                                             cards={group.cards}
                                             readOnly={isShowingStaleData || group.readOnly}
-                                            hostLabel={group.hostLabel}
-                                            multipleHostsEnabled={enabledSources.length > 1}
-                                         />
-                                     ))}
+                                             hostLabel={group.hostLabel}
+                                             multipleHostsEnabled={requestSources.length > 1}
+                                          />
+                                      ))}
                                 </div>
                             </div>
                         </div>
