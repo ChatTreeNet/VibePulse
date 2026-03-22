@@ -314,7 +314,15 @@ export function KanbanBoard({
         return [];
     }, [activeError, data, data?.hostStatuses, requestSources, isShowingStaleData, staleSnapshot?.hostStatuses]);
 
+    const previousHostStatusesRef = useRef<string>('');
+
     useEffect(() => {
+        const serializedStatuses = JSON.stringify(currentHostStatuses);
+        if (previousHostStatusesRef.current === serializedStatuses) {
+            return;
+        }
+
+        previousHostStatusesRef.current = serializedStatuses;
         onHostStatusesChange?.(currentHostStatuses);
     }, [currentHostStatuses, onHostStatusesChange]);
 

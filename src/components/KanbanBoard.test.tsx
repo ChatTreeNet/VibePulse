@@ -552,4 +552,26 @@ describe('KanbanBoard Fetch Behavior and Error UX', () => {
             expect(screen.getAllByText('Local duplicate candidate')).toHaveLength(1);
         });
     });
+
+    it('does not repeatedly emit unchanged host statuses', () => {
+        const onHostStatusesChange = vi.fn() as unknown as (statuses: import('./KanbanBoard').SessionHostStatus[]) => void;
+
+        render(
+            <KanbanBoard
+                filterDays={7}
+                hostSources={hostSourcesState}
+                onHostStatusesChange={onHostStatusesChange}
+            />
+        );
+
+        expect(onHostStatusesChange).toHaveBeenCalledTimes(1);
+        expect(onHostStatusesChange).toHaveBeenLastCalledWith([
+            { hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true },
+            { hostId: 'remote-1', hostLabel: 'Remote 1', hostKind: 'remote', online: false, degraded: true },
+        ]);
+
+        fireEvent.click(screen.getByTestId('host-filter-option-all'));
+
+        expect(onHostStatusesChange).toHaveBeenCalledTimes(1);
+    });
 });
