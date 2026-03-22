@@ -22,6 +22,15 @@ type SessionsQueryData = {
     sessions: OpencodeSession[];
 };
 
+type RemoteSseEvent = {
+    source: {
+        hostId: string;
+        hostLabel: string;
+        hostKind: 'remote';
+    };
+    event: OpencodeEvent | { payload: OpencodeEvent; directory: string };
+};
+
 const LOCAL_SOURCE: BuiltInHostSource = {
     hostId: 'local',
     hostLabel: 'Local',
@@ -54,7 +63,7 @@ class MockEventSource {
         this.closed = true;
     }
 
-    emitMessage(payload: OpencodeEvent) {
+    emitMessage(payload: OpencodeEvent | RemoteSseEvent) {
         this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(payload) }));
     }
 
@@ -251,6 +260,122 @@ describe('useOpencodeSync', () => {
         expect(mockLocalStorage['vibepulse:waiting-sessions']).toBeUndefined();
         expect(nextLocalSession?.waitingForUser).toBe(true);
         expect(nextRemoteSession?.waitingForUser).toBe(false);
+
+        unmount();
+    });
+
+    it('applies remote SSE status updates using the remote host namespace', () => {
+        const localSession = createSession({
+            id: 'local:abc',
+            rawSessionId: 'abc',
+            hostId: 'local',
+            hostLabel: 'Local',
+            hostKind: 'local',
+        });
+        const remoteSession = createSession({
+            id: 'remote-1:abc',
+            rawSessionId: 'abc',
+            hostId: 'remote-1',
+            hostLabel: 'Remote 1',
+            hostKind: 'remote',
+            readOnly: true,
+        });
+
+        const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
+            sessions: [localSession, remoteSession],
+        });
+
+        act(() => {
+            eventSource.emitMessage({
+                source: {
+                    hostId: 'remote-1',
+                    hostLabel: 'Remote 1',
+                    hostKind: 'remote',
+                },
+                event: {
+                    payload: {
+                        type: 'session.status',
+                        properties: {
+                            sessionID: 'local:abc',
+                            status: { type: 'busy' },
+                        },
+                        timestamp: Date.now(),
+                    },
+                    directory: '/tmp/remote-project',
+                },
+            });
+        });
+
+        const data = queryClient.getQueryData<SessionsQueryData>(queryKey);
+        const nextLocalSession = data?.sessions.find((session) => session.id === 'local:abc');
+        const nextRemoteSession = data?.sessions.find((session) => session.id === 'remote-1:abc');
+
+        expect(nextLocalSession?.realTimeStatus).toBe('idle');
+        expect(nextRemoteSession?.realTimeStatus).toBe('busy');
+        expect(nextRemoteSession?.readOnly).toBe(true);
+        expect(getSseStatusSnapshot().get('remote-1:abc')?.status).toBe('busy');
+        expect(getSseStatusSnapshot().has('local:abc')).toBe(false);
+
+        unmount();
+    });
+
+    it('keeps remote waiting state out of local persistence keys', () => {
+        const localSession = createSession({
+            id: 'local:abc',
+            rawSessionId: 'abc',
+            hostId: 'local',
+            hostLabel: 'Local',
+            hostKind: 'local',
+        });
+        const remoteSession = createSession({
+            id: 'remote-1:abc',
+            rawSessionId: 'abc',
+            hostId: 'remote-1',
+            hostLabel: 'Remote 1',
+            hostKind: 'remote',
+            readOnly: true,
+        });
+
+        const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
+            sessions: [localSession, remoteSession],
+        });
+
+        act(() => {
+            eventSource.emitMessage({
+                source: {
+                    hostId: 'remote-1',
+                    hostLabel: 'Remote 1',
+                    hostKind: 'remote',
+                },
+                event: {
+                    type: 'question.asked',
+                    properties: {
+                        sessionID: 'local:abc',
+                    },
+                    timestamp: Date.now(),
+                },
+            });
+        });
+
+        const persistedWaiting = JSON.parse(mockLocalStorage[WAITING_STORAGE_KEY] || '{}') as Record<string, boolean>;
+        const data = queryClient.getQueryData<SessionsQueryData>(queryKey);
+        const nextLocalSession = data?.sessions.find((session) => session.id === 'local:abc');
+        const nextRemoteSession = data?.sessions.find((session) => session.id === 'remote-1:abc');
+
+        expect(persistedWaiting).toEqual({});
+        expect(nextLocalSession?.waitingForUser).toBe(false);
+        expect(nextRemoteSession?.waitingForUser).toBe(true);
+
+        act(() => {
+            vi.advanceTimersByTime(1600);
+        });
+
+        const persistedAfterDelay = JSON.parse(mockLocalStorage[WAITING_STORAGE_KEY] || '{}') as Record<string, boolean>;
+        const delayedData = queryClient.getQueryData<SessionsQueryData>(queryKey);
+        const delayedRemoteSession = delayedData?.sessions.find((session) => session.id === 'remote-1:abc');
+
+        expect(persistedAfterDelay).toEqual({});
+        expect(delayedRemoteSession?.waitingForUser).toBe(true);
 
         unmount();
     });

@@ -12,6 +12,23 @@ const ATTENTION_SOUND_DELAY_MS = 250;
 const LOCAL_HOST_ID = 'local';
 const LOCAL_HOST_LABEL = 'Local';
 
+type EventSourceContext = {
+    hostId: string;
+    hostLabel: string;
+    hostKind: 'local' | 'remote';
+};
+
+type HostedOpencodeEvent = {
+    source: EventSourceContext;
+    event: OpencodeEvent | { payload: OpencodeEvent; directory: string };
+};
+
+const LOCAL_EVENT_SOURCE: EventSourceContext = {
+    hostId: LOCAL_HOST_ID,
+    hostLabel: LOCAL_HOST_LABEL,
+    hostKind: 'local',
+};
+
 type SessionsQueryData = {
     sessions: OpencodeSession[];
 };
@@ -80,32 +97,37 @@ function buildOptimisticSession(info: OpencodeSession): OpencodeSession {
     };
 }
 
-function toLocalSourceKey(sessionId: string): string {
+function toSourceKey(hostId: string, sessionId: string): string {
     const rawSessionId = getSessionIdFromSourceKey(sessionId) ?? sessionId;
-    return composeSourceKey(LOCAL_HOST_ID, rawSessionId);
+    return composeSourceKey(hostId, rawSessionId);
 }
 
-function normalizeLocalSession(info: OpencodeSession): OpencodeSession {
-    const rawSessionId = info.rawSessionId ?? getSessionIdFromSourceKey(info.id) ?? info.id;
-    const sourceSessionKey = composeSourceKey(LOCAL_HOST_ID, rawSessionId);
+function normalizeSessionForSource(info: OpencodeSession, source: EventSourceContext): OpencodeSession {
+    const rawSessionId = getSessionIdFromSourceKey(info.rawSessionId ?? info.id) ?? info.rawSessionId ?? info.id;
+    const sourceSessionKey = composeSourceKey(source.hostId, rawSessionId);
+    const rawParentId = info.parentID ? getSessionIdFromSourceKey(info.parentID) ?? info.parentID : info.parentID;
 
     return {
         ...info,
         id: sourceSessionKey,
-        parentID: info.parentID ? toLocalSourceKey(info.parentID) : info.parentID,
-        hostId: LOCAL_HOST_ID,
-        hostLabel: info.hostLabel ?? LOCAL_HOST_LABEL,
-        hostKind: 'local',
+        parentID: rawParentId ? composeSourceKey(source.hostId, rawParentId) : rawParentId,
+        hostId: source.hostId,
+        hostLabel: source.hostLabel,
+        hostKind: source.hostKind,
         rawSessionId,
         sourceSessionKey,
-        readOnly: false,
+        readOnly: source.hostKind === 'remote',
         children: info.children?.map((child) =>
-            normalizeLocalSession({
+            normalizeSessionForSource({
                 ...child,
                 parentID: child.parentID ?? rawSessionId,
-            })
+            }, source)
         ),
     };
+}
+
+function isHostedOpencodeEvent(value: unknown): value is HostedOpencodeEvent {
+    return typeof value === 'object' && value !== null && 'source' in value && 'event' in value;
 }
 
 export function useOpencodeSync() {
@@ -177,38 +199,44 @@ export function useOpencodeSync() {
         });
     }, [updateSessionCaches]);
 
-    const scheduleWaitingActivation = useCallback((id: string) => {
+    const scheduleWaitingActivation = useCallback((id: string, persistToStorage: boolean) => {
         clearWaitingActivation(id);
         const timer = setTimeout(() => {
             waitingActivationTimersRef.current.delete(id);
-            persistWaiting(id, true);
+            if (persistToStorage) {
+                persistWaiting(id, true);
+            }
             setWaitingInCache(id, true);
         }, WAITING_ENTER_DELAY_MS);
         waitingActivationTimersRef.current.set(id, timer);
     }, [clearWaitingActivation, setWaitingInCache]);
 
-    const handleEvent = useCallback((rawEvent: OpencodeEvent | { payload: OpencodeEvent; directory: string }) => {
-        // Unwrap GlobalEvent wrapper if present
-        const event: OpencodeEvent = 'payload' in rawEvent ? rawEvent.payload as OpencodeEvent : rawEvent;
+    const handleEvent = useCallback((rawEvent: OpencodeEvent | { payload: OpencodeEvent; directory: string } | HostedOpencodeEvent) => {
+        const source = isHostedOpencodeEvent(rawEvent) ? rawEvent.source : LOCAL_EVENT_SOURCE;
+        const eventPayload = isHostedOpencodeEvent(rawEvent) ? rawEvent.event : rawEvent;
+        const event: OpencodeEvent = 'payload' in eventPayload ? eventPayload.payload as OpencodeEvent : eventPayload;
+        const sourceSessionId = event.properties?.sessionID ? toSourceKey(source.hostId, event.properties.sessionID) : null;
+        const shouldPersistWaiting = source.hostId === LOCAL_HOST_ID;
+
         if (!event?.type) {
             scheduleRefetch();
             return;
         }
-        const sessionId = event.properties?.sessionID;
-        const localSessionId = sessionId ? toLocalSourceKey(sessionId) : null;
         const isAskEvent = event.type === 'question.asked' || event.type === 'permission.asked';
         const isResolvedInteractionEvent =
             event.type === 'question.replied' ||
             event.type === 'question.rejected' ||
             event.type === 'permission.replied';
 
-        if (localSessionId && isAskEvent) {
-            persistWaiting(localSessionId, true);
+        if (sourceSessionId && isAskEvent && shouldPersistWaiting) {
+            persistWaiting(sourceSessionId, true);
         }
 
-        if (localSessionId && isResolvedInteractionEvent) {
-            clearWaitingActivation(localSessionId);
-            persistWaiting(localSessionId, false);
+        if (sourceSessionId && isResolvedInteractionEvent) {
+            clearWaitingActivation(sourceSessionId);
+            if (shouldPersistWaiting) {
+                persistWaiting(sourceSessionId, false);
+            }
         }
         
         const handledEvents = [
@@ -242,7 +270,7 @@ export function useOpencodeSync() {
                 case 'session.created': {
                     const info = event.properties?.info as OpencodeSession | undefined;
                     if (!info) { scheduleRefetch(); return old; }
-                    const normalizedInfo = normalizeLocalSession(info);
+                    const normalizedInfo = normalizeSessionForSource(info, source);
                     
                     if (normalizedInfo.parentID) {
                         let updated = false;
@@ -314,11 +342,11 @@ export function useOpencodeSync() {
                     const info = event.properties?.info as OpencodeSession | undefined;
                     const id = info?.id ?? event.properties?.sessionID;
                     if (!id) { scheduleRefetch(); return old; }
-                    const localId = toLocalSourceKey(id);
-                    return { ...old, sessions: old.sessions.filter(s => s.id !== localId) };
+                    const sourceKey = toSourceKey(source.hostId, id);
+                    return { ...old, sessions: old.sessions.filter(s => s.id !== sourceKey) };
                 }
                 default: {
-                    if (!localSessionId) {
+                    if (!sourceSessionId) {
                         scheduleRefetch();
                         return old;
                     }
@@ -336,13 +364,15 @@ export function useOpencodeSync() {
                                 }
                                 if (statusType === 'idle') {
                                     clearWaitingActivation(s.id);
-                                    if (!isParentSession) {
+                                    if (!isParentSession && shouldPersistWaiting) {
                                         persistWaiting(s.id, false);
                                     }
                                 }
                                 if (statusType === 'retry') {
                                     clearWaitingActivation(s.id);
-                                    persistWaiting(s.id, true);
+                                    if (shouldPersistWaiting) {
+                                        persistWaiting(s.id, true);
+                                    }
                                 }
                                 if (statusType === 'busy') {
                                     clearWaitingActivation(s.id);
@@ -368,22 +398,26 @@ export function useOpencodeSync() {
                                 if (!initialLoadRef.current) {
                                     setTimeout(() => playAttentionSound(), ATTENTION_SOUND_DELAY_MS);
                                 }
-                                persistWaiting(localSessionId, true);
-                                scheduleWaitingActivation(localSessionId);
+                                if (shouldPersistWaiting) {
+                                    persistWaiting(sourceSessionId, true);
+                                }
+                                scheduleWaitingActivation(sourceSessionId, shouldPersistWaiting);
                                 return {
                                     ...s,
                                     time: { ...(s.time || {}), archived: undefined },
                                     waitingForUser: true,
                                 };
                             case 'permission.updated':
-                                clearWaitingActivation(localSessionId);
+                                clearWaitingActivation(sourceSessionId);
                                 scheduleRefetch();
                                 return s;
                             case 'question.replied':
                             case 'question.rejected':
                             case 'permission.replied':
-                                clearWaitingActivation(localSessionId);
-                                persistWaiting(localSessionId, false);
+                                clearWaitingActivation(sourceSessionId);
+                                if (shouldPersistWaiting) {
+                                    persistWaiting(sourceSessionId, false);
+                                }
                                 return { ...s, waitingForUser: false };
                             case 'session.archived':
                                 return { 
@@ -397,24 +431,24 @@ export function useOpencodeSync() {
 
                     let found = false;
                     const newSessions = old.sessions.map((session: OpencodeSession) => {
-                        if (session.id === localSessionId) {
+                        if (session.id === sourceSessionId) {
                             found = true;
                             return applyEvent(session);
                         }
-                        if (session.children?.some(c => c.id === localSessionId)) {
+                        if (session.children?.some(c => c.id === sourceSessionId)) {
                             found = true;
                             // If the event is a status update to 'idle', we should filter the child out
                             // so it disappears from the UI without needing a full refetch, matching backend logic.
                             if (event.type === 'session.status' && event.properties?.status?.type === 'idle') {
                                 return {
                                     ...session,
-                                    children: session.children.filter(c => c.id !== localSessionId)
+                                    children: session.children.filter(c => c.id !== sourceSessionId)
                                 };
                             }
                             
                             return {
                                 ...session,
-                                children: session.children.map(c => c.id === localSessionId ? applyEvent(c) : c)
+                                children: session.children.map(c => c.id === sourceSessionId ? applyEvent(c) : c)
                             };
                         }
                         return session;
@@ -473,7 +507,7 @@ export function useOpencodeSync() {
 
             eventSource.onmessage = (event) => {
                 try {
-                    const data = JSON.parse(event.data) as OpencodeEvent;
+                    const data = JSON.parse(event.data) as OpencodeEvent | HostedOpencodeEvent;
                     handleEvent(data);
                     reconnectAttemptsRef.current = 0; // Reset on success
                 } catch (err) {
