@@ -121,7 +121,7 @@ describe('/api/nodes route', () => {
     expect(duplicateData.error).toContain('already exists');
   });
 
-  it('rejects malformed URLs and blank token input', async () => {
+  it('rejects malformed URLs and allows blank token input', async () => {
     const malformedResponse = await route.POST(
       new Request('http://localhost/api/nodes', {
         method: 'POST',
@@ -152,8 +152,16 @@ describe('/api/nodes route', () => {
     );
     const blankTokenData = await blankTokenResponse.json();
 
-    expect(blankTokenResponse.status).toBe(400);
-    expect(blankTokenData.code).toBe('token_required');
+    expect(blankTokenResponse.status).toBe(201);
+    expect(blankTokenData.node).toMatchObject({
+      nodeLabel: 'Blank Token Node',
+      baseUrl: 'https://blank-token.example.com',
+      tokenConfigured: false,
+    });
+
+    const stored = await nodeRegistry.listNodeRecords();
+    const blankTokenNode = stored.find((node) => node.baseUrl === 'https://blank-token.example.com');
+    expect(blankTokenNode?.token).toBe('');
   });
 
   it('updates, toggles, and deletes a node', async () => {

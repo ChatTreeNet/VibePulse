@@ -47,7 +47,7 @@ export type NodeRegistryErrorCode =
   | 'node_not_found'
   | 'node_label_required'
   | 'node_id_required'
-  | 'token_required'
+  | 'invalid_token'
   | 'invalid_enabled'
   | 'invalid_base_url'
   | 'duplicate_base_url'
@@ -116,7 +116,7 @@ function normalizeStoredNode(node: unknown): StoredNodeRecord | null {
   const nodeId = candidate.nodeId.trim();
   const nodeLabel = candidate.nodeLabel.trim();
 
-  if (!nodeId || !nodeLabel || !candidate.token.trim()) {
+  if (!nodeId || !nodeLabel) {
     return null;
   }
 
@@ -221,10 +221,15 @@ function assertNodeId(nodeId: unknown): string {
   return nodeId.trim();
 }
 
-function assertToken(token: unknown): string {
-  if (typeof token !== 'string' || token.trim() === '') {
-    throw new NodeRegistryError('token_required', 'token is required and must be a non-empty string');
+function normalizeOptionalToken(token: unknown): string {
+  if (token === undefined || token === null) {
+    return '';
   }
+
+  if (typeof token !== 'string') {
+    throw new NodeRegistryError('invalid_token', 'token must be a string when provided');
+  }
+
   return token.trim();
 }
 
@@ -274,7 +279,7 @@ export async function listNodes(): Promise<PublicNodeRecord[]> {
 export interface CreateNodeInput {
   nodeLabel: string;
   baseUrl: string;
-  token: string;
+  token?: string;
   enabled?: boolean;
 }
 
@@ -288,7 +293,7 @@ export interface UpdateNodeInput {
 export async function createNode(input: CreateNodeInput): Promise<PublicNodeRecord> {
   const nodeLabel = assertNodeLabel(input.nodeLabel);
   const baseUrl = assertAndNormalizeBaseUrl(input.baseUrl);
-  const token = assertToken(input.token);
+  const token = normalizeOptionalToken(input.token);
   const enabled = input.enabled === undefined ? true : assertEnabled(input.enabled);
 
   const registry = await readRegistryFile();
@@ -334,7 +339,7 @@ export async function updateNode(nodeIdInput: unknown, updates: UpdateNodeInput)
 
   const nextNodeLabel = updates.nodeLabel === undefined ? current.nodeLabel : assertNodeLabel(updates.nodeLabel);
   const nextBaseUrl = updates.baseUrl === undefined ? current.baseUrl : assertAndNormalizeBaseUrl(updates.baseUrl);
-  const nextToken = updates.token === undefined ? current.token : assertToken(updates.token);
+  const nextToken = updates.token === undefined ? current.token : normalizeOptionalToken(updates.token);
   const nextEnabled = updates.enabled === undefined ? current.enabled : assertEnabled(updates.enabled);
 
   assertUniqueBaseUrl(registry.nodes, nextBaseUrl, current.nodeId);

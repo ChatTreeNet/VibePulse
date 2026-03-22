@@ -52,6 +52,30 @@ describe('nodeRegistry', () => {
     expect(persistedRaw.nodes[0].token).toBe('secret-token');
   });
 
+  it('allows creating node records without a token and marks tokenConfigured false', async () => {
+    const created = await registry.createNode({
+      nodeLabel: 'Tokenless Node',
+      baseUrl: 'https://tokenless.example.com/',
+      enabled: true,
+    });
+
+    expect(created).toMatchObject({
+      nodeLabel: 'Tokenless Node',
+      baseUrl: 'https://tokenless.example.com',
+      enabled: true,
+      tokenConfigured: false,
+    });
+
+    const persistedRaw = parse(
+      await readFile(registry.NODE_REGISTRY_PATH, 'utf-8'),
+      null,
+      false
+    ) as unknown as {
+      nodes: Array<{ token: string }>;
+    };
+    expect(persistedRaw.nodes[0].token).toBe('');
+  });
+
   it('rejects duplicate normalized baseUrl values', async () => {
     await registry.createNode({
       nodeLabel: 'Node A',
