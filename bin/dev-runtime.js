@@ -3,22 +3,36 @@
 const { spawn } = require('child_process');
 
 const runtimeRoleEnvVar = 'VIBEPULSE_RUNTIME_ROLE';
+const nodeRuntimeFlag = '--serve';
 const defaultPort = process.env.PORT || '3456';
 
-function resolveRole(value) {
-  if (value === 'hub' || value === 'node') {
-    return value;
+function parseRuntimeArgs(argv) {
+  if (!Array.isArray(argv)) {
+    throw new TypeError('Runtime arguments must be provided as an array.');
   }
 
-  throw new Error('Usage: node bin/dev-runtime.js <hub|node> [next dev args...]');
+  if (argv.length === 0) {
+    return { runtimeRole: 'hub', nextArgs: [] };
+  }
+
+  const [firstArg, ...restArgs] = argv;
+  if (firstArg === 'hub' || firstArg === 'node') {
+    return { runtimeRole: firstArg, nextArgs: restArgs };
+  }
+
+  if (firstArg === nodeRuntimeFlag) {
+    return { runtimeRole: 'node', nextArgs: restArgs };
+  }
+
+  return { runtimeRole: 'hub', nextArgs: argv };
 }
 
 function main() {
-  const [, , roleArg, ...extraArgs] = process.argv;
-  const runtimeRole = resolveRole(roleArg);
+  const [, , ...runtimeArgs] = process.argv;
+  const { runtimeRole, nextArgs } = parseRuntimeArgs(runtimeArgs);
   const nextBin = require.resolve('next/dist/bin/next');
 
-  const child = spawn(process.execPath, [nextBin, 'dev', '-p', defaultPort, ...extraArgs], {
+  const child = spawn(process.execPath, [nextBin, 'dev', '-p', defaultPort, ...nextArgs], {
     stdio: 'inherit',
     env: {
       ...process.env,
