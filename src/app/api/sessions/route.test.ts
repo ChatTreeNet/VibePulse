@@ -853,6 +853,104 @@ describe('/api/sessions route source handling', () => {
     });
   });
 
+  it('degrades and skips malformed remote session ids instead of returning 500', async () => {
+    setupLocalSessionsMocks();
+    mockListNodeRecords.mockResolvedValue([
+      {
+        nodeId: 'remote-malformed-session-id',
+        nodeLabel: 'Remote Malformed Session Id',
+        baseUrl: 'https://remote-malformed-session-id.test',
+        enabled: true,
+        token: 'malformed-session-id-token',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://remote-malformed-session-id.test/api/node/sessions') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            role: 'node',
+            protocolVersion: '1',
+            source: { hostId: 'local', hostLabel: 'Local', hostKind: 'local' },
+            upstream: { kind: 'opencode', reachable: true },
+            sessions: [
+              {
+                id: 'local:bad:session:id',
+                rawSessionId: 'bad:session:id',
+                title: 'Malformed Session',
+                directory: '/remote/malformed',
+                projectName: 'malformed',
+                branch: null,
+                realTimeStatus: 'idle',
+                waitingForUser: false,
+                time: { created: 2_000, updated: Date.now() - 800 },
+                children: [],
+              },
+            ],
+            processHints: [],
+            hosts: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+            hostStatuses: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      throw new Error(`Unexpected node sessions URL: ${url}`);
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(
+      new Request('http://localhost/api/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sources: [
+            {
+              hostId: 'remote-malformed-session-id',
+              hostLabel: 'Remote Malformed Session Id',
+              hostKind: 'remote',
+              baseUrl: 'https://remote-malformed-session-id.test',
+              enabled: true,
+            },
+          ],
+        }),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({
+      sessions: [],
+      processHints: [],
+      hosts: [
+        {
+          hostId: 'remote-malformed-session-id',
+          hostLabel: 'Remote Malformed Session Id',
+          hostKind: 'remote',
+          online: true,
+          degraded: true,
+          reason: 'node_payload_invalid_session_id',
+          baseUrl: 'https://remote-malformed-session-id.test',
+        },
+      ],
+      hostStatuses: [
+        {
+          hostId: 'remote-malformed-session-id',
+          hostLabel: 'Remote Malformed Session Id',
+          hostKind: 'remote',
+          online: true,
+          degraded: true,
+          reason: 'node_payload_invalid_session_id',
+          baseUrl: 'https://remote-malformed-session-id.test',
+        },
+      ],
+      degraded: true,
+    });
+  });
+
   it('returns 400 for invalid remote source entries', async () => {
     const invalidRemoteUrlResponse = await POST(
       new Request('http://localhost/api/sessions', {

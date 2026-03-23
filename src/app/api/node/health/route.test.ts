@@ -167,4 +167,24 @@ describe('/api/node/health', () => {
       },
     });
   });
+
+  it('returns healthy when discovery partially timed out but usable ports exist', async () => {
+    mockDiscoverOpencodePortsWithMeta.mockReturnValue({ ports: [7777], timedOut: true });
+
+    const response = await GET(new Request('http://localhost/api/node/health', {
+      headers: createNodeRequestHeaders('shared-secret'),
+    }));
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({
+      ok: true,
+      role: 'node',
+      protocolVersion: '1',
+      upstream: {
+        kind: 'opencode',
+        reachable: true,
+      },
+    });
+  });
 });

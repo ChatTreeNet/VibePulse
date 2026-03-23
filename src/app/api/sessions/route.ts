@@ -770,15 +770,30 @@ function toRawSessionId(value: string): string {
   }
 }
 
-function addHostMetadataToChildEntry(child: ChildEntry, source: SessionSource): ChildEntry {
+function composeSourceKeySafely(hostId: string, sessionId: string): string | undefined {
+  try {
+    return composeSourceKey(hostId, sessionId);
+  } catch {
+    return undefined;
+  }
+}
+
+function addHostMetadataToChildEntry(child: ChildEntry, source: SessionSource): ChildEntry | null {
   const rawSessionId = child.rawSessionId ?? toRawSessionId(child.id);
   const rawParentId = child.parentID ? toRawSessionId(child.parentID) : child.parentID;
-  const sourceSessionKey = composeSourceKey(source.hostId, rawSessionId);
+  const sourceSessionKey = composeSourceKeySafely(source.hostId, rawSessionId);
+  if (!sourceSessionKey) {
+    return null;
+  }
+
+  const sourceParentKey = rawParentId
+    ? (composeSourceKeySafely(source.hostId, rawParentId) ?? undefined)
+    : undefined;
 
   return {
     ...child,
     id: sourceSessionKey,
-    parentID: rawParentId ? composeSourceKey(source.hostId, rawParentId) : rawParentId,
+    parentID: sourceParentKey,
     hostId: source.hostId,
     hostLabel: source.hostLabel,
     hostKind: source.hostKind,
@@ -788,22 +803,36 @@ function addHostMetadataToChildEntry(child: ChildEntry, source: SessionSource): 
   };
 }
 
-function addHostMetadataToSession(session: EnrichedSession, source: SessionSource): EnrichedSession {
+function addHostMetadataToSession(session: EnrichedSession, source: SessionSource): EnrichedSession | null {
   const rawSessionId = session.rawSessionId ?? toRawSessionId(session.id);
   const rawParentId = session.parentID ? toRawSessionId(session.parentID) : session.parentID;
-  const sourceSessionKey = composeSourceKey(source.hostId, rawSessionId);
+  const sourceSessionKey = composeSourceKeySafely(source.hostId, rawSessionId);
+  if (!sourceSessionKey) {
+    return null;
+  }
+
+  const sourceParentKey = rawParentId
+    ? (composeSourceKeySafely(source.hostId, rawParentId) ?? undefined)
+    : undefined;
+  const children: ChildEntry[] = [];
+  for (const child of session.children) {
+    const enrichedChild = addHostMetadataToChildEntry(child, source);
+    if (enrichedChild) {
+      children.push(enrichedChild);
+    }
+  }
 
   return {
     ...session,
     id: sourceSessionKey,
-    parentID: rawParentId ? composeSourceKey(source.hostId, rawParentId) : rawParentId,
+    parentID: sourceParentKey,
     hostId: source.hostId,
     hostLabel: source.hostLabel,
     hostKind: source.hostKind,
     rawSessionId,
     sourceSessionKey,
     readOnly: source.hostKind === 'remote',
-    children: session.children.map((child) => addHostMetadataToChildEntry(child, source)),
+    children,
   };
 }
 
@@ -812,9 +841,24 @@ function addHostMetadataToPayload(payload: Record<string, unknown>, source: Sess
     return payload;
   }
 
+  const sessions: EnrichedSession[] = [];
+  let droppedSessions = 0;
+  for (const session of payload['sessions'] as EnrichedSession[]) {
+    const enrichedSession = addHostMetadataToSession(session, source);
+    if (enrichedSession) {
+      sessions.push(enrichedSession);
+      continue;
+    }
+
+    droppedSessions += 1;
+  }
+
+  const payloadDegraded = payload['degraded'] === true;
+
   return {
     ...payload,
-    sessions: (payload['sessions'] as EnrichedSession[]).map((session) => addHostMetadataToSession(session, source)),
+    sessions,
+    ...(payloadDegraded || droppedSessions > 0 ? { degraded: true } : {}),
   };
 }
 
@@ -1574,11 +1618,30 @@ async function handlePost(request: Request) {
     };
     const payload = readSuccessPayload(result);
 
-    hostStatuses.push(toHostStatus(source, meta));
+    let sourceMetadataIssue = false;
     aggregateProcessHints.push(...payload.processHints);
-    aggregateSessions.push(...payload.sessions.map((session) => addHostMetadataToSession(session, source)));
 
-    if (!meta.online || meta.degraded || payload.degraded) {
+    for (const session of payload.sessions) {
+      const enrichedSession = addHostMetadataToSession(session, source);
+      if (enrichedSession) {
+        aggregateSessions.push(enrichedSession);
+        continue;
+      }
+
+      sourceMetadataIssue = true;
+    }
+
+    const hostMeta = sourceMetadataIssue
+      ? {
+          ...meta,
+          degraded: true,
+          reason: meta.reason ?? 'node_payload_invalid_session_id',
+        }
+      : meta;
+
+    hostStatuses.push(toHostStatus(source, hostMeta));
+
+    if (!hostMeta.online || hostMeta.degraded || payload.degraded) {
       degraded = true;
     }
   }

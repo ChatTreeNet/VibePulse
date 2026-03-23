@@ -16,17 +16,17 @@ export async function GET(request: Request) {
 
   const discovery = discoverOpencodePortsWithMeta();
 
-  if (discovery.timedOut) {
-    return createNodeFailureResponse('upstream_timeout', {
-      role: 'node',
-      upstream: {
-        kind: 'opencode',
-        reachable: false,
-      },
-    });
-  }
-
   if (discovery.ports.length === 0) {
+    if (discovery.timedOut) {
+      return createNodeFailureResponse('upstream_timeout', {
+        role: 'node',
+        upstream: {
+          kind: 'opencode',
+          reachable: false,
+        },
+      });
+    }
+
     return createNodeFailureResponse('upstream_unreachable', {
       role: 'node',
       upstream: {
