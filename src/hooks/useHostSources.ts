@@ -101,6 +101,8 @@ export function useHostSources(options: UseHostSourcesOptions = {}): UseHostSour
     [activeFilterState, remoteHosts]
   );
 
+  const canPersistNormalizedFilter = localOnlyRuntime || (!isLoading && !error);
+
   useEffect(() => {
     const syncPersistedState = () => {
       setActiveFilterState(getHostFilter());
@@ -120,8 +122,12 @@ export function useHostSources(options: UseHostSourcesOptions = {}): UseHostSour
       return;
     }
 
+    if (!canPersistNormalizedFilter) {
+      return;
+    }
+
     persistFilter(activeFilter);
-  }, [activeFilter, activeFilterState]);
+  }, [activeFilter, activeFilterState, canPersistNormalizedFilter]);
 
   const setActiveFilter = useCallback(
     (filter: HostFilterValue) => {

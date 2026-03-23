@@ -64,7 +64,9 @@ describe('useHostSources', () => {
         delete mockLocalStorage[key];
       },
       clear: () => {
-        Object.keys(mockLocalStorage).forEach((key) => delete mockLocalStorage[key]);
+        Object.keys(mockLocalStorage).forEach((key) => {
+          delete mockLocalStorage[key];
+        });
       },
     });
 
@@ -340,6 +342,41 @@ describe('useHostSources', () => {
       expect(getCurrentValue().filteredHostIds).toBeNull();
     });
     expect(JSON.parse(mockLocalStorage[STORAGE_KEY_FILTER])).toBe('all');
+  });
+
+  it('does not overwrite a persisted remote filter before remote hosts load', async () => {
+    saveHostFilter('remote-1');
+
+    let resolveFetch:
+      | ((value: { ok: boolean; json: () => Promise<{ nodes: Array<{ nodeId: string; nodeLabel: string; baseUrl: string; enabled: boolean }> }> }) => void)
+      | null = null;
+
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    const { getCurrentValue } = renderUseHostSources();
+
+    expect(JSON.parse(mockLocalStorage[STORAGE_KEY_FILTER])).toBe('remote-1');
+    expect(getCurrentValue().activeFilter).toBe('all');
+
+    await act(async () => {
+      resolveFetch?.({
+        ok: true,
+        json: async () => ({
+          nodes: [{ nodeId: 'remote-1', nodeLabel: 'Remote 1', baseUrl: 'https://one.example.com', enabled: true }],
+        }),
+      });
+    });
+
+    await waitFor(() => {
+      expect(getCurrentValue().activeFilter).toBe('remote-1');
+    });
+
+    expect(JSON.parse(mockLocalStorage[STORAGE_KEY_FILTER])).toBe('remote-1');
   });
 
   it('stays local-only and does not fetch /api/nodes in node mode', async () => {

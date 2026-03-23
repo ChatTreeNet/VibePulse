@@ -888,6 +888,35 @@ async function readJsonResponseBody(response: Response): Promise<unknown> {
   }
 }
 
+async function fetchNodeSessionsWithTimeout(
+  source: RemoteHostConfig & { hostKind: 'remote' },
+  nodeRecord: StoredNodeRecord
+): Promise<Response> {
+  const timeoutLabel = `node.sessions(${source.hostId})`;
+  const abortController = new AbortController();
+  let timedOut = false;
+  const timeoutHandle = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, nodeSessionsTimeoutMs);
+
+  try {
+    return await fetch(`${nodeRecord.baseUrl}/api/node/sessions`, {
+      method: 'GET',
+      headers: createNodeRequestHeaders(nodeRecord.token),
+      signal: abortController.signal,
+    });
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(`${timeoutLabel} timed out after ${nodeSessionsTimeoutMs}ms`);
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
 async function getRemoteNodeSessionsResult(
   source: RemoteHostConfig & { hostKind: 'remote' },
   nodeRecord: StoredNodeRecord | undefined
@@ -915,14 +944,7 @@ async function getRemoteNodeSessionsResult(
   }
 
   try {
-    const response = await withTimeout(
-      fetch(`${nodeRecord.baseUrl}/api/node/sessions`, {
-        method: 'GET',
-        headers: createNodeRequestHeaders(nodeRecord.token),
-      }),
-      nodeSessionsTimeoutMs,
-      `node.sessions(${source.hostId})`
-    );
+    const response = await fetchNodeSessionsWithTimeout(source, nodeRecord);
     const body = await readJsonResponseBody(response);
 
     if (!response.ok) {
