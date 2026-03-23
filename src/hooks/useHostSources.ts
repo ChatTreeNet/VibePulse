@@ -88,7 +88,7 @@ export function useHostSources(options: UseHostSourcesOptions = {}): UseHostSour
   const runtimeRole = options.runtimeRole ?? 'hub';
   const localOnlyRuntime = runtimeRole !== 'hub';
   const queryClient = useQueryClient();
-  const [activeFilter, setActiveFilterState] = useState<HostFilterValue>('all');
+  const [activeFilterState, setActiveFilterState] = useState<HostFilterValue>(() => getHostFilter());
 
   const { data: remoteHosts = [], isLoading, error } = useQuery<RemoteHostConfig[], Error>({
     queryKey: ['nodes'],
@@ -96,21 +96,15 @@ export function useHostSources(options: UseHostSourcesOptions = {}): UseHostSour
     enabled: !localOnlyRuntime,
   });
 
+  const activeFilter = useMemo<HostFilterValue>(
+    () => normalizeFilter(activeFilterState, remoteHosts),
+    [activeFilterState, remoteHosts]
+  );
+
   useEffect(() => {
     const syncPersistedState = () => {
-      const persistedFilter = getHostFilter();
-      const normalizedFilter = normalizeFilter(persistedFilter, remoteHosts);
-      
-      if (normalizedFilter !== activeFilter) {
-          setActiveFilterState(normalizedFilter);
-      }
-      
-      if (normalizedFilter !== persistedFilter) {
-          saveHostFilter(normalizedFilter);
-      }
+      setActiveFilterState(getHostFilter());
     };
-
-    syncPersistedState();
 
     window.addEventListener(HOST_SOURCES_CHANGED_EVENT, syncPersistedState);
     window.addEventListener('storage', syncPersistedState);
@@ -119,17 +113,15 @@ export function useHostSources(options: UseHostSourcesOptions = {}): UseHostSour
       window.removeEventListener(HOST_SOURCES_CHANGED_EVENT, syncPersistedState);
       window.removeEventListener('storage', syncPersistedState);
     };
-  }, [remoteHosts, activeFilter]);
+  }, []);
 
   useEffect(() => {
-    const normalizedFilter = normalizeFilter(activeFilter, remoteHosts);
-    if (normalizedFilter === activeFilter) {
+    if (activeFilter === activeFilterState) {
       return;
     }
 
-    setActiveFilterState(normalizedFilter);
-    saveHostFilter(normalizedFilter);
-  }, [activeFilter, remoteHosts]);
+    persistFilter(activeFilter);
+  }, [activeFilter, activeFilterState]);
 
   const setActiveFilter = useCallback(
     (filter: HostFilterValue) => {
@@ -165,7 +157,13 @@ export function useHostSources(options: UseHostSourcesOptions = {}): UseHostSour
 
   const editMutation = useMutation({
     mutationFn: async ({ hostId, nextHost }: { hostId: string; nextHost: RemoteHostConfig & { token?: string } }) => {
-      const payload: any = {
+      const payload: {
+        nodeId: string;
+        nodeLabel: string;
+        baseUrl: string;
+        enabled: boolean;
+        token?: string;
+      } = {
         nodeId: hostId,
         nodeLabel: nextHost.hostLabel,
         baseUrl: nextHost.baseUrl,
