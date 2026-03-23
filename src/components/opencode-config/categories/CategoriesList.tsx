@@ -112,6 +112,15 @@ function formatVariant(variant?: string): string {
   return variant;
 }
 
+function formatProvider(model?: string): string {
+  if (!model) return 'Default provider';
+
+  const slashIndex = model.indexOf('/');
+  if (slashIndex === -1) return 'Unknown provider';
+
+  return model.substring(0, slashIndex);
+}
+
 /** Format model display */
 function formatModel(model?: string): string {
   if (!model) return 'Default model';
@@ -190,6 +199,10 @@ function CategoryCard({
           {info.description}
         </p>
         <div className="mt-2 flex items-center gap-3 text-xs">
+          <span className="text-zinc-600 dark:text-zinc-400">
+            <span className="text-zinc-400 dark:text-zinc-500">Provider:</span>{' '}
+            {formatProvider(config.model)}
+          </span>
           <span className="text-zinc-600 dark:text-zinc-400">
             <span className="text-zinc-400 dark:text-zinc-500">Model:</span>{' '}
             {formatModel(config.model)}

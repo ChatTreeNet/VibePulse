@@ -4,8 +4,16 @@ import userEvent from '@testing-library/user-event';
 import { CategoriesManager } from './CategoriesManager';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-const mockFetch = vi.fn();
+const mockFetch = vi.fn<typeof fetch>();
 global.fetch = mockFetch;
+
+function jsonResponse(data: unknown): Response {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => data,
+  } as Response;
+}
 
 describe('CategoriesManager', () => {
   let queryClient: QueryClient;
@@ -20,16 +28,22 @@ describe('CategoriesManager', () => {
   });
 
   it('should load and display category configurations correctly', async () => {
-    mockFetch.mockResolvedValueOnce({
-      json: async () => ({
-        agents: {},
-        categories: {
-          coding: { model: 'claude', variant: 'high' },
-          writing: { model: 'gpt-4', variant: 'max' },
-        },
-      }),
-      ok: true,
-    });
+    mockFetch
+      .mockResolvedValueOnce(
+        jsonResponse({
+          agents: {},
+          categories: {
+            'visual-engineering': { model: 'google/gemini-3.1-pro', variant: 'high' },
+            writing: { model: 'openai/gpt-5.4', variant: 'medium' },
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          models: ['google/gemini-3.1-pro', 'openai/gpt-5.4'],
+          source: 'test',
+        })
+      );
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -41,34 +55,34 @@ describe('CategoriesManager', () => {
       expect(screen.getByText('Ultrabrain')).toBeInTheDocument();
       expect(screen.getByText('Visual Engineering')).toBeInTheDocument();
     });
+
+    expect(screen.getAllByText('Provider:').length).toBeGreaterThan(0);
+    expect(screen.getByText('google')).toBeInTheDocument();
   });
 
   it('should save category correctly after editing', async () => {
     const user = userEvent.setup();
 
     mockFetch
-      .mockResolvedValueOnce({
-        json: async () => ({
+      .mockResolvedValueOnce(
+        jsonResponse({
           agents: {},
           categories: { ultrabrain: { model: 'claude' } },
-        }),
-        ok: true,
-      })
-      .mockResolvedValueOnce({
-        json: async () => ({
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
           models: ['anthropic/claude-3-5-sonnet', 'openai/gpt-4'],
-          source: 'test'
-        }),
-        ok: true,
-      })
-      .mockResolvedValueOnce({ json: async () => ({ success: true }), ok: true })
-      .mockResolvedValueOnce({
-        json: async () => ({
+          source: 'test',
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ success: true }))
+      .mockResolvedValueOnce(
+        jsonResponse({
           agents: {},
           categories: { ultrabrain: { model: 'anthropic/claude-3-5-sonnet' } },
-        }),
-        ok: true,
-      });
+        })
+      );
 
     render(
       <QueryClientProvider client={queryClient}>

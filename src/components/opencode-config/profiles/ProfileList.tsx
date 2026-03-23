@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Search, Plus, Users, AlertTriangle, X, Check } from 'lucide-react';
+import { Search, Plus, Users, AlertTriangle, X, Check, Download, Upload } from 'lucide-react';
 import { Profile } from '../../../types/opencodeConfig';
 
 interface ProfileListProps {
@@ -17,6 +17,8 @@ interface ProfileListProps {
   onEdit: (profile: Profile) => void;
   /** Callback when Delete button is clicked */
   onDelete: (profileId: string) => void;
+  onExport: (profile: Profile) => void;
+  onImport: (file: File) => void;
   /** Callback when Create New button is clicked */
   onCreateNew: () => void;
 }
@@ -36,10 +38,13 @@ export function ProfileList({
   onApply,
   onEdit,
   onDelete,
+  onExport,
+  onImport,
   onCreateNew,
 }: ProfileListProps) {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [confirmingProfile, setConfirmingProfile] = React.useState<Profile | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const handleApplyWithConfirm = (profile: Profile, isApplied: boolean) => {
     if (isApplied) {
@@ -58,6 +63,19 @@ export function ProfileList({
 
   const handleCancelConfirm = () => {
     setConfirmingProfile(null);
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleImportChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      onImport(file);
+    }
+
+    event.target.value = '';
   };
 
   // Filter profiles based on search query (name or description)
@@ -118,6 +136,22 @@ export function ProfileList({
             {isFiltering ? `${filteredCount} of ${totalCount}` : `${totalCount}`} profiles
           </span>
         </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="sr-only"
+          onChange={handleImportChange}
+          aria-label="Import profile file"
+        />
+        <button
+          type="button"
+          onClick={handleImportClick}
+          className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors"
+        >
+          <Upload className="h-4 w-4" />
+          Import File
+        </button>
       </div>
 
       {/* Empty state */}
@@ -162,6 +196,7 @@ export function ProfileList({
                     onApply={() => handleApplyWithConfirm(profile, profile.id === appliedProfileId)}
                     onEdit={() => onEdit(profile)}
                     onDelete={() => onDelete(profile.id)}
+                    onExport={() => onExport(profile)}
                   />
                 ))}
               </div>
@@ -189,6 +224,7 @@ export function ProfileList({
                     onApply={() => handleApplyWithConfirm(profile, profile.id === appliedProfileId)}
                     onEdit={() => onEdit(profile)}
                     onDelete={() => onDelete(profile.id)}
+                    onExport={() => onExport(profile)}
                   />
                 ))}
               </div>
@@ -216,6 +252,7 @@ export function ProfileList({
                     onApply={() => handleApplyWithConfirm(profile, profile.id === appliedProfileId)}
                     onEdit={() => onEdit(profile)}
                     onDelete={() => onDelete(profile.id)}
+                    onExport={() => onExport(profile)}
                   />
                 ))}
               </div>
@@ -291,6 +328,7 @@ interface ProfileCardProps {
   onApply: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onExport: () => void;
 }
 
 // Inline ProfileCard implementation for completeness
@@ -301,6 +339,7 @@ function ProfileCard({
   onApply,
   onEdit,
   onDelete,
+  onExport,
 }: ProfileCardProps) {
   return (
     <div
@@ -363,6 +402,15 @@ function ProfileCard({
           {isApplied ? 'Reset' : isActive ? 'Active' : 'Apply'}
         </button>
         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            type="button"
+            onClick={onExport}
+            className="p-1.5 rounded-md text-zinc-400 hover:text-teal-600 hover:bg-teal-50 dark:text-zinc-500 dark:hover:text-teal-300 dark:hover:bg-teal-900/20 transition-colors"
+            aria-label={`Export ${profile.name}`}
+            title={`Export ${profile.name}`}
+          >
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
           <button
             type="button"
             onClick={onEdit}
