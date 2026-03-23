@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getSseStatusSnapshot } from '@/hooks/useOpencodeSync';
 import { useHostSources } from '@/hooks/useHostSources';
 import { composeSourceKey } from '@/lib/hostIdentity';
+import { getHostAccentTextClass } from '@/lib/hostAccent';
 
 const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions:v2';
 const SNAPSHOT_STORAGE_KEY = 'vibepulse:last-sessions-snapshot:v2';
@@ -542,6 +543,7 @@ export function KanbanBoard({
                 {enabledSources.map(source => {
                     const status = currentHostStatuses.find((s: SessionHostStatus) => s.hostId === source.hostId);
                     const isOnline = status?.online ?? false;
+                    const hostAccentClass = getHostAccentTextClass(source.hostId, source.hostLabel);
                     
                     return (
                         <button
@@ -555,12 +557,19 @@ export function KanbanBoard({
                             }`}
                             data-testid={`host-filter-option-${source.hostId}`}
                         >
-                            <span 
-                                className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-gray-400'}`} 
-                                data-testid={`host-status-${source.hostId}`}
-                                title={isOnline ? 'Online' : 'Offline'}
-                            />
-                            {source.hostLabel}
+                            <span className={`inline-flex items-center justify-center flex-shrink-0 ${hostAccentClass}`} data-testid={`host-identity-${source.hostId}`} title={`Host identity: ${source.hostLabel}`}>
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                                </svg>
+                            </span>
+                            <span className="truncate">{source.hostLabel}</span>
+                            <span className="ml-auto inline-flex items-center pl-1.5" data-testid={`host-indicators-${source.hostId}`}>
+                                <span
+                                    className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-gray-400'}`}
+                                    data-testid={`host-status-${source.hostId}`}
+                                    title={isOnline ? 'Online' : 'Offline'}
+                                />
+                            </span>
                         </button>
                     );
                 })}

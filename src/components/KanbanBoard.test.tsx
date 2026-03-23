@@ -118,13 +118,34 @@ describe('KanbanBoard Host Filter', () => {
     it('displays offline hosts and correctly sets status indicators', () => {
         renderBoard(7, hostSourcesState);
 
+        const remote1Identity = screen.getByTestId('host-identity-remote-1');
+        expect(remote1Identity.className).toContain('text-');
+        const remote1IdentityIcon = remote1Identity.querySelector('svg');
+        expect(remote1IdentityIcon).toBeTruthy();
+        expect(remote1IdentityIcon?.className.baseVal).toContain('w-3.5');
+        expect(remote1Identity.getAttribute('title')).toBe('Host identity: Remote 1');
+
         const remote1Status = screen.getByTestId('host-status-remote-1');
         expect(remote1Status.className).toContain('bg-gray-400');
         expect(remote1Status.getAttribute('title')).toBe('Offline');
 
+        const remote2Identity = screen.getByTestId('host-identity-remote-2');
+        expect(remote2Identity.className).toContain('text-');
+        const remote2IdentityIcon = remote2Identity.querySelector('svg');
+        expect(remote2IdentityIcon).toBeTruthy();
+        expect(remote2IdentityIcon?.className.baseVal).toContain('w-3.5');
+        expect(remote2Identity.getAttribute('title')).toBe('Host identity: Remote 2');
+
         const remote2Status = screen.getByTestId('host-status-remote-2');
         expect(remote2Status.className).toContain('bg-emerald-500');
         expect(remote2Status.getAttribute('title')).toBe('Online');
+
+        const localIdentity = screen.getByTestId('host-identity-local');
+        expect(localIdentity.className).toContain('text-');
+        const localIdentityIcon = localIdentity.querySelector('svg');
+        expect(localIdentityIcon).toBeTruthy();
+        expect(localIdentityIcon?.className.baseVal).toContain('w-3.5');
+        expect(localIdentity.getAttribute('title')).toBe('Host identity: Local');
 
         const localStatus = screen.getByTestId('host-status-local');
         expect(localStatus.className).toContain('bg-emerald-500');

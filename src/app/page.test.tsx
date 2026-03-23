@@ -2,13 +2,26 @@ import type { ReactNode } from 'react';
 import * as tlReact from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const tlReactAny: any = tlReact;
-const render = tlReactAny.render;
-const screen = tlReactAny.screen;
-const waitFor = tlReactAny.waitFor;
-const mockFetch: any = vi.fn();
-const mockUseOpencodeSync: any = vi.fn();
-const mockSetActiveFilter: any = vi.fn();
+type RenderFn = (ui: ReactNode) => unknown;
+type WaitForFn = (callback: () => void | Promise<void>) => Promise<void>;
+type RoleQueryOptions = { name?: string | RegExp };
+type ScreenLike = {
+  getByRole: (role: string, options?: RoleQueryOptions) => HTMLElement;
+  queryByRole: (role: string, options?: RoleQueryOptions) => HTMLElement | null;
+};
+
+const tlReactCompat = tlReact as unknown as {
+  render: RenderFn;
+  screen: ScreenLike;
+  waitFor: WaitForFn;
+};
+
+const render = tlReactCompat.render;
+const screen = tlReactCompat.screen;
+const waitFor = tlReactCompat.waitFor;
+const mockFetch = vi.fn();
+const mockUseOpencodeSync = vi.fn();
+const mockSetActiveFilter = vi.fn();
 
 vi.mock('@/hooks/useOpencodeSync', () => ({
   useOpencodeSync: () => mockUseOpencodeSync(),
@@ -31,7 +44,7 @@ vi.mock('@/components/ErrorBoundary', () => ({
 }));
 
 vi.mock('@/components/opencode-config/ConfigButton', () => ({
-  ConfigButton: ({ onClick }: { onClick: () => void }) => <button onClick={onClick}>Config</button>,
+  ConfigButton: ({ onClick }: { onClick: () => void }) => <button type="button" onClick={onClick}>Config</button>,
 }));
 
 vi.mock('@/components/opencode-config/FullscreenConfigPanel', () => ({
@@ -44,6 +57,7 @@ vi.mock('@/components/host-config/HostManagerDialog', () => ({
 
 vi.mock('@/lib/notificationSound', () => ({
   isMuted: vi.fn(() => false),
+  subscribeMuted: vi.fn(() => () => {}),
   playToggleFeedbackSound: vi.fn(),
   setMuted: vi.fn(),
   unlockAudio: vi.fn(),

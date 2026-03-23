@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { KanbanCard } from '@/types';
+import { getHostAccentTextClass } from '@/lib/hostAccent';
 
 interface ProjectCardProps {
     projectName: string;
@@ -11,28 +12,6 @@ interface ProjectCardProps {
     readOnly?: boolean;
     hostLabel?: string;
     multipleHostsEnabled?: boolean;
-}
-
-function getHostAccentClass(hostKey?: string, hostLabel?: string): string {
-    const palette = [
-        'text-blue-500 dark:text-blue-400',
-        'text-emerald-500 dark:text-emerald-400',
-        'text-amber-500 dark:text-amber-400',
-        'text-rose-500 dark:text-rose-400',
-        'text-cyan-500 dark:text-cyan-400',
-    ];
-
-    if (!hostKey && !hostLabel) {
-        return 'text-zinc-400 dark:text-zinc-500';
-    }
-
-    const source = `${hostKey ?? ''}:${hostLabel ?? ''}`;
-    let hash = 0;
-    for (let index = 0; index < source.length; index += 1) {
-        hash = (hash * 31 + source.charCodeAt(index)) >>> 0;
-    }
-
-    return palette[hash % palette.length];
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -317,7 +296,7 @@ export function ProjectCard({ projectName, branch, cards, readOnly: _readOnly, h
     const hostLabel = _hostLabel ?? firstCard?.hostLabel;
     const hostId = firstCard?.hostId;
     const showHostBadge = hostLabel && (multipleHostsEnabled || hostLabel !== 'Local');
-    const hostAccentClass = getHostAccentClass(hostId, hostLabel);
+    const hostAccentClass = getHostAccentTextClass(hostId, hostLabel);
     const [openTool, setOpenTool] = useState(() => {
         if (typeof window === 'undefined') return 'vscode';
         return window.localStorage.getItem('vibepulse:open-tool') || 'vscode';
