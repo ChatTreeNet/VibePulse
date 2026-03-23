@@ -92,7 +92,6 @@ describe('ProjectCard', () => {
         );
 
         expect(screen.getByText('TestProject')).toBeTruthy();
-        expect(screen.getByText('Remote 1')).toBeTruthy();
         expect(screen.getByTitle('Source: Remote 1')).toBeTruthy();
         expect(screen.queryByTitle('Open project')).toBeNull();
     });
@@ -124,14 +123,14 @@ describe('ProjectCard', () => {
         const { rerender } = renderWithProviders(
             <ProjectCard projectName="TestProject" cards={[remoteCardA]} />
         );
-        expect(screen.getByText('Workspace A')).toBeTruthy();
+        expect(screen.getByTitle('Source: Workspace A')).toBeTruthy();
 
         rerender(
             <QueryClientProvider client={createQueryClient()}>
                 <ProjectCard projectName="TestProject" cards={[remoteCardB]} />
             </QueryClientProvider>
         );
-        expect(screen.getByText('Workspace B')).toBeTruthy();
+        expect(screen.getByTitle('Source: Workspace B')).toBeTruthy();
     });
 });
 
@@ -164,7 +163,14 @@ describe('ProjectCard Host Badges', () => {
             <ProjectCard projectName="TestProject" cards={[mockCard]} multipleHostsEnabled={true} />
         );
         expect(screen.getByTitle('Source: Local')).toBeTruthy();
-        expect(screen.getByText('Local')).toBeTruthy();
+    });
+
+    it('renders branch metadata in the footer area', () => {
+        renderWithProviders(
+            <ProjectCard projectName="TestProject" branch="main" cards={[mockCard]} />
+        );
+
+        expect(screen.getByTitle('main')).toBeTruthy();
     });
 
     it('hides Local badge when multipleHostsEnabled is false', () => {
