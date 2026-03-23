@@ -100,6 +100,7 @@ export interface OhMyOpencodeConfig {
  * Profiles allow switching between different agent/category configurations
  */
 export interface ProfileConfig {
+  $schema?: string;
   /** Agent configurations keyed by agent name */
   agents: Record<string, AgentConfig>;
   /** Category configurations for task type model selection */

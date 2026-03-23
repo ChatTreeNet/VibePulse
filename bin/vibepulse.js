@@ -7,48 +7,81 @@ const fs = require('fs');
 
 const port = process.env.PORT || '3456';
 
-console.log(`🚀 Starting VibePulse on port ${port}...`);
-console.log(`📊 Open http://localhost:${port} to view the dashboard`);
-console.log('');
+const nodeRuntimeFlag = '--serve';
+const runtimeRoleEnvVar = 'VIBEPULSE_RUNTIME_ROLE';
 
-// Standalone mode server.js
-const standaloneServer = path.join(__dirname, '..', '.next', 'standalone', 'server.js');
-const nextBin = path.join(__dirname, '..', 'node_modules', '.bin', 'next');
+function resolveRuntimeMode(argv) {
+  if (!Array.isArray(argv)) {
+    throw new TypeError('Runtime arguments must be provided as an array.');
+  }
 
-let command;
-let args;
+  if (argv.length === 0) {
+    return { role: 'hub' };
+  }
 
-if (fs.existsSync(standaloneServer)) {
-  // Production standalone mode - fastest, no deps to install
-  console.log('📦 Running in standalone mode...\n');
-  command = 'node';
-  args = [standaloneServer];
-} else if (fs.existsSync(nextBin)) {
-  // Production mode with next start
-  console.log('⚡ Running in production mode...\n');
-  command = nextBin;
-  args = ['start', '-p', port];
-} else {
-  console.error('❌ VibePulse is not built. Please install from npm or build locally:');
-  console.error('   npm install -g vibepulse');
-  process.exit(1);
+  if (argv.length === 1 && argv[0] === nodeRuntimeFlag) {
+    return { role: 'node' };
+  }
+
+  const renderedArgs = argv.length > 0 ? argv.join(' ') : '(none)';
+  throw new Error(`Unsupported arguments: ${renderedArgs}. Usage: vibepulse [${nodeRuntimeFlag}]`);
 }
 
-const proc = spawn(command, args, {
-  cwd: path.join(__dirname, '..'),
-  stdio: 'inherit',
-  env: {
-    ...process.env,
-    PORT: port,
-    HOSTNAME: '0.0.0.0'
+async function main() {
+  const runtimeMode = resolveRuntimeMode(process.argv.slice(2));
+  const runtimeRole = runtimeMode.role;
+
+  console.log(`🚀 Starting VibePulse ${runtimeRole} on port ${port}...`);
+  console.log(`🛰️ Runtime role: ${runtimeRole}`);
+  console.log(`📊 Open http://localhost:${port} to view the dashboard`);
+  console.log('');
+
+  // Standalone mode server.js
+  const standaloneServer = path.join(__dirname, '..', '.next', 'standalone', 'server.js');
+  const nextBin = path.join(__dirname, '..', 'node_modules', '.bin', 'next');
+
+  let command;
+  let args;
+
+  if (fs.existsSync(standaloneServer)) {
+    // Production standalone mode - fastest, no deps to install
+    console.log('📦 Running in standalone mode...\n');
+    command = 'node';
+    args = [standaloneServer];
+  } else if (fs.existsSync(nextBin)) {
+    // Production mode with next start
+    console.log('⚡ Running in production mode...\n');
+    command = nextBin;
+    args = ['start', '-p', port];
+  } else {
+    console.error('❌ VibePulse is not built. Please install from npm or build locally:');
+    console.error('   npm install -g vibepulse');
+    process.exit(1);
   }
-});
 
-proc.on('error', (err) => {
-  console.error('Failed to start VibePulse:', err.message);
+  const proc = spawn(command, args, {
+    cwd: path.join(__dirname, '..'),
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      PORT: port,
+      HOSTNAME: '0.0.0.0',
+      [runtimeRoleEnvVar]: runtimeRole,
+    }
+  });
+
+  proc.on('error', (err) => {
+    console.error('Failed to start VibePulse:', err.message);
+    process.exit(1);
+  });
+
+  proc.on('exit', (code) => {
+    process.exit(code);
+  });
+}
+
+main().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`❌ ${message}`);
   process.exit(1);
-});
-
-proc.on('exit', (code) => {
-  process.exit(code);
 });

@@ -1,11 +1,34 @@
 import { discoverOpencodePortsWithMeta } from '@/lib/opencodeDiscovery';
+import { parseSourceKey } from '@/lib/hostIdentity';
 import {
     clearSessionForceUnarchived,
     markSessionStickyStatusBlocked,
 } from '@/lib/sessionArchiveOverrides';
 
+function resolveLocalSessionId(id: string): string | null {
+    if (!id.includes(':')) {
+        return id;
+    }
+
+    try {
+        const { hostId, sessionId } = parseSourceKey(id);
+        return hostId === 'local' ? sessionId : null;
+    } catch {
+        return null;
+    }
+}
+
 export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
-    const { id: sessionId } = await params;
+    const { id } = await params;
+    const sessionId = resolveLocalSessionId(id);
+
+    if (!sessionId) {
+        return Response.json(
+            { error: 'Session not found' },
+            { status: 404 }
+        );
+    }
+
     const { ports, timedOut } = discoverOpencodePortsWithMeta();
     if (!ports.length) {
         if (timedOut) {
