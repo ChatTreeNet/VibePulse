@@ -10,7 +10,7 @@ export type SessionDebugReason =
   | 'waiting_for_user';
 
 export interface KanbanCard {
-  id: string;
+  id: string; // composite key: hostId:sessionId
   sessionSlug: string;
   title: string;
   directory: string;
@@ -28,6 +28,13 @@ export interface KanbanCard {
   updatedAt: number;
   archivedAt?: number;
   sortOrder: number;
+  // Host-aware fields (direct, not nested)
+  hostId?: string;
+  hostLabel?: string;
+  hostKind?: HostSourceKind;
+  rawSessionId?: string; // original session ID without host prefix
+  sourceSessionKey?: string; // alias for id, kept for compatibility
+  readOnly?: boolean;
    children?: {
      id: string;
      title?: string;
@@ -41,7 +48,7 @@ export interface KanbanCard {
 
 // OpenCode event types
 export interface OpencodeSession {
-  id: string;
+  id: string; // composite key: hostId:sessionId
   slug: string;
   title?: string;
   directory: string;
@@ -60,6 +67,13 @@ export interface OpencodeSession {
   waitingForUser?: boolean;
   debugReason?: SessionDebugReason;
   children?: OpencodeSession[];
+  // Host-aware fields (direct, not nested)
+  hostId?: string;
+  hostLabel?: string;
+  hostKind?: HostSourceKind;
+  rawSessionId?: string; // original session ID without host prefix
+  sourceSessionKey?: string; // alias for id, kept for compatibility
+  readOnly?: boolean;
 }
 
 export type OpencodeEventType =
@@ -91,6 +105,40 @@ export interface OpencodeEvent {
 
 // Status mapping
 export type OpencodeStatus = 'idle' | 'busy' | 'retry';
+
+// Host source types
+export type HostSourceKind = 'local' | 'remote';
+
+export interface BuiltInHostSource {
+  hostId: 'local';
+  hostLabel: 'Local';
+  hostKind: 'local';
+}
+
+export interface RemoteNodeConfig {
+  hostId: string;
+  hostLabel: string;
+  baseUrl: string;
+  enabled: boolean;
+  tokenConfigured?: boolean;
+}
+
+export type RemoteHostConfig = RemoteNodeConfig;
+
+export type HostFilterValue = 'all' | 'local' | string;
+
+export interface HostStatus {
+  hostId: string;
+  hostLabel: string;
+  hostKind: HostSourceKind;
+  online: boolean;
+  degraded?: boolean;
+  reason?: string;
+  baseUrl?: string;
+}
+
+// Host-aware fields that appear directly on sessions/cards
+// (not nested in a wrapper object)
 
 // Type guards
 export function isKanbanColumn(value: string): value is KanbanColumn {

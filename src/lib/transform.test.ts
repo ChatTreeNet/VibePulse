@@ -27,6 +27,12 @@ function makeSession(overrides: SessionOverrides = {}): OpencodeSession {
     hasTranscript: overrides.hasTranscript,
     debugReason: overrides.debugReason,
     parentID: overrides.parentID,
+    hostId: overrides.hostId,
+    hostLabel: overrides.hostLabel,
+    hostKind: overrides.hostKind,
+    rawSessionId: overrides.rawSessionId,
+    sourceSessionKey: overrides.sourceSessionKey,
+    readOnly: overrides.readOnly,
   };
 }
 
@@ -91,5 +97,25 @@ describe('transformSession archive precedence', () => {
     expect(card.status).toBe('done');
     expect(card.archivedAt).toBe(300);
     expect(card.waitingForUser).toBe(true);
+  });
+
+  it('does not crash when a remote session is missing slug', () => {
+    const session = {
+      ...makeSession({
+      id: 'remote:session-1',
+      hostId: 'remote-1',
+      hostLabel: 'Remote 1',
+      hostKind: 'remote',
+      readOnly: true,
+      }),
+      slug: undefined,
+    } as unknown as OpencodeSession;
+
+    const card = transformSession(session);
+
+    expect(card.sessionSlug).toBe('');
+    expect(card.agents).toEqual([]);
+    expect(card.hostId).toBe('remote-1');
+    expect(card.readOnly).toBe(true);
   });
 });

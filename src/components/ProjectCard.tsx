@@ -3,12 +3,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { KanbanCard } from '@/types';
+import { getHostAccentTextClass } from '@/lib/hostAccent';
 
 interface ProjectCardProps {
     projectName: string;
     branch?: string;
     cards: KanbanCard[];
     readOnly?: boolean;
+    hostLabel?: string;
+    multipleHostsEnabled?: boolean;
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -100,7 +103,7 @@ function HeaderActionMenu({ cards, readOnly = false }: { cards: KanbanCard[]; re
         <div className="relative" ref={menuRef}>
             <button
                 type="button"
-                className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-gray-200 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-zinc-600 transition-colors"
+                className="w-5 h-5 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-200/80 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-zinc-600 transition-colors"
                 onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
                 title="Batch actions"
             >
@@ -287,7 +290,13 @@ function SessionRow({ card, isLast, readOnly = false }: { card: KanbanCard; isLa
     );
 }
 
-export function ProjectCard({ projectName, branch, cards, readOnly = false }: ProjectCardProps) {
+export function ProjectCard({ projectName, branch, cards, readOnly: _readOnly, hostLabel: _hostLabel, multipleHostsEnabled }: ProjectCardProps) {
+    const firstCard = cards[0];
+    const readOnly = _readOnly ?? firstCard?.readOnly ?? false;
+    const hostLabel = _hostLabel ?? firstCard?.hostLabel;
+    const hostId = firstCard?.hostId;
+    const showHostBadge = hostLabel && (multipleHostsEnabled || hostLabel !== 'Local');
+    const hostAccentClass = getHostAccentTextClass(hostId, hostLabel);
     const [openTool, setOpenTool] = useState(() => {
         if (typeof window === 'undefined') return 'vscode';
         return window.localStorage.getItem('vibepulse:open-tool') || 'vscode';
@@ -324,25 +333,32 @@ export function ProjectCard({ projectName, branch, cards, readOnly = false }: Pr
         <article className="w-full bg-white dark:bg-zinc-800 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-700 hover:shadow-lg hover:border-gray-300 dark:hover:border-zinc-600 transition-all duration-200 overflow-visible">
             {/* Header */}
             <div className="group/header flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-zinc-700/30 transition-colors">
-                <svg className="w-4 h-4 text-blue-500 dark:text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                </svg>
-                <span className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate flex-1">
+                <div
+                    className={`flex items-center justify-center flex-shrink-0 ${showHostBadge ? hostAccentClass : 'text-blue-500 dark:text-blue-400'}`}
+                    title={showHostBadge ? `Source: ${hostLabel}` : undefined}
+                >
+                    <svg
+                        className="w-4 h-4"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"
+                    >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
+                </div>
+                <span className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate flex-1 min-w-0">
                     {projectName}
                 </span>
-                {branch && (
-                    <span className="text-[10px] bg-gray-100 dark:bg-zinc-700 text-gray-500 dark:text-gray-400 px-1.5 py-0.5 rounded flex-shrink-0">
-                        {branch}
-                    </span>
-                )}
-                {cards.length > 1 && (
-                    <span className="text-[10px] text-gray-400 dark:text-gray-500 font-medium bg-gray-100 dark:bg-zinc-700 px-1.5 py-0.5 rounded-full flex-shrink-0">
-                        {cards.length}
-                    </span>
-                )}
-                {!readOnly && (
-                    <div className="hidden group-hover/header:flex flex-shrink-0">
-                        <HeaderActionMenu cards={cards} readOnly={readOnly} />
+                {(cards.length > 1 || !readOnly) && (
+                    <div className="flex items-center flex-shrink-0 bg-gray-100 dark:bg-zinc-700/50 rounded-full h-6 border border-gray-200/50 dark:border-zinc-700">
+                        {cards.length > 1 && (
+                            <span className={`text-[11px] font-medium text-gray-500 dark:text-gray-400 ${!readOnly ? 'pl-2.5 pr-1' : 'px-2.5'}`}>
+                                {cards.length}
+                            </span>
+                        )}
+                        {!readOnly && (
+                            <div className={`${cards.length > 1 ? 'pr-0.5' : 'px-0.5'}`}>
+                                <HeaderActionMenu cards={cards} readOnly={readOnly} />
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -360,32 +376,41 @@ export function ProjectCard({ projectName, branch, cards, readOnly = false }: Pr
             </div>
 
             {/* Footer */}
-            <div className="flex items-center justify-end gap-1.5 px-3 py-1.5 border-t border-gray-100 dark:border-zinc-700/50 bg-gray-50/50 dark:bg-zinc-800/50">
-                <select
-                    className="text-[10px] rounded border border-gray-200 bg-white px-1 py-0.5 text-gray-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-gray-400 focus:outline-none"
-                    value={openTool}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => {
-                        setOpenTool(e.target.value);
-                        window.localStorage.setItem('vibepulse:open-tool', e.target.value);
-                    }}
-                    title="Select open tool"
-                >
-                    <option value="vscode">VSCode</option>
-                    <option value="antigravity">Antigravity</option>
-                </select>
-                <button
-                    type="button"
-                    onClick={handleOpenProject}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:text-gray-400 dark:hover:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
-                    title="Open project"
-                >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
-                    Open
-                </button>
-            </div>
+            {!readOnly && (
+                <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-t border-gray-100 dark:border-zinc-700/50 bg-gray-50/50 dark:bg-zinc-800/50">
+                    <div className="min-w-0 flex-1 text-[10px] text-gray-400 dark:text-gray-500 truncate">
+                        {branch ? (
+                            <span className="truncate" title={branch}>{branch}</span>
+                        ) : null}
+                    </div>
+                    <div className="flex items-center justify-end gap-1.5 flex-shrink-0">
+                        <select
+                            className="text-[10px] rounded border border-gray-200 bg-white px-1 py-0.5 text-gray-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-gray-400 focus:outline-none"
+                            value={openTool}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                                setOpenTool(e.target.value);
+                                window.localStorage.setItem('vibepulse:open-tool', e.target.value);
+                            }}
+                            title="Select open tool"
+                        >
+                            <option value="vscode">VSCode</option>
+                            <option value="antigravity">Antigravity</option>
+                        </select>
+                        <button
+                            type="button"
+                            onClick={handleOpenProject}
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:text-gray-400 dark:hover:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+                            title="Open project"
+                        >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                            </svg>
+                            Open
+                        </button>
+                    </div>
+                </div>
+            )}
         </article>
     );
 }

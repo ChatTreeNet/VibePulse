@@ -3,6 +3,7 @@
 let audioContext: AudioContext | null = null;
 
 const STORAGE_KEY = 'vibepulse:sound-muted';
+const MUTE_CHANGE_EVENT = 'vibepulse:sound-muted-change';
 const SOUND_LOG_THROTTLE_MS = 10000;
 const soundLogLastAt = new Map<string, number>();
 
@@ -84,6 +85,31 @@ export function isMuted(): boolean {
 export function setMuted(muted: boolean): void {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(STORAGE_KEY, String(muted));
+    window.dispatchEvent(new Event(MUTE_CHANGE_EVENT));
+}
+
+export function subscribeMuted(onStoreChange: () => void): () => void {
+    if (typeof window === 'undefined') {
+        return () => {};
+    }
+
+    const handleMutedChange = () => {
+        onStoreChange();
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+        if (event.key === STORAGE_KEY) {
+            onStoreChange();
+        }
+    };
+
+    window.addEventListener(MUTE_CHANGE_EVENT, handleMutedChange);
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+        window.removeEventListener(MUTE_CHANGE_EVENT, handleMutedChange);
+        window.removeEventListener('storage', handleStorage);
+    };
 }
 
 /**

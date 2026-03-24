@@ -79,6 +79,7 @@ function deriveSessionDebugReason({
 export function transformSession(session: EnrichedSession): KanbanCard {
     let status: KanbanColumn;
     const children = session.children || [];
+    const sessionSlug = typeof session.slug === 'string' ? session.slug : '';
 
     // Staleness window: child blockers older than this don't keep parent in review
     const CHILD_BLOCKER_STALENESS_MS = 10 * 60 * 1000; // 10 minutes
@@ -137,12 +138,12 @@ export function transformSession(session: EnrichedSession): KanbanCard {
     
      return {
          id: session.id,
-         sessionSlug: session.slug,
+         sessionSlug,
          title: session.title || 'Untitled Session',
          directory: session.directory,
          projectName: session.projectName || 'Unknown Project',
          branch: session.branch,
-         agents: extractAgents(session.slug),
+         agents: extractAgents(sessionSlug),
          messageCount: session.messageCount || 0,
          status: status,
          opencodeStatus: effectiveStatus,
@@ -152,8 +153,14 @@ export function transformSession(session: EnrichedSession): KanbanCard {
          todosCompleted: 0,
          createdAt: session.time.created,
          updatedAt: session.time.updated,
-          archivedAt: status === 'done' ? session.time.archived : undefined,
+         archivedAt: status === 'done' ? session.time.archived : undefined,
          sortOrder: 0,
+         hostId: session.hostId,
+         hostLabel: session.hostLabel,
+         hostKind: session.hostKind,
+         rawSessionId: session.rawSessionId,
+         sourceSessionKey: session.sourceSessionKey,
+         readOnly: session.readOnly,
          children: children.map(c => ({
              id: c.id,
              title: c.title,
@@ -168,7 +175,8 @@ export function transformSession(session: EnrichedSession): KanbanCard {
      };
 }
 
-function extractAgents(slug: string): string[] {
+function extractAgents(slug?: string): string[] {
+    if (!slug) return [];
     // Extract agent names from session slug
     // Slug format: session_<timestamp>_<agent1>-<agent2>...
     const parts = slug.split('_');

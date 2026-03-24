@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { parse, stringify } from 'comment-json';
+import { OPEN_CODE_CONFIG_SCHEMA } from '../opencodeConfig';
 import type { AgentConfig, CategoryConfig } from '@/types/opencodeConfig';
 
 export const PROFILES_DIR = join(homedir(), '.config', 'opencode', 'profiles');
@@ -27,6 +28,7 @@ export interface ProfileIndex {
 }
 
 export interface ProfileConfig {
+  $schema?: string;
   agents: Record<string, AgentConfig>;
   categories?: Record<string, CategoryConfig>;
 }
@@ -158,6 +160,37 @@ function getProfileConfigPath(id: string): string {
   return join(PROFILES_DIR, `${id}.json`);
 }
 
+function normalizeProfileConfig(config: unknown): ProfileConfig {
+  if (!config || typeof config !== 'object') {
+    return {
+      $schema: OPEN_CODE_CONFIG_SCHEMA,
+      agents: {},
+    };
+  }
+
+  const candidate = config as Record<string, unknown>;
+  const agents =
+    candidate.agents && typeof candidate.agents === 'object'
+      ? (candidate.agents as Record<string, AgentConfig>)
+      : {};
+
+  const categories =
+    candidate.categories && typeof candidate.categories === 'object'
+      ? (candidate.categories as Record<string, CategoryConfig>)
+      : undefined;
+
+  const schema =
+    typeof candidate.$schema === 'string' && candidate.$schema.trim().length > 0
+      ? candidate.$schema
+      : OPEN_CODE_CONFIG_SCHEMA;
+
+  return {
+    $schema: schema,
+    agents,
+    categories,
+  };
+}
+
 function createDefaultProfileIndex(): ProfileIndex {
   return {
     version: 1,
@@ -181,10 +214,8 @@ async function createBuiltinProfileConfigs(): Promise<void> {
   }
 
   for (const profile of BUILTIN_PROFILES) {
-    const configPath = getProfileConfigPath(profile.id);
     const config = BUILTIN_PROFILE_CONFIGS[profile.id] || { agents: {} };
-    const content = stringify(config, null, 2);
-    await writeFile(configPath, content, 'utf-8');
+    await writeProfileConfig(profile.id, config);
   }
 }
 
@@ -259,14 +290,34 @@ export async function readProfileConfig(id: string): Promise<ProfileConfig> {
     const configPath = getProfileConfigPath(id);
     
     if (!existsSync(configPath)) {
-      return { agents: {} };
+      return {
+        $schema: OPEN_CODE_CONFIG_SCHEMA,
+        agents: {},
+      };
     }
-    
+
     const content = await readFile(configPath, 'utf-8');
-    const config = parse(content, null, false) as unknown as ProfileConfig;
-    return config;
+    const parsedConfig = parse(content, null, false) as unknown;
+    const normalizedConfig = normalizeProfileConfig(parsedConfig);
+
+    if (
+      !parsedConfig ||
+      typeof parsedConfig !== 'object' ||
+      typeof (parsedConfig as { $schema?: unknown }).$schema !== 'string'
+    ) {
+      try {
+        await writeProfileConfig(id, normalizedConfig);
+      } catch {
+        return normalizedConfig;
+      }
+    }
+
+    return normalizedConfig;
   } catch {
-    return { agents: {} };
+    return {
+      $schema: OPEN_CODE_CONFIG_SCHEMA,
+      agents: {},
+    };
   }
 }
 
@@ -275,10 +326,10 @@ export async function writeProfileConfig(
   config: ProfileConfig
 ): Promise<void> {
   ensureProfilesDir();
-  
+
   const configPath = getProfileConfigPath(id);
-  const content = stringify(config, null, 2);
-  
+  const content = stringify(normalizeProfileConfig(config), null, 2);
+
   await writeFile(configPath, content, 'utf-8');
 }
 

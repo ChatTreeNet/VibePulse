@@ -1,13 +1,16 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { KanbanBoard } from "@/components/KanbanBoard";
+import { useState, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { KanbanBoard, type SessionHostStatus } from "@/components/KanbanBoard";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useOpencodeSync } from "@/hooks/useOpencodeSync";
-import { isMuted, playToggleFeedbackSound, setMuted, unlockAudio } from "@/lib/notificationSound";
-import { Info } from 'lucide-react';
+import { isMuted, playToggleFeedbackSound, setMuted, subscribeMuted, unlockAudio } from "@/lib/notificationSound";
+import { Info, Server } from 'lucide-react';
 import { ConfigButton } from "@/components/opencode-config/ConfigButton";
 import { FullscreenConfigPanel } from "@/components/opencode-config/FullscreenConfigPanel";
+import { HostManagerDialog } from "@/components/host-config/HostManagerDialog";
+import { useHostSources } from "@/hooks/useHostSources";
+import { getHostAccentTextClass } from '@/lib/hostAccent';
 
 const DATE_FILTERS = [
     { label: '1d', days: 1 },
@@ -26,16 +29,58 @@ type ProcessHint = {
     reason: 'process_without_api_port';
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
 export default function Home() {
     useOpencodeSync();
+    const [runtimeRole, setRuntimeRole] = useState<'unknown' | 'hub' | 'node'>('unknown');
+    const hostSourcesState = useHostSources({ runtimeRole });
     const [filterDays, setFilterDays] = useState(7);
-    const [muted, setMutedState] = useState(() => isMuted());
+    const muted = useSyncExternalStore(subscribeMuted, isMuted, () => false);
     const [processHints, setProcessHints] = useState<ProcessHint[]>([]);
     const [isProcessHintOpen, setIsProcessHintOpen] = useState(false);
     const [copyFeedback, setCopyFeedback] = useState<'idle' | 'copied' | 'failed'>('idle');
     const [configPanelOpen, setConfigPanelOpen] = useState(false);
+    const [hostManagerOpen, setHostManagerOpen] = useState(false);
+    const [hostStatuses, setHostStatuses] = useState<SessionHostStatus[]>([]);
+    const isNodeMode = runtimeRole === 'node';
+    
     const processHintButtonRef = useRef<HTMLButtonElement | null>(null);
     const processHintPopoverRef = useRef<HTMLDivElement | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        fetch('/api/nodes')
+            .then(async res => {
+                if (cancelled) {
+                    return;
+                }
+
+                let body: unknown = null;
+                if (res.status === 404) {
+                    try {
+                        body = await res.json();
+                    } catch {
+                        body = null;
+                    }
+                }
+
+                const isNodeModeResponse = res.status === 404 && isRecord(body) && body.error === 'Route unavailable in node mode';
+                setRuntimeRole(isNodeModeResponse ? 'node' : 'hub');
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setRuntimeRole('hub');
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     const processHintProjects = useMemo(
         () => Array.from(new Set(processHints.map((hint) => hint.projectName))),
@@ -46,6 +91,11 @@ export default function Home() {
     const processHintSummary = processHintProjects.length === 1
         ? `${processHintProjects[0]} has an OpenCode process without an exposed API port.`
         : `${processHintProjects.length} projects have OpenCode processes without exposed API ports.`;
+
+    const hostStatusById = useMemo(
+        () => new Map(hostStatuses.map((status) => [status.hostId, status] as const)),
+        [hostStatuses]
+    );
 
     useEffect(() => {
         const unlock = () => {
@@ -104,7 +154,6 @@ export default function Home() {
     const toggleMute = () => {
         unlockAudio();
         const newMuted = !muted;
-        setMutedState(newMuted);
         setMuted(newMuted);
         if (!newMuted) {
             playToggleFeedbackSound();
@@ -127,9 +176,9 @@ export default function Home() {
             <main className="h-screen flex flex-col">
                 <header className="flex items-center justify-between px-4 py-4 border-b border-gray-200 dark:border-zinc-800">
                     <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
-                        VibePulse
+                        VibePulse {isNodeMode ? '(Node)' : ''}
                     </h1>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-wrap justify-end">
                         <button
                             type="button"
                             onClick={toggleMute}
@@ -223,15 +272,85 @@ export default function Home() {
                                 </button>
                             ))}
                         </div>
+                        <div className="flex items-center gap-1 bg-gray-100 dark:bg-zinc-800 rounded-lg p-0.5" data-testid="host-filter">
+                            <button
+                                type="button"
+                                onClick={() => hostSourcesState.setActiveFilter('all')}
+                                className={`px-3 py-1 text-xs font-medium rounded-md transition-all duration-150 ${
+                                    hostSourcesState.activeFilter === 'all'
+                                        ? 'bg-white dark:bg-zinc-600 text-gray-900 dark:text-white shadow-sm'
+                                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                                }`}
+                                data-testid="host-filter-option-all"
+                            >
+                                All Hosts
+                            </button>
+                            {hostSourcesState.enabledSources.map((source) => {
+                                const status = hostStatusById.get(source.hostId);
+                                const isOnline = status?.online ?? (source.hostId === 'local' && hostSourcesState.enabledSources.length === 1);
+                                const hostAccentClass = getHostAccentTextClass(source.hostId, source.hostLabel);
+
+                                return (
+                                    <button
+                                        key={source.hostId}
+                                        type="button"
+                                        onClick={() => hostSourcesState.setActiveFilter(source.hostId)}
+                                        className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-all duration-150 ${
+                                            hostSourcesState.activeFilter === source.hostId
+                                                ? 'bg-white dark:bg-zinc-600 text-gray-900 dark:text-white shadow-sm'
+                                                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                                        }`}
+                                        data-testid={`host-filter-option-${source.hostId}`}
+                                    >
+                                        <span className={`inline-flex items-center justify-center flex-shrink-0 ${hostAccentClass}`} data-testid={`host-identity-${source.hostId}`} title={`Host identity: ${source.hostLabel}`}>
+                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                                            </svg>
+                                        </span>
+                                        <span className="truncate">{source.hostLabel}</span>
+                                        <span className="ml-auto inline-flex items-center pl-1.5" data-testid={`host-indicators-${source.hostId}`}>
+                                            <span
+                                                className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-gray-400'}`}
+                                                data-testid={`host-status-${source.hostId}`}
+                                                title={isOnline ? 'Online' : 'Offline'}
+                                            />
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        {!isNodeMode && (
+                            <button
+                                type="button"
+                                onClick={() => setHostManagerOpen(true)}
+                                className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700 dark:hover:text-white"
+                            >
+                                <Server className="h-3.5 w-3.5" />
+                                Nodes
+                            </button>
+                        )}
                         <ConfigButton onClick={() => setConfigPanelOpen(true)} />
                     </div>
                 </header>
                 <ErrorBoundary>
-                    <KanbanBoard filterDays={filterDays} onProcessHintsChange={setProcessHints} />
+                    <KanbanBoard
+                        filterDays={filterDays}
+                        onProcessHintsChange={setProcessHints}
+                        hostSources={hostSourcesState}
+                        isNodeMode={isNodeMode}
+                        showHostFilter={false}
+                        onHostStatusesChange={setHostStatuses}
+                    />
                 </ErrorBoundary>
                 <FullscreenConfigPanel
                     open={configPanelOpen}
                     onClose={() => setConfigPanelOpen(false)}
+                />
+                <HostManagerDialog
+                    hostSources={hostSourcesState}
+                    open={hostManagerOpen}
+                    onClose={() => setHostManagerOpen(false)}
+                    isNodeMode={isNodeMode}
                 />
             </main>
         </div>

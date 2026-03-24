@@ -1,6 +1,6 @@
 {
   "name": "vibepulse",
-  "version": "0.1.12",
+  "version": "0.2.0",
   "private": false,
   "description": "Real-time dashboard for monitoring and managing OpenCode sessions",
   "repository": {
@@ -26,7 +26,9 @@
     }
   },
   "scripts": {
-    "dev": "next dev -p 3456",
+    "dev": "node ./bin/dev-runtime.js",
+    "dev:hub": "node ./bin/dev-runtime.js hub",
+    "dev:node": "node ./bin/dev-runtime.js node",
     "build": "next build",
     "start": "next start -p 3456",
     "lint": "eslint",
