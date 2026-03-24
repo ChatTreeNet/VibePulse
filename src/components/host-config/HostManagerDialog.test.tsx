@@ -177,6 +177,34 @@ describe('HostManagerDialog', () => {
         expect(mockToggleRemoteHostCalls[0][0]).toBe('remote-1');
     });
 
+    it('shows mutation errors when toggle action fails', async () => {
+        const user = userEvent.setup();
+        hostSourcesState.toggleRemoteHost = async () => {
+            throw new Error('toggle failed');
+        };
+
+        render(<HostManagerDialog open={true} onClose={noop} hostSources={hostSourcesState} />);
+
+        const testRemoteRow = screen.getByTestId('host-row-remote-remote-1');
+        await user.click(within(testRemoteRow).getByRole('button', { name: /disable/i }));
+
+        expect(screen.getByText(/toggle failed/i)).toBeTruthy();
+    });
+
+    it('shows mutation errors when delete action fails', async () => {
+        const user = userEvent.setup();
+        hostSourcesState.deleteRemoteHost = async () => {
+            throw new Error('delete failed');
+        };
+
+        render(<HostManagerDialog open={true} onClose={noop} hostSources={hostSourcesState} />);
+
+        const testRemoteRow = screen.getByTestId('host-row-remote-remote-1');
+        await user.click(within(testRemoteRow).getByRole('button', { name: /delete node/i }));
+
+        expect(screen.getByText(/delete failed/i)).toBeTruthy();
+    });
+
     it('validates URLs on add', async () => {
         const user = userEvent.setup();
         render(<HostManagerDialog open={true} onClose={noop} hostSources={hostSourcesState} />);

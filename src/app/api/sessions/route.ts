@@ -1592,7 +1592,8 @@ async function handlePost(request: Request) {
         : null;
 
     if (normalizedOfflinePayload) {
-      return Response.json(normalizedOfflinePayload);
+      const statusCode = localResult.status ?? 503;
+      return Response.json(normalizedOfflinePayload, { status: statusCode });
     }
 
     return toRouteResponse({

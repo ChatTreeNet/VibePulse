@@ -422,7 +422,7 @@ describe('/api/sessions route source handling', () => {
     });
   });
 
-  it('keeps GET offline behavior but returns a degraded 200 payload for local-only POST when Local is offline', async () => {
+  it('keeps GET offline behavior but returns a degraded error payload for local-only POST when Local is offline', async () => {
     mockReadConfig.mockResolvedValue({
       vibepulse: {
         stickyBusyDelayMs: 1000,
@@ -464,7 +464,7 @@ describe('/api/sessions route source handling', () => {
       ],
     });
 
-    expect(postResponse.status).toBe(200);
+    expect(postResponse.status).toBe(503);
     expect(postData).toEqual({
       sessions: [],
       processHints: [

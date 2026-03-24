@@ -20,6 +20,15 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const executeNodeMutation = async (action: () => Promise<unknown>, fallbackMessage: string) => {
+    setError(null);
+    try {
+      await action();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : fallbackMessage);
+    }
+  };
+
   useEffect(() => {
     if (open) {
       const originalStyle = window.getComputedStyle(document.body).overflow;
@@ -179,6 +188,12 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
              </div>
           ) : (
           <div className="space-y-3">
+            {error && !isAdding && !editingId && (
+              <div className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-400">
+                <AlertCircle className="h-3.5 w-3.5" />
+                <span>{error}</span>
+              </div>
+            )}
             <div
               data-testid="host-row-local"
               className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50/50 p-3 dark:border-zinc-800 dark:bg-zinc-900/20"
@@ -323,7 +338,12 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => toggleRemoteHost(host.hostId, !host.enabled)}
+                          onClick={() => {
+                            void executeNodeMutation(
+                              () => toggleRemoteHost(host.hostId, !host.enabled),
+                              'Failed to toggle node'
+                            );
+                          }}
                           className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                             host.enabled
                               ? 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800'
@@ -342,7 +362,12 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
                         </button>
                         <button
                           type="button"
-                          onClick={() => deleteRemoteHost(host.hostId)}
+                          onClick={() => {
+                            void executeNodeMutation(
+                              () => deleteRemoteHost(host.hostId),
+                              'Failed to delete node'
+                            );
+                          }}
                           className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
                           aria-label="Delete node"
                         >
