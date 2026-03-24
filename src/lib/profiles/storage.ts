@@ -305,7 +305,11 @@ export async function readProfileConfig(id: string): Promise<ProfileConfig> {
       typeof parsedConfig !== 'object' ||
       typeof (parsedConfig as { $schema?: unknown }).$schema !== 'string'
     ) {
-      await writeProfileConfig(id, normalizedConfig);
+      try {
+        await writeProfileConfig(id, normalizedConfig);
+      } catch {
+        return normalizedConfig;
+      }
     }
 
     return normalizedConfig;

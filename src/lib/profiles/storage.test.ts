@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile, chmod } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { parse } from 'comment-json';
@@ -70,5 +70,39 @@ describe('profile storage schema handling', () => {
       $schema: SCHEMA_URL,
       agents: {},
     });
+  });
+
+  it('returns parsed config when schema backfill write fails', async () => {
+    const profilesDir = storage.PROFILES_DIR;
+    await mkdir(profilesDir, { recursive: true });
+
+    const configPath = join(profilesDir, 'readonly.json');
+    await writeFile(
+      configPath,
+      JSON.stringify({ agents: { explore: { model: 'anthropic/claude-haiku-4-5' } } }),
+      'utf-8'
+    );
+
+    await chmod(configPath, 0o400);
+
+    try {
+      const loaded = await storage.readProfileConfig('readonly');
+
+      expect(loaded).toEqual({
+        $schema: SCHEMA_URL,
+        agents: {
+          explore: {
+            model: 'anthropic/claude-haiku-4-5',
+          },
+        },
+      });
+
+      const persisted = parse(await readFile(configPath, 'utf-8'), null, false) as unknown as {
+        $schema?: string;
+      };
+      expect(persisted.$schema).toBeUndefined();
+    } finally {
+      await chmod(configPath, 0o600);
+    }
   });
 });
