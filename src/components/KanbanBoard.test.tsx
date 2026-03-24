@@ -405,6 +405,59 @@ describe('KanbanBoard Fetch Behavior and Error UX', () => {
         expect(statusIndicator.className).toContain('bg-gray-400');
     });
 
+    it('accepts degraded 503 payloads from /api/sessions without triggering fatal UI', async () => {
+        let capturedQueryFn: ((opts: { signal: AbortSignal }) => Promise<unknown>) | undefined;
+        mockFetch.mockResolvedValue({
+            ok: false,
+            status: 503,
+            json: async () => ({
+                sessions: [],
+                processHints: [],
+                degraded: true,
+                hostStatuses: [
+                    {
+                        hostId: 'local',
+                        hostLabel: 'Local',
+                        hostKind: 'local',
+                        online: false,
+                        degraded: true,
+                        reason: 'OpenCode server not found',
+                    },
+                ],
+            }),
+        });
+
+        mockUseQuery.mockImplementation((opts: unknown) => {
+            const options = opts as { queryKey: string[]; queryFn: (opts: { signal: AbortSignal }) => Promise<unknown> };
+            if (options.queryKey[0] === 'sessions') {
+                capturedQueryFn = options.queryFn;
+            }
+            return { isLoading: true };
+        });
+
+        renderBoard(7, hostSourcesState);
+
+        expect(capturedQueryFn).toBeDefined();
+        const result = await capturedQueryFn!({ signal: new AbortController().signal }) as {
+            degraded: boolean;
+            hostStatuses: Array<{ hostId: string; online: boolean }>;
+            sessions: unknown[];
+        };
+
+        expect(result.degraded).toBe(true);
+        expect(result.sessions).toEqual([]);
+        expect(result.hostStatuses).toEqual([
+            {
+                hostId: 'local',
+                hostLabel: 'Local',
+                hostKind: 'local',
+                online: false,
+                degraded: true,
+                reason: 'OpenCode server not found',
+            },
+        ]);
+    });
+
     it('renders a local-only offline degraded response without the fatal unavailable screen', () => {
         mockUseQuery.mockImplementation((opts: unknown) => {
             const options = opts as { queryKey: string[] };

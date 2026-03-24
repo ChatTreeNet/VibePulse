@@ -79,6 +79,13 @@ type SessionsResponse = {
     hostStatuses?: SessionHostStatus[];
 };
 
+type SessionsErrorPayload = {
+    error?: string;
+    hint?: string;
+    degraded?: boolean;
+    sessions?: unknown;
+};
+
 function areHostStatusesEqual(
     previous: SessionHostStatus[] | null,
     next: SessionHostStatus[]
@@ -192,11 +199,20 @@ export function KanbanBoard({
                     signal 
                 });
                 if (!res.ok) {
-                    let payload: { error?: string; hint?: string } | null = null;
+                    let payload: SessionsErrorPayload | null = null;
                     try {
-                        payload = await res.json();
+                        payload = await res.json() as SessionsErrorPayload;
                     } catch {
                         payload = null;
+                    }
+
+                    const isDegradedPayload =
+                        !!payload &&
+                        payload.degraded === true &&
+                        Array.isArray(payload.sessions);
+
+                    if (isDegradedPayload) {
+                        return payload as SessionsResponse;
                     }
 
                     const isUnavailable =
