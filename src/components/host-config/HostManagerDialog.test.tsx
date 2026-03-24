@@ -138,6 +138,23 @@ describe('HostManagerDialog', () => {
         expect((editArgs[1] as Record<string, unknown>).baseUrl).toBe('http://test.com');
     });
 
+    it('passes explicit empty token when clearing token on edit', async () => {
+        const user = userEvent.setup();
+        render(<HostManagerDialog open={true} onClose={noop} hostSources={hostSourcesState} />);
+
+        const testRemoteRow = screen.getByTestId('host-row-remote-remote-1');
+        await user.click(within(testRemoteRow).getByRole('button', { name: /edit node/i }));
+
+        await user.click(screen.getByRole('checkbox', { name: /clear saved token on save/i }));
+
+        await user.click(within(testRemoteRow).getByRole('button', { name: /save/i }));
+
+        expect(mockEditRemoteHostCalls.length).toBeGreaterThan(0);
+        const editArgs = mockEditRemoteHostCalls[0];
+        const editedHost = editArgs[1] as Record<string, unknown>;
+        expect(editedHost.token).toBe('');
+    });
+
     it('deletes a remote node', async () => {
         const user = userEvent.setup();
         render(<HostManagerDialog open={true} onClose={noop} hostSources={hostSourcesState} />);

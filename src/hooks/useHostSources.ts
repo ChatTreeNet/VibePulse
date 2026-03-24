@@ -176,7 +176,7 @@ export function useHostSources(options: UseHostSourcesOptions = {}): UseHostSour
         baseUrl: nextHost.baseUrl,
         enabled: nextHost.enabled,
       };
-      if (nextHost.token) {
+      if (nextHost.token !== undefined) {
           payload.token = nextHost.token;
       }
 

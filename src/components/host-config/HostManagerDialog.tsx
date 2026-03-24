@@ -16,6 +16,7 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [formData, setFormData] = useState({ hostLabel: '', baseUrl: '', token: '' });
+  const [clearTokenOnSave, setClearTokenOnSave] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -31,6 +32,7 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
       setEditingId(null);
       setError(null);
       setFormData({ hostLabel: '', baseUrl: '', token: '' });
+      setClearTokenOnSave(false);
       setIsSubmitting(false);
     }
   }, [open]);
@@ -95,16 +97,20 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
       } else if (editingId) {
         const existingHost = remoteHosts.find((h) => h.hostId === editingId);
         if (existingHost) {
+          const normalizedToken = formData.token.trim();
+          const token = clearTokenOnSave ? '' : normalizedToken || undefined;
+
           await editRemoteHost(editingId, {
             ...existingHost,
             hostLabel: normalizedLabel,
             baseUrl: formData.baseUrl,
-            token: formData.token.trim() || undefined,
+            token,
           });
         }
         setEditingId(null);
       }
       setFormData({ hostLabel: '', baseUrl: '', token: '' });
+      setClearTokenOnSave(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -115,6 +121,7 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
   const startEdit = (host: RemoteHostConfig) => {
     setEditingId(host.hostId);
     setFormData({ hostLabel: host.hostLabel, baseUrl: host.baseUrl, token: '' });
+    setClearTokenOnSave(false);
     setIsAdding(false);
     setError(null);
   };
@@ -123,6 +130,7 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
     setIsAdding(true);
     setEditingId(null);
     setFormData({ hostLabel: '', baseUrl: '', token: '' });
+    setClearTokenOnSave(false);
     setError(null);
   };
 
@@ -130,6 +138,7 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
     setIsAdding(false);
     setEditingId(null);
     setFormData({ hostLabel: '', baseUrl: '', token: '' });
+    setClearTokenOnSave(false);
     setError(null);
   };
 
@@ -246,11 +255,28 @@ export function HostManagerDialog({ open, onClose, hostSources, isNodeMode = fal
                           data-testid="host-form-token"
                           type="password"
                           value={formData.token}
-                          onChange={(e) => setFormData({ ...formData, token: e.target.value })}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setFormData({ ...formData, token: value });
+                            if (clearTokenOnSave && value.trim().length > 0) {
+                              setClearTokenOnSave(false);
+                            }
+                          }}
                           className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
                           placeholder="Leave blank to keep existing token"
-                          disabled={isSubmitting}
+                          disabled={isSubmitting || clearTokenOnSave}
                         />
+                        <label htmlFor="edit-clear-token" className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                          <input
+                            id="edit-clear-token"
+                            type="checkbox"
+                            checked={clearTokenOnSave}
+                            onChange={(e) => setClearTokenOnSave(e.target.checked)}
+                            disabled={isSubmitting}
+                            className="h-3.5 w-3.5 rounded border-zinc-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          Clear saved token on save
+                        </label>
                       </div>
                       {error && (
                         <div className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">

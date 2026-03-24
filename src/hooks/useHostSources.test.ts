@@ -435,6 +435,54 @@ describe('useHostSources', () => {
     expect(JSON.parse(mockLocalStorage[STORAGE_KEY_FILTER])).toBe('remote-1');
   });
 
+  it('includes explicit empty token in edit payload to clear saved token', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: [{ nodeId: 'prod', nodeLabel: 'Production', baseUrl: 'https://prod.example.com', enabled: true }],
+      }),
+    } as any);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ node: { nodeId: 'prod', nodeLabel: 'Production', baseUrl: 'https://prod.example.com', enabled: true } }),
+    } as any);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: [{ nodeId: 'prod', nodeLabel: 'Production', baseUrl: 'https://prod.example.com', enabled: true }],
+      }),
+    } as any);
+
+    const { getCurrentValue } = renderUseHostSources();
+
+    await waitFor(() => {
+      expect(getCurrentValue().remoteHosts).toHaveLength(1);
+    });
+
+    await act(async () => {
+      await getCurrentValue().editRemoteHost('prod', {
+        hostId: 'prod',
+        hostLabel: 'Production',
+        baseUrl: 'https://prod.example.com',
+        enabled: true,
+        token: '',
+      });
+    });
+
+    const putCall = mockFetch.mock.calls.find((call: unknown[]) => {
+      const requestOptions = call[1] as { method?: string } | undefined;
+      return requestOptions?.method === 'PUT';
+    });
+
+    expect(putCall).toBeDefined();
+
+    const putOptions = putCall?.[1] as { body?: string };
+    const parsedBody = putOptions.body ? JSON.parse(putOptions.body) : {};
+    expect(parsedBody.token).toBe('');
+  });
+
   it('stays local-only and does not fetch /api/nodes in node mode', async () => {
     const { getCurrentValue } = renderUseHostSourcesWithRuntimeRole('node');
 
