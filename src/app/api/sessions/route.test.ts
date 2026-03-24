@@ -44,6 +44,7 @@ import {
 } from '@/lib/opencodeDiscovery';
 import { readConfig } from '@/lib/opencodeConfig';
 import { listNodeRecords } from '@/lib/nodeRegistry';
+import { NODE_PROTOCOL_VERSION } from '@/lib/nodeProtocol';
 
 import {
   GET,
@@ -71,6 +72,24 @@ function resetDefaultClientMock(): void {
       messages: mockSessionMessages,
     },
   }) as never);
+}
+
+function createNeverResolvingPromise<T>(signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    if (!signal) {
+      return;
+    }
+
+    signal.addEventListener(
+      'abort',
+      () => {
+        reject(new Error('aborted'));
+      },
+      { once: true }
+    );
+
+    void resolve;
+  });
 }
 
 resetDefaultClientMock();
@@ -527,7 +546,7 @@ describe('/api/sessions route source handling', () => {
           JSON.stringify({
             ok: true,
             role: 'node',
-            protocolVersion: '1',
+            protocolVersion: NODE_PROTOCOL_VERSION,
             source: { hostId: 'local', hostLabel: 'Local', hostKind: 'local' },
             upstream: { kind: 'opencode', reachable: true },
             sessions: [
@@ -874,7 +893,7 @@ describe('/api/sessions route source handling', () => {
           JSON.stringify({
             ok: true,
             role: 'node',
-            protocolVersion: '1',
+            protocolVersion: NODE_PROTOCOL_VERSION,
             source: { hostId: 'local', hostLabel: 'Local', hostKind: 'local' },
             upstream: { kind: 'opencode', reachable: true },
             sessions: [
@@ -1105,6 +1124,66 @@ describe('/api/sessions route source handling', () => {
     expect(mockCreateOpencodeClient.mock.calls).toHaveLength(0);
   });
 
+  it('aborts hanging local SDK calls when timeout elapses', async () => {
+    const originalListTimeoutEnv = process.env.OPENCODE_SESSIONS_LIST_TIMEOUT_MS;
+    const originalStatusTimeoutEnv = process.env.OPENCODE_SESSIONS_STATUS_TIMEOUT_MS;
+
+    process.env.OPENCODE_SESSIONS_LIST_TIMEOUT_MS = '15';
+    process.env.OPENCODE_SESSIONS_STATUS_TIMEOUT_MS = '15';
+
+    vi.resetModules();
+    const { GET: freshGet } = await import('./route');
+
+    mockReadConfig.mockResolvedValue({ vibepulse: { stickyBusyDelayMs: 1000 } });
+    mockDiscoverProcessCwdsWithoutPortWithMeta.mockReturnValue({
+      processes: [],
+      timedOut: false,
+    });
+    mockDiscoverPortsWithMeta.mockReturnValue({
+      ports: [7777],
+      timedOut: false,
+    });
+
+    const listSignals: AbortSignal[] = [];
+    const statusSignals: AbortSignal[] = [];
+
+    mockCreateOpencodeClient.mockImplementation(() => ({
+      session: {
+        list: vi.fn(({ signal }: { signal?: AbortSignal } = {}) => {
+          if (signal) {
+            listSignals.push(signal);
+          }
+          return createNeverResolvingPromise(signal);
+        }),
+        status: vi.fn(({ signal }: { signal?: AbortSignal } = {}) => {
+          if (signal) {
+            statusSignals.push(signal);
+          }
+          return createNeverResolvingPromise(signal);
+        }),
+        messages: mockSessionMessages,
+      },
+    }) as never);
+
+    const response = await freshGet();
+    const data = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(data.error).toBe('Failed to fetch sessions from OpenCode ports');
+    expect(data.failedPorts).toBeDefined();
+    expect(Array.isArray(data.failedPorts)).toBe(true);
+    expect(data.failedPorts.length).toBeGreaterThan(0);
+    expect(String(data.failedPorts[0].reason)).toContain('timed out');
+    expect(listSignals.length).toBeGreaterThan(0);
+    expect(listSignals.every((signal) => signal.aborted)).toBe(true);
+    if (statusSignals.length > 0) {
+      expect(statusSignals.every((signal) => signal.aborted)).toBe(true);
+    }
+
+    process.env.OPENCODE_SESSIONS_LIST_TIMEOUT_MS = originalListTimeoutEnv;
+    process.env.OPENCODE_SESSIONS_STATUS_TIMEOUT_MS = originalStatusTimeoutEnv;
+  });
+
   it('keeps duplicate raw session ids from different hosts as distinct aggregate sessions', async () => {
     setupLocalSessionsMocks();
     mockSessionList.mockResolvedValue({
@@ -1142,7 +1221,7 @@ describe('/api/sessions route source handling', () => {
           JSON.stringify({
             ok: true,
             role: 'node',
-            protocolVersion: '1',
+            protocolVersion: NODE_PROTOCOL_VERSION,
             source: { hostId: 'local', hostLabel: 'Local', hostKind: 'local' },
             upstream: { kind: 'opencode', reachable: true },
             sessions: [

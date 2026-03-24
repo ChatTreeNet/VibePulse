@@ -62,6 +62,24 @@ function resetDefaultClientMock(): void {
   }) as never);
 }
 
+function createNeverResolvingPromise<T>(signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    if (!signal) {
+      return;
+    }
+
+    signal.addEventListener(
+      'abort',
+      () => {
+        reject(new Error('aborted'));
+      },
+      { once: true }
+    );
+
+    void resolve;
+  });
+}
+
 function setupLocalSessionsMocks(): void {
   resetDefaultClientMock();
 
@@ -325,5 +343,66 @@ describe('/api/node/sessions', () => {
         },
       ],
     });
+  });
+
+  it('aborts hanging SDK calls when timeout elapses', async () => {
+    const originalListTimeoutEnv = process.env.OPENCODE_SESSIONS_LIST_TIMEOUT_MS;
+    const originalStatusTimeoutEnv = process.env.OPENCODE_SESSIONS_STATUS_TIMEOUT_MS;
+
+    process.env.OPENCODE_SESSIONS_LIST_TIMEOUT_MS = '15';
+    process.env.OPENCODE_SESSIONS_STATUS_TIMEOUT_MS = '15';
+
+    vi.resetModules();
+    const { GET: freshGet } = await import('./route');
+
+    mockReadConfig.mockResolvedValue({ vibepulse: { stickyBusyDelayMs: 1000 } });
+    mockDiscoverProcessCwdsWithoutPortWithMeta.mockReturnValue({
+      processes: [],
+      timedOut: false,
+    });
+    mockDiscoverPortsWithMeta.mockReturnValue({
+      ports: [7777],
+      timedOut: false,
+    });
+
+    const listSignals: AbortSignal[] = [];
+    const statusSignals: AbortSignal[] = [];
+
+    mockCreateOpencodeClient.mockImplementation(() => ({
+      session: {
+        list: vi.fn(({ signal }: { signal?: AbortSignal } = {}) => {
+          if (signal) {
+            listSignals.push(signal);
+          }
+          return createNeverResolvingPromise(signal);
+        }),
+        status: vi.fn(({ signal }: { signal?: AbortSignal } = {}) => {
+          if (signal) {
+            statusSignals.push(signal);
+          }
+          return createNeverResolvingPromise(signal);
+        }),
+        messages: mockSessionMessages,
+      },
+    }) as never);
+
+    const response = await freshGet(
+      new Request('http://localhost/api/node/sessions', {
+        headers: createNodeRequestHeaders('shared-secret'),
+      })
+    );
+
+    const data = await response.json();
+
+    expect(response.status).toBe(504);
+    expect(data.reason).toBe('upstream_timeout');
+    expect(listSignals.length).toBeGreaterThan(0);
+    expect(listSignals.every((signal) => signal.aborted)).toBe(true);
+    if (statusSignals.length > 0) {
+      expect(statusSignals.every((signal) => signal.aborted)).toBe(true);
+    }
+
+    process.env.OPENCODE_SESSIONS_LIST_TIMEOUT_MS = originalListTimeoutEnv;
+    process.env.OPENCODE_SESSIONS_STATUS_TIMEOUT_MS = originalStatusTimeoutEnv;
   });
 });

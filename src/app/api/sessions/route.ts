@@ -15,7 +15,7 @@ import {
   takeSessionStickyStatusBlocked,
 } from '@/lib/sessionArchiveOverrides';
 import { composeSourceKey, parseSourceKey } from '@/lib/hostIdentity';
-import { createNodeRequestHeaders } from '@/lib/nodeProtocol';
+import { createNodeRequestHeaders, NODE_PROTOCOL_VERSION } from '@/lib/nodeProtocol';
 import { listNodeRecords, type StoredNodeRecord } from '@/lib/nodeRegistry';
 import { RUNTIME_ROLE_ENV_VAR } from '@/lib/runtimeMode';
 import type { BuiltInHostSource, RemoteHostConfig } from '@/types';
@@ -180,19 +180,30 @@ function readPositiveTimeoutEnv(name: string, fallback: number): number {
   return fallback;
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  const timeoutError = new Error(`${label} timed out after ${timeoutMs}ms`);
+  const timeoutController = new AbortController();
   let timeoutHandle: NodeJS.Timeout | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+      timeoutController.abort();
+      reject(timeoutError);
     }, timeoutMs);
   });
 
-  return Promise.race([promise, timeoutPromise]).finally(() => {
+  const operationPromise = operation(timeoutController.signal).catch((error) => {
+    if (timeoutController.signal.aborted) {
+      throw timeoutError;
+    }
+
+    throw error;
+  });
+
+  return Promise.race([operationPromise, timeoutPromise]).finally(() => {
     if (timeoutHandle) {
       clearTimeout(timeoutHandle);
     }
-  }) as Promise<T>;
+  });
 }
 
 const WAITING_PART_STATUSES = new Set<string>([
@@ -238,10 +249,12 @@ async function fetchPartStatuses(
   timeoutMs: number
 ): Promise<MessageStateStatus[]> {
   const messagesResult = await withTimeout(
-    client.session.messages({
-      path: { id: sessionId },
-      query: { limit: 8 },
-    }),
+    (signal) =>
+      client.session.messages({
+        path: { id: sessionId },
+        query: { limit: 8 },
+        signal,
+      }),
     timeoutMs,
     `session.messages(${sessionId})`
   );
@@ -617,7 +630,7 @@ function parseRemoteNodeSessionsSuccessPayload(
     return null;
   }
 
-  if (body['ok'] !== true || body['role'] !== 'node' || body['protocolVersion'] !== '1') {
+  if (body['ok'] !== true || body['role'] !== 'node' || body['protocolVersion'] !== NODE_PROTOCOL_VERSION) {
     return null;
   }
 
@@ -1066,12 +1079,12 @@ async function getLocalSessionsResult(stickyBusyDelayMs: number): Promise<Sessio
     const results = await Promise.allSettled(ports.map(async (port) => {
       const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
       const sessionsResult = await withTimeout(
-        client.session.list(),
+        (signal) => client.session.list({ signal }),
         sessionListTimeoutMs,
         `session.list(${port})`
       );
       const statusResult = await withTimeout(
-        client.session.status(),
+        (signal) => client.session.status({ signal }),
         sessionStatusTimeoutMs,
         `session.status(${port})`
       ).catch(() => ({ data: {} }));

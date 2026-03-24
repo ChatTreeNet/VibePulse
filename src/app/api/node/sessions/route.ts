@@ -233,19 +233,30 @@ function readPositiveTimeoutEnv(name: string, fallback: number): number {
   return fallback;
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  const timeoutError = new Error(`${label} timed out after ${timeoutMs}ms`);
+  const timeoutController = new AbortController();
   let timeoutHandle: NodeJS.Timeout | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+      timeoutController.abort();
+      reject(timeoutError);
     }, timeoutMs);
   });
 
-  return Promise.race([promise, timeoutPromise]).finally(() => {
+  const operationPromise = operation(timeoutController.signal).catch((error) => {
+    if (timeoutController.signal.aborted) {
+      throw timeoutError;
+    }
+
+    throw error;
+  });
+
+  return Promise.race([operationPromise, timeoutPromise]).finally(() => {
     if (timeoutHandle) {
       clearTimeout(timeoutHandle);
     }
-  }) as Promise<T>;
+  });
 }
 
 function normalizePartStatus(status: string): string {
@@ -280,10 +291,12 @@ async function fetchPartStatuses(
   timeoutMs: number
 ): Promise<MessageStateStatus[]> {
   const messagesResult = await withTimeout(
-    client.session.messages({
-      path: { id: sessionId },
-      query: { limit: 8 },
-    }),
+    (signal) =>
+      client.session.messages({
+        path: { id: sessionId },
+        query: { limit: 8 },
+        signal,
+      }),
     timeoutMs,
     `session.messages(${sessionId})`
   );
@@ -680,8 +693,16 @@ async function getLocalSessionsResult(stickyBusyDelayMs: number): Promise<LocalS
     const results = await Promise.allSettled(
       ports.map(async (port) => {
         const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
-        const sessionsResult = await withTimeout(client.session.list(), sessionListTimeoutMs, `session.list(${port})`);
-        const statusResult = await withTimeout(client.session.status(), sessionStatusTimeoutMs, `session.status(${port})`).catch(() => ({ data: {} }));
+        const sessionsResult = await withTimeout(
+          (signal) => client.session.list({ signal }),
+          sessionListTimeoutMs,
+          `session.list(${port})`
+        );
+        const statusResult = await withTimeout(
+          (signal) => client.session.status({ signal }),
+          sessionStatusTimeoutMs,
+          `session.status(${port})`
+        ).catch(() => ({ data: {} }));
         return { port, client, sessions: sessionsResult.data || [], status: statusResult.data || {} };
       })
     );
