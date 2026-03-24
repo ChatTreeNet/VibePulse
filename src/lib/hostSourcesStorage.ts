@@ -13,6 +13,7 @@ type NodeUrlValidationResult =
   | { ok: false; error: NodeUrlValidationError };
 
 function normalizeParsedBaseUrl(url: URL): string {
+  url.search = '';
   url.hash = '';
   return url.toString().replace(/\/+$/, '');
 }

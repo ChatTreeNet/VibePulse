@@ -123,6 +123,21 @@ describe('nodeRegistry', () => {
     }
   });
 
+  it('strips query and hash fragments from normalized baseUrl values', async () => {
+    const created = await registry.createNode({
+      nodeLabel: 'Query Node',
+      baseUrl: 'https://query.example.com/base/path/?tenant=acme#frag',
+      token: 'token',
+      enabled: true,
+    });
+
+    expect(created.baseUrl).toBe('https://query.example.com/base/path');
+
+    const list = await registry.listNodes();
+    expect(list).toHaveLength(1);
+    expect(list[0].baseUrl).toBe('https://query.example.com/base/path');
+  });
+
   it('updates, toggles, and deletes nodes', async () => {
     const created = await registry.createNode({
       nodeLabel: 'Mutable Node',

@@ -64,6 +64,7 @@ export class NodeRegistryError extends Error {
 }
 
 function normalizeParsedBaseUrl(url: URL): string {
+  url.search = '';
   url.hash = '';
   return url.toString().replace(/\/+$/, '');
 }

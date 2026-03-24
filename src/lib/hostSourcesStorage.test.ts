@@ -16,7 +16,9 @@ describe('hostSourcesStorage', () => {
         delete mockLocalStorage[key];
       },
       clear: () => {
-        Object.keys(mockLocalStorage).forEach((key) => delete mockLocalStorage[key]);
+        Object.keys(mockLocalStorage).forEach((key) => {
+          delete mockLocalStorage[key];
+        });
       },
     });
   });
@@ -34,6 +36,10 @@ describe('hostSourcesStorage', () => {
         normalizedBaseUrl: 'http://example.com',
       });
       expect(validateNodeUrl('https://example.com/path/')).toEqual({
+        ok: true,
+        normalizedBaseUrl: 'https://example.com/path',
+      });
+      expect(validateNodeUrl('https://example.com/path/?tenant=acme#hash')).toEqual({
         ok: true,
         normalizedBaseUrl: 'https://example.com/path',
       });
