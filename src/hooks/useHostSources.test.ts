@@ -9,6 +9,7 @@ import { saveHostFilter } from '@/lib/hostSourcesStorage';
 const STORAGE_KEY_FILTER = 'vibepulse:host-filter:v1';
 
 type RenderFn = (ui: ReactElement) => unknown;
+type RenderResultLike = { rerender: (ui: ReactElement) => void };
 
 function getRender(): RenderFn {
   return (TestingLibraryReact as unknown as { render: RenderFn }).render;
@@ -109,7 +110,7 @@ describe('useHostSources', () => {
     let currentValue: ReturnType<typeof useHostSources> | null = null;
     const render = getRender();
 
-    render(createElement(
+    const renderResult = render(createElement(
       QueryClientProvider,
       { client: queryClient },
       createElement(HookProbeWithOptions, {
@@ -118,7 +119,20 @@ describe('useHostSources', () => {
           currentValue = value;
         },
       })
-    ));
+    )) as RenderResultLike;
+
+    const rerenderRuntimeRole = (nextRuntimeRole: 'hub' | 'node' | 'unknown') => {
+      renderResult.rerender(createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(HookProbeWithOptions, {
+          runtimeRole: nextRuntimeRole,
+          onChange: (value) => {
+            currentValue = value;
+          },
+        })
+      ));
+    };
 
     const getCurrentValue = () => {
       if (!currentValue) {
@@ -128,7 +142,7 @@ describe('useHostSources', () => {
       return currentValue;
     };
 
-    return { getCurrentValue };
+    return { getCurrentValue, rerenderRuntimeRole };
   }
 
   function renderPairedUseHostSources() {
@@ -362,6 +376,48 @@ describe('useHostSources', () => {
 
     expect(JSON.parse(mockLocalStorage[STORAGE_KEY_FILTER])).toBe('remote-1');
     expect(getCurrentValue().activeFilter).toBe('all');
+
+    await act(async () => {
+      resolveFetch?.({
+        ok: true,
+        json: async () => ({
+          nodes: [{ nodeId: 'remote-1', nodeLabel: 'Remote 1', baseUrl: 'https://one.example.com', enabled: true }],
+        }),
+      });
+    });
+
+    await waitFor(() => {
+      expect(getCurrentValue().activeFilter).toBe('remote-1');
+    });
+
+    expect(JSON.parse(mockLocalStorage[STORAGE_KEY_FILTER])).toBe('remote-1');
+  });
+
+  it('does not overwrite a persisted remote filter while runtime role transitions unknown -> hub', async () => {
+    saveHostFilter('remote-1');
+
+    let resolveFetch:
+      | ((value: { ok: boolean; json: () => Promise<{ nodes: Array<{ nodeId: string; nodeLabel: string; baseUrl: string; enabled: boolean }> }> }) => void)
+      | null = null;
+
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    const { getCurrentValue, rerenderRuntimeRole } = renderUseHostSourcesWithRuntimeRole('unknown');
+
+    await waitFor(() => {
+      expect(JSON.parse(mockLocalStorage[STORAGE_KEY_FILTER])).toBe('remote-1');
+    });
+
+    expect(getCurrentValue().activeFilter).toBe('all');
+
+    act(() => {
+      rerenderRuntimeRole('hub');
+    });
 
     await act(async () => {
       resolveFetch?.({

@@ -86,6 +86,7 @@ async function fetchNodes(): Promise<RemoteHostConfig[]> {
 
 export function useHostSources(options: UseHostSourcesOptions = {}): UseHostSourcesResult {
   const runtimeRole = options.runtimeRole ?? 'hub';
+  const runtimeRoleResolved = runtimeRole !== 'unknown';
   const localOnlyRuntime = runtimeRole !== 'hub';
   const queryClient = useQueryClient();
   const [activeFilterState, setActiveFilterState] = useState<HostFilterValue>(() => getHostFilter());
@@ -101,7 +102,7 @@ export function useHostSources(options: UseHostSourcesOptions = {}): UseHostSour
     [activeFilterState, remoteHosts]
   );
 
-  const canPersistNormalizedFilter = localOnlyRuntime || (!isLoading && !error);
+  const canPersistNormalizedFilter = runtimeRoleResolved && (localOnlyRuntime || (!isLoading && !error));
 
   useEffect(() => {
     const syncPersistedState = () => {
