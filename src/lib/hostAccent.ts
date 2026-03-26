@@ -22,8 +22,15 @@ const HOST_ACCENT_PALETTE: HostAccentPaletteItem[] = [
 
 const DEFAULT_TEXT_CLASS = 'text-zinc-400 dark:text-zinc-500';
 
+const assignedAccentByHost = new Map<string, number>();
+const usedAccentIndexes = new Set<number>();
+
+function toHostAccentKey(hostKey?: string, hostLabel?: string): string {
+  return `${hostKey ?? ''}:${hostLabel ?? ''}`;
+}
+
 function getHostAccentIndex(hostKey?: string, hostLabel?: string): number {
-  const source = `${hostKey ?? ''}:${hostLabel ?? ''}`;
+  const source = toHostAccentKey(hostKey, hostLabel);
   let hash = 0;
 
   for (let index = 0; index < source.length; index += 1) {
@@ -33,10 +40,42 @@ function getHostAccentIndex(hostKey?: string, hostLabel?: string): number {
   return hash % HOST_ACCENT_PALETTE.length;
 }
 
+function getOrAssignHostAccentIndex(hostKey?: string, hostLabel?: string): number {
+  const hostAccentKey = toHostAccentKey(hostKey, hostLabel);
+  const existingAssignment = assignedAccentByHost.get(hostAccentKey);
+  if (existingAssignment !== undefined) {
+    return existingAssignment;
+  }
+
+  const preferredIndex = getHostAccentIndex(hostKey, hostLabel);
+  if (!usedAccentIndexes.has(preferredIndex)) {
+    assignedAccentByHost.set(hostAccentKey, preferredIndex);
+    usedAccentIndexes.add(preferredIndex);
+    return preferredIndex;
+  }
+
+  for (let offset = 1; offset < HOST_ACCENT_PALETTE.length; offset += 1) {
+    const nextIndex = (preferredIndex + offset) % HOST_ACCENT_PALETTE.length;
+    if (!usedAccentIndexes.has(nextIndex)) {
+      assignedAccentByHost.set(hostAccentKey, nextIndex);
+      usedAccentIndexes.add(nextIndex);
+      return nextIndex;
+    }
+  }
+
+  assignedAccentByHost.set(hostAccentKey, preferredIndex);
+  return preferredIndex;
+}
+
+export function resetHostAccentAssignmentsForTests(): void {
+  assignedAccentByHost.clear();
+  usedAccentIndexes.clear();
+}
+
 export function getHostAccentTextClass(hostKey?: string, hostLabel?: string): string {
   if (!hostKey && !hostLabel) {
     return DEFAULT_TEXT_CLASS;
   }
 
-  return HOST_ACCENT_PALETTE[getHostAccentIndex(hostKey, hostLabel)].textClass;
+  return HOST_ACCENT_PALETTE[getOrAssignHostAccentIndex(hostKey, hostLabel)].textClass;
 }
