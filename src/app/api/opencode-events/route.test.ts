@@ -53,6 +53,49 @@ function createAsyncIterable(events: unknown[]): AsyncIterable<unknown> {
   };
 }
 
+function createAbortAwareAsyncIterable(signal: AbortSignal): AsyncIterable<unknown> {
+  return {
+    [Symbol.asyncIterator]() {
+      let emittedFirstEvent = false;
+
+      return {
+        async next() {
+          if (!emittedFirstEvent) {
+            emittedFirstEvent = true;
+            return {
+              done: false,
+              value: {
+                type: 'session.status',
+                properties: {
+                  sessionID: 'local-parent',
+                  status: { type: 'busy' },
+                },
+                timestamp: 100,
+              },
+            };
+          }
+
+          return await new Promise((_, reject) => {
+            if (signal.aborted) {
+              reject(new DOMException('This operation was aborted', 'AbortError'));
+              return;
+            }
+
+            signal.addEventListener(
+              'abort',
+              () => reject(new DOMException('This operation was aborted', 'AbortError')),
+              { once: true }
+            );
+          });
+        },
+        async return() {
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  };
+}
+
 function createNodeEventResponse(events: unknown[], mode: 'ok' | 'error' = 'ok'): Response {
   const encoder = new TextEncoder();
 
@@ -99,6 +142,7 @@ describe('/api/opencode-events', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it('merges local events with remote node events and tags the remote host correctly', async () => {
@@ -460,5 +504,121 @@ describe('/api/opencode-events', () => {
     });
 
     await reader!.cancel();
+  });
+
+  it('logs secondary remote preflight timeouts as concise messages', async () => {
+    vi.stubEnv('OPENCODE_EVENTS_PREFLIGHT_TIMEOUT_MS', '5');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    mockGlobalEvent.mockResolvedValue({
+      stream: createAsyncIterable([
+        {
+          type: 'session.status',
+          properties: {
+            sessionID: 'local-parent',
+            status: { type: 'busy' },
+          },
+          timestamp: 100,
+        },
+      ]),
+    });
+
+    mockListNodeRecords.mockResolvedValue([
+      {
+        nodeId: 'remote-slow',
+        nodeLabel: 'Remote Slow',
+        baseUrl: 'https://remote-slow.example.com',
+        enabled: true,
+        token: 'secret-slow',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+    ]);
+
+    const mockFetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const signal = init?.signal;
+      return await new Promise<Response>((_resolve, reject) => {
+        if (signal instanceof AbortSignal) {
+          if (signal.aborted) {
+            reject(new DOMException('This operation was aborted', 'AbortError'));
+            return;
+          }
+
+          signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('This operation was aborted', 'AbortError')),
+            { once: true }
+          );
+        }
+      });
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await GET(new Request('http://localhost/api/opencode-events'));
+    expect(response.status).toBe(200);
+
+    const reader = response.body?.getReader();
+    expect(reader).toBeTruthy();
+
+    const first = await readPayload(reader!);
+    expect(first).toEqual({
+      type: 'session.status',
+      properties: {
+        sessionID: 'local-parent',
+        status: { type: 'busy' },
+      },
+      timestamp: 100,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await reader!.cancel();
+
+    const timeoutLogCall = warnSpy.mock.calls.find(
+      (call) => call[0] === 'Failed to connect to secondary event source:' && call[1] === 'node remote-slow'
+    );
+
+    expect(timeoutLogCall).toBeDefined();
+    if (!timeoutLogCall) {
+      throw new Error('Expected timeout log call for remote-slow source');
+    }
+
+    expect(typeof timeoutLogCall[2]).toBe('string');
+    expect(timeoutLogCall[2]).toContain('Remote node event stream preflight timed out for remote-slow after 5ms');
+
+    warnSpy.mockRestore();
+  });
+
+  it('does not warn when stream teardown aborts an active source', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    mockGlobalEvent.mockImplementation(({ signal }: { signal: AbortSignal }) => {
+      return Promise.resolve({
+        stream: createAbortAwareAsyncIterable(signal),
+      });
+    });
+
+    const response = await GET(new Request('http://localhost/api/opencode-events'));
+
+    expect(response.status).toBe(200);
+
+    const reader = response.body?.getReader();
+    expect(reader).toBeTruthy();
+
+    const first = await readPayload(reader!);
+    expect(first).toEqual({
+      type: 'session.status',
+      properties: {
+        sessionID: 'local-parent',
+        status: { type: 'busy' },
+      },
+      timestamp: 100,
+    });
+
+    await reader!.cancel();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    warnSpy.mockRestore();
   });
 });
