@@ -1,32 +1,103 @@
 import { discoverOpencodePortsWithMeta } from '@/lib/opencodeDiscovery';
-import { parseSourceKey } from '@/lib/hostIdentity';
+import { parseActionSessionReference, resolveLocalActionSessionId } from '@/lib/hostIdentity';
+import { listNodeRecords } from '@/lib/nodeRegistry';
+import { createNodeRequestHeaders } from '@/lib/nodeProtocol';
 import {
     clearSessionForceUnarchived,
     markSessionStickyStatusBlocked,
 } from '@/lib/sessionArchiveOverrides';
 
-function resolveLocalSessionId(id: string): string | null {
-    if (!id.includes(':')) {
-        return id;
+const REMOTE_NODE_ACTION_TIMEOUT_MS = 5_000;
+
+function createInvalidActionSessionIdResponse() {
+    return Response.json(
+        { error: 'Invalid action session id', reason: 'invalid_action_session_id' },
+        { status: 400 }
+    );
+}
+
+function createSessionNotFoundResponse() {
+    return Response.json(
+        { error: 'Session not found', reason: 'session_not_found' },
+        { status: 404 }
+    );
+}
+
+function createArchiveFailureResponse(status: number, message?: string) {
+    return Response.json(
+        {
+            error: 'Failed to archive session',
+            reason: 'archive_request_failed',
+            ...(message ? { message } : {}),
+        },
+        { status }
+    );
+}
+
+async function forwardRemoteArchive(hostId: string, sessionId: string): Promise<Response> {
+    const nodeRecords = await listNodeRecords();
+    const nodeRecord = nodeRecords.find((node) => node.nodeId === hostId);
+
+    if (!nodeRecord || !nodeRecord.enabled) {
+        return createSessionNotFoundResponse();
     }
 
+    const abortController = new AbortController();
+    let timedOut = false;
+    const timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        abortController.abort();
+    }, REMOTE_NODE_ACTION_TIMEOUT_MS);
+
     try {
-        const { hostId, sessionId } = parseSourceKey(id);
-        return hostId === 'local' ? sessionId : null;
+        const response = await fetch(`${nodeRecord.baseUrl}/api/node/sessions/${sessionId}/archive`, {
+            method: 'POST',
+            headers: createNodeRequestHeaders(nodeRecord.token),
+            signal: abortController.signal,
+        });
+
+        if (response.ok) {
+            return Response.json({ success: true });
+        }
+
+        const body = await response.json().catch(() => ({}));
+        return Response.json(
+            {
+                error: 'Remote archive failed',
+                reason: typeof body.reason === 'string' ? body.reason : `node_request_failed_${response.status}`,
+            },
+            { status: response.status }
+        );
     } catch {
-        return null;
+        return Response.json(
+            {
+                error: timedOut ? 'Remote node request timed out' : 'Remote node request failed',
+                reason: timedOut ? 'upstream_timeout' : 'upstream_unreachable',
+            },
+            { status: timedOut ? 504 : 503 }
+        );
+    } finally {
+        clearTimeout(timeoutHandle);
     }
 }
 
 export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
-    const sessionId = resolveLocalSessionId(id);
+    const sessionId = resolveLocalActionSessionId(id);
 
     if (!sessionId) {
-        return Response.json(
-            { error: 'Session not found' },
-            { status: 404 }
-        );
+        try {
+            const actionTarget = parseActionSessionReference(id);
+            if (actionTarget.isRemote) {
+                return forwardRemoteArchive(actionTarget.hostId, actionTarget.sessionId);
+            }
+        } catch {
+            return createInvalidActionSessionIdResponse();
+        }
+    }
+
+    if (!sessionId) {
+        return createInvalidActionSessionIdResponse();
     }
 
     const { ports, timedOut } = discoverOpencodePortsWithMeta();
@@ -43,6 +114,10 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
             { status: 503 }
         );
     }
+    let sawNotFound = false;
+    let lastFailureStatus: number | null = null;
+    let lastFailureMessage: string | undefined;
+
     for (const port of ports) {
         try {
             const baseUrl = `http://localhost:${port}`;
@@ -58,14 +133,31 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
                 markSessionStickyStatusBlocked(sessionId);
                 return Response.json({ success: true });
             }
-            console.error(`Failed to archive session on port ${port}:`, await response.text());
+
+            const responseText = await response.text();
+            console.error(`Failed to archive session on port ${port}:`, responseText);
+
+            if (response.status === 404) {
+                sawNotFound = true;
+                continue;
+            }
+
+            lastFailureStatus = response.status;
+            lastFailureMessage = responseText || undefined;
         } catch (error) {
             console.error(`Failed to archive session on port ${port}:`, error);
+            lastFailureStatus = 500;
+            lastFailureMessage = error instanceof Error ? error.message : String(error);
         }
     }
 
-    return Response.json(
-        { error: 'Session not found' },
-        { status: 404 }
-    );
+    if (lastFailureStatus !== null) {
+        return createArchiveFailureResponse(lastFailureStatus, lastFailureMessage);
+    }
+
+    if (sawNotFound) {
+        return createSessionNotFoundResponse();
+    }
+
+    return createArchiveFailureResponse(500);
 }

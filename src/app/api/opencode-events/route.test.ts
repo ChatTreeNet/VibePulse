@@ -189,6 +189,7 @@ describe('/api/opencode-events', () => {
         hostId: 'remote-1',
         hostLabel: 'Remote 1',
         hostKind: 'remote',
+        hostBaseUrl: 'https://remote-1.example.com',
       },
       event: {
         payload: {
@@ -296,6 +297,7 @@ describe('/api/opencode-events', () => {
         hostId: 'remote-good',
         hostLabel: 'Remote Good',
         hostKind: 'remote',
+        hostBaseUrl: 'https://remote-good.example.com',
       },
       event: {
         type: 'question.asked',
@@ -395,6 +397,7 @@ describe('/api/opencode-events', () => {
         hostId: 'remote-1',
         hostLabel: 'Remote 1',
         hostKind: 'remote',
+        hostBaseUrl: 'https://remote-1.example.com',
       },
       event: {
         type: 'question.asked',

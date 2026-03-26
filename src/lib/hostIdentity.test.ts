@@ -6,6 +6,8 @@ import {
   getSessionIdFromSourceKey,
   buildSourceKey,
   isFromHost,
+  parseActionSessionReference,
+  resolveLocalActionSessionId,
 } from './hostIdentity';
 
 describe('composeSourceKey', () => {
@@ -129,5 +131,57 @@ describe('isFromHost', () => {
 
   it('returns false for invalid sourceKey', () => {
     expect(isFromHost('invalid-key', 'host-1')).toBe(false);
+  });
+});
+
+describe('parseActionSessionReference', () => {
+  it('treats a raw session id as local', () => {
+    expect(parseActionSessionReference('ses_local_123')).toEqual({
+      hostId: 'local',
+      sessionId: 'ses_local_123',
+      isRemote: false,
+    });
+  });
+
+  it('parses a composite local session id', () => {
+    expect(parseActionSessionReference('local:ses_local_123')).toEqual({
+      hostId: 'local',
+      sessionId: 'ses_local_123',
+      isRemote: false,
+    });
+  });
+
+  it('parses a composite remote session id', () => {
+    expect(parseActionSessionReference('node-1:ses_123')).toEqual({
+      hostId: 'node-1',
+      sessionId: 'ses_123',
+      isRemote: true,
+    });
+  });
+
+  it('rejects empty values', () => {
+    expect(() => parseActionSessionReference('   ')).toThrow('cannot be empty');
+  });
+
+  it('rejects malformed composite ids', () => {
+    expect(() => parseActionSessionReference('node-1:')).toThrow('cannot be empty');
+  });
+});
+
+describe('resolveLocalActionSessionId', () => {
+  it('returns the raw id for local sessions', () => {
+    expect(resolveLocalActionSessionId('ses_local_123')).toBe('ses_local_123');
+  });
+
+  it('returns the session id for composite local sessions', () => {
+    expect(resolveLocalActionSessionId('local:ses_local_123')).toBe('ses_local_123');
+  });
+
+  it('returns null for remote sessions', () => {
+    expect(resolveLocalActionSessionId('node-1:ses_123')).toBeNull();
+  });
+
+  it('returns null for malformed action ids', () => {
+    expect(resolveLocalActionSessionId('node-1:')).toBeNull();
   });
 });

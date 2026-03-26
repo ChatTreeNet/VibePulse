@@ -1,9 +1,17 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { KanbanCard } from '@/types';
+import { buildEditorUri } from '@/lib/editorLauncher';
+import { mapSessionActionError } from '@/lib/sessionActionErrors';
+
+interface ConfigResponse {
+    vibepulse?: {
+        openEditorTargetMode?: 'remote' | 'hub';
+    };
+}
 
 interface SessionCardProps {
     card: KanbanCard;
@@ -71,29 +79,73 @@ export function SessionCard({ card }: SessionCardProps) {
     const [openTool, setOpenTool] = useState('vscode');
     const [remoteSshHost, setRemoteSshHost] = useState('');
     const [actionOpen, setActionOpen] = useState(false);
+    const [actionError, setActionError] = useState<string | null>(null);
+    const [pendingAction, setPendingAction] = useState<'open' | 'archive' | 'delete' | null>(null);
     const actionMenuRef = useRef<HTMLDivElement>(null);
+    const { data: config, isLoading: isConfigLoading, isError: isConfigError } = useQuery<ConfigResponse>({
+        queryKey: ['opencode-config'],
+        queryFn: async () => {
+            const response = await fetch('/api/opencode-config');
+            if (!response.ok) {
+                throw new Error('Failed to load config');
+            }
+
+            return response.json();
+        },
+        staleTime: 30_000,
+    });
     const lastActiveLabel = `Last active: ${formatRelativeTime(card.updatedAt)}`;
     const startedLabel = `Started: ${formatRelativeTime(card.createdAt)}`;
     const todoProgress = card.todosTotal > 0
         ? Math.round((card.todosCompleted / card.todosTotal) * 100)
         : 0;
+    const openEditorTargetMode = config?.vibepulse?.openEditorTargetMode;
+    const isRemoteCard = card.hostId !== undefined && card.hostId !== 'local';
+    const isConfigPendingForRemoteOpen = isRemoteCard && isConfigLoading && !config;
+    const isConfigUnavailableForRemoteOpen = isRemoteCard && !config && !isConfigLoading;
+    const isActionPending = pendingAction !== null;
+    const pendingActionLabel = pendingAction === 'open'
+        ? 'Opening…'
+        : pendingAction === 'archive'
+            ? 'Archiving…'
+            : pendingAction === 'delete'
+                ? 'Deleting…'
+                : null;
 
     useEffect(() => {
         const storedTool = window.localStorage.getItem('vibepulse:open-tool');
         if (storedTool) {
             setOpenTool(storedTool);
         }
-        const storedHost = window.localStorage.getItem('vibepulse:ssh-host');
-        if (storedHost) {
-            setRemoteSshHost(storedHost);
+
+        const hostFromBaseUrl = (() => {
+            if (!card.hostBaseUrl || !isRemoteCard) {
+                return '';
+            }
+
+            try {
+                return new URL(card.hostBaseUrl).hostname;
+            } catch {
+                return '';
+            }
+        })();
+
+        if (hostFromBaseUrl) {
+            setRemoteSshHost(hostFromBaseUrl);
         } else {
+            const storedHost = window.localStorage.getItem('vibepulse:ssh-host');
+            if (storedHost) {
+                setRemoteSshHost(storedHost);
+                return;
+            }
+
             const hostname = window.location.hostname;
             if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
                 setRemoteSshHost(hostname);
                 window.localStorage.setItem('vibepulse:ssh-host', hostname);
             }
         }
-    }, []);
+    }, [card.hostBaseUrl, isRemoteCard]);
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -107,36 +159,98 @@ export function SessionCard({ card }: SessionCardProps) {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [actionOpen]);
 
-    const buildVsCodeUri = (directory: string) => {
-        const encodedPath = encodeURI(directory.replace(/\\/g, '/'));
-        if (remoteSshHost) {
-            return `vscode://vscode-remote/ssh-remote+${remoteSshHost}${encodedPath.startsWith('/') ? '' : '/'}${encodedPath}`;
+    const handleOpen = async () => {
+        if (isActionPending) {
+            return;
         }
-        return `vscode://file${encodedPath.startsWith('/') ? encodedPath : `/${encodedPath}`}`;
-    };
 
-    const handleOpen = () => {
-        const target = openTool === 'antigravity'
-            ? `antigravity://file${card.directory}`
-            : buildVsCodeUri(card.directory);
-        window.location.href = target;
+        if (isConfigPendingForRemoteOpen) {
+            return;
+        }
+
+        if (isConfigUnavailableForRemoteOpen) {
+            setActionError('Failed to load open settings. Remote open is unavailable until configuration loads.');
+            return;
+        }
+
+        setActionError(null);
+
+        if (isRemoteCard && openEditorTargetMode === 'hub' && openTool === 'antigravity') {
+            setActionError('Antigravity does not support hub-mode remote opens. Use VS Code or switch target mode to Remote node.');
+            return;
+        }
+
+        const useRemoteSshTarget = isRemoteCard && openEditorTargetMode === 'hub' && openTool === 'vscode';
+        const target = buildEditorUri(openTool === 'antigravity' ? 'antigravity' : 'vscode', card.directory, {
+            remoteSshHost: useRemoteSshTarget ? remoteSshHost : null,
+        });
+
+        if (isRemoteCard && openEditorTargetMode === 'remote') {
+            setPendingAction('open');
+            try {
+                const response = await fetch(`/api/sessions/${card.id}/open-editor`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tool: openTool }),
+                });
+
+                if (!response.ok) {
+                    const errorBody = await response.json().catch(() => null);
+                    setActionError(mapSessionActionError(errorBody, 'Failed to open remote editor'));
+                }
+            } catch {
+                setActionError('Remote node is offline or unreachable.');
+            } finally {
+                setPendingAction(null);
+            }
+
+            return;
+        }
+
+        window.location.assign(target);
     };
 
     const handleArchive = async () => {
+        if (isActionPending) {
+            return;
+        }
+
+        setActionError(null);
+        setPendingAction('archive');
         try {
-            await fetch(`/api/sessions/${card.id}/archive`, { method: 'POST' });
+            const response = await fetch(`/api/sessions/${card.id}/archive`, { method: 'POST' });
+            if (!response.ok) {
+                const errorBody = await response.json().catch(() => null);
+                setActionError(mapSessionActionError(errorBody, 'Failed to archive session'));
+            }
+        } catch {
+            setActionError('Remote node is offline or unreachable.');
         } finally {
+            setPendingAction(null);
             setActionOpen(false);
-        await queryClient.invalidateQueries({ queryKey: ['sessions'] });
+            await queryClient.invalidateQueries({ queryKey: ['sessions'] });
         }
     };
 
     const handleDelete = async () => {
+        if (isActionPending) {
+            return;
+        }
+
+        setActionError(null);
+        setPendingAction('delete');
         try {
-            await fetch(`/api/sessions/${card.id}/delete`, { method: 'POST' });
+            const response = await fetch(`/api/sessions/${card.id}/delete`, { method: 'POST' });
+            if (!response.ok) {
+                const errorBody = await response.json().catch(() => null);
+                setActionError(mapSessionActionError(errorBody, 'Failed to delete session'));
+            }
+        } catch {
+            setActionError('Remote node is offline or unreachable.');
         } finally {
+            setPendingAction(null);
             setActionOpen(false);
-        await queryClient.invalidateQueries({ queryKey: ['sessions'] });
+            await queryClient.invalidateQueries({ queryKey: ['sessions'] });
         }
     };
 
@@ -149,6 +263,8 @@ export function SessionCard({ card }: SessionCardProps) {
                 className="w-full text-left pr-24"
                 onDoubleClick={handleOpen}
                 onClick={(event) => event.stopPropagation()}
+                aria-busy={isActionPending}
+                disabled={isConfigPendingForRemoteOpen || isConfigUnavailableForRemoteOpen}
             >
                 {/* Top: Status indicator */}
                 <div className="flex items-center justify-between mb-2">
@@ -221,10 +337,30 @@ export function SessionCard({ card }: SessionCardProps) {
                         </div>
                     </div>
                 )}
+                {isConfigPendingForRemoteOpen ? (
+                    <div className="mt-3 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-700 dark:border-blue-900/40 dark:bg-blue-900/20 dark:text-blue-300">
+                        Loading open settings…
+                    </div>
+                ) : null}
+                {isConfigError && isConfigUnavailableForRemoteOpen ? (
+                    <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300">
+                        Failed to load open settings. Remote open is unavailable until configuration loads.
+                    </div>
+                ) : null}
+                {pendingActionLabel ? (
+                    <div className="mt-3 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-700 dark:border-blue-900/40 dark:bg-blue-900/20 dark:text-blue-300">
+                        {pendingActionLabel}
+                    </div>
+                ) : null}
+                {actionError ? (
+                    <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300">
+                        {actionError}
+                    </div>
+                ) : null}
             </button>
             <div className="absolute top-4 right-4 flex items-center gap-2">
                 <select
-                    className="text-xs rounded-md border border-gray-200 bg-white px-2 py-1 text-gray-600 shadow-sm hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-gray-300"
+                    className="text-xs rounded-md border border-gray-200 bg-white px-2 py-1 text-gray-600 shadow-sm hover:border-gray-300 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-gray-300"
                     value={openTool}
                     onClick={(e) => e.stopPropagation()}
                     onDoubleClick={(e) => e.stopPropagation()}
@@ -235,6 +371,7 @@ export function SessionCard({ card }: SessionCardProps) {
                     }}
                     aria-label="Open tool"
                     title="Open tool"
+                    disabled={isActionPending}
                 >
                     <option value="vscode">VSCode</option>
                     <option value="antigravity">Antigravity</option>
@@ -247,14 +384,17 @@ export function SessionCard({ card }: SessionCardProps) {
                 <div className="relative" ref={actionMenuRef}>
                     <button
                         type="button"
-                        className="inline-flex items-center justify-center w-6 h-6 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-zinc-700"
+                        className="inline-flex items-center justify-center w-6 h-6 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-zinc-700"
                         onClick={(e) => {
                             e.stopPropagation();
-                            setActionOpen((prev) => !prev);
+                            if (!isActionPending) {
+                                setActionOpen((prev) => !prev);
+                            }
                         }}
                         onDoubleClick={(e) => e.stopPropagation()}
                         aria-label="Actions"
                         title="Actions"
+                        disabled={isActionPending}
                     >
                         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" role="img" aria-hidden="true">
                             <path d="M5 10a2 2 0 110 4 2 2 0 010-4zm7 0a2 2 0 110 4 2 2 0 010-4zm7 0a2 2 0 110 4 2 2 0 010-4z" />
@@ -264,21 +404,23 @@ export function SessionCard({ card }: SessionCardProps) {
                         <div className="absolute right-0 mt-1 w-36 rounded-md border border-gray-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900 z-10">
                             <button
                                 type="button"
-                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-zinc-800"
+                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-200 dark:hover:bg-zinc-800"
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     handleArchive();
                                 }}
+                                disabled={isActionPending}
                             >
                                 Archive
                             </button>
                             <button
                                 type="button"
-                                className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+                                className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-900/20"
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     handleDelete();
                                 }}
+                                disabled={isActionPending}
                             >
                                 Delete
                             </button>

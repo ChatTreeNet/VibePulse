@@ -27,6 +27,7 @@ type RemoteSseEvent = {
         hostId: string;
         hostLabel: string;
         hostKind: 'remote';
+        hostBaseUrl?: string;
     };
     event: OpencodeEvent | { payload: OpencodeEvent; directory: string };
 };
@@ -112,6 +113,7 @@ function createSession(overrides: Partial<OpencodeSession> & Pick<OpencodeSessio
         hostId: overrides.hostId,
         hostLabel: overrides.hostLabel,
         hostKind: overrides.hostKind,
+        hostBaseUrl: overrides.hostBaseUrl,
         rawSessionId: overrides.rawSessionId,
         sourceSessionKey: overrides.sourceSessionKey ?? overrides.id,
         readOnly: overrides.readOnly,
@@ -190,7 +192,8 @@ describe('useOpencodeSync', () => {
             hostId: 'remote-1',
             hostLabel: 'Remote 1',
             hostKind: 'remote',
-            readOnly: true,
+            hostBaseUrl: 'https://remote.example.com',
+            readOnly: false,
         });
 
         const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
@@ -234,7 +237,7 @@ describe('useOpencodeSync', () => {
             hostId: 'remote-1',
             hostLabel: 'Remote 1',
             hostKind: 'remote',
-            readOnly: true,
+            readOnly: false,
         });
 
         const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
@@ -278,7 +281,7 @@ describe('useOpencodeSync', () => {
             hostId: 'remote-1',
             hostLabel: 'Remote 1',
             hostKind: 'remote',
-            readOnly: true,
+            readOnly: false,
         });
 
         const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
@@ -291,6 +294,7 @@ describe('useOpencodeSync', () => {
                     hostId: 'remote-1',
                     hostLabel: 'Remote 1',
                     hostKind: 'remote',
+                    hostBaseUrl: 'https://remote.example.com',
                 },
                 event: {
                     payload: {
@@ -312,7 +316,8 @@ describe('useOpencodeSync', () => {
 
         expect(nextLocalSession?.realTimeStatus).toBe('idle');
         expect(nextRemoteSession?.realTimeStatus).toBe('busy');
-        expect(nextRemoteSession?.readOnly).toBe(true);
+        expect(nextRemoteSession?.readOnly).toBe(false);
+        expect(nextRemoteSession?.hostBaseUrl).toBe('https://remote.example.com');
         expect(getSseStatusSnapshot().get('remote-1:abc')?.status).toBe('busy');
         expect(getSseStatusSnapshot().has('local:abc')).toBe(false);
 
@@ -333,7 +338,7 @@ describe('useOpencodeSync', () => {
             hostId: 'remote-1',
             hostLabel: 'Remote 1',
             hostKind: 'remote',
-            readOnly: true,
+            readOnly: false,
         });
 
         const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({

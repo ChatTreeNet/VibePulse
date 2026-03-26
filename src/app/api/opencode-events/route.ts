@@ -23,6 +23,7 @@ type RemoteEventSource = {
   hostId: string;
   hostLabel: string;
   hostKind: 'remote';
+  hostBaseUrl: string;
 };
 
 function getPreflightTimeoutMs(): number {
@@ -41,6 +42,7 @@ function toRemoteEventSource(nodeRecord: StoredNodeRecord): RemoteEventSource {
     hostId: nodeRecord.nodeId,
     hostLabel: nodeRecord.nodeLabel,
     hostKind: 'remote',
+    hostBaseUrl: nodeRecord.baseUrl,
   };
 }
 

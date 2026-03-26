@@ -79,3 +79,44 @@ export function isFromHost(sourceKey: string, hostId: string): boolean {
   const parsedHostId = getHostIdFromSourceKey(sourceKey);
   return parsedHostId === hostId;
 }
+
+export interface ActionSessionReference {
+  hostId: string;
+  sessionId: string;
+  isRemote: boolean;
+}
+
+export function parseActionSessionReference(value: string): ActionSessionReference {
+  if (typeof value !== 'string') {
+    throw new Error('Invalid action session id: must be a string');
+  }
+
+  const trimmedValue = value.trim();
+  if (trimmedValue === '') {
+    throw new Error('Invalid action session id: cannot be empty');
+  }
+
+  if (!trimmedValue.includes(':')) {
+    return {
+      hostId: 'local',
+      sessionId: trimmedValue,
+      isRemote: false,
+    };
+  }
+
+  const { hostId, sessionId } = parseSourceKey(trimmedValue);
+  return {
+    hostId,
+    sessionId,
+    isRemote: hostId !== 'local',
+  };
+}
+
+export function resolveLocalActionSessionId(value: string): string | null {
+  try {
+    const reference = parseActionSessionReference(value);
+    return reference.isRemote ? null : reference.sessionId;
+  } catch {
+    return null;
+  }
+}

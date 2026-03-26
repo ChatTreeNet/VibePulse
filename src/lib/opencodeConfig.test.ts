@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { readConfig, writeConfig } from './opencodeConfig';
+import { normalizeVibePulseConfig, readConfig, writeConfig } from './opencodeConfig';
 import { writeFile, unlink, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
@@ -82,6 +82,19 @@ describe('opencodeConfig', () => {
 
       const config = await readConfig(TEST_CONFIG_PATH);
       expect(config).toEqual({});
+    });
+
+    it('normalizes missing openEditorTargetMode to remote', () => {
+      expect(normalizeVibePulseConfig({ stickyBusyDelayMs: 1000 })).toEqual({
+        stickyBusyDelayMs: 1000,
+        openEditorTargetMode: 'remote',
+      });
+    });
+
+    it('preserves hub openEditorTargetMode when configured', () => {
+      expect(normalizeVibePulseConfig({ openEditorTargetMode: 'hub' })).toEqual({
+        openEditorTargetMode: 'hub',
+      });
     });
   });
 });

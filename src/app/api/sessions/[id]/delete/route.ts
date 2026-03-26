@@ -1,33 +1,97 @@
 import { createOpencodeClient } from '@opencode-ai/sdk';
 import { discoverOpencodePortsWithMeta } from '@/lib/opencodeDiscovery';
-import { parseSourceKey } from '@/lib/hostIdentity';
+import { parseActionSessionReference, resolveLocalActionSessionId } from '@/lib/hostIdentity';
+import { listNodeRecords } from '@/lib/nodeRegistry';
+import { createNodeRequestHeaders } from '@/lib/nodeProtocol';
 import {
     clearSessionForceUnarchived,
     clearSessionStickyStatusBlocked,
 } from '@/lib/sessionArchiveOverrides';
 
-function resolveLocalSessionId(id: string): string | null {
-    if (!id.includes(':')) {
-        return id;
+const REMOTE_NODE_ACTION_TIMEOUT_MS = 5_000;
+
+function createInvalidActionSessionIdResponse() {
+    return Response.json(
+        { error: 'Invalid action session id', reason: 'invalid_action_session_id' },
+        { status: 400 }
+    );
+}
+
+function createSessionNotFoundResponse(message?: string) {
+    return Response.json(
+        {
+            error: 'Session not found',
+            reason: 'session_not_found',
+            ...(message ? { message } : {}),
+        },
+        { status: 404 }
+    );
+}
+
+async function forwardRemoteDelete(hostId: string, sessionId: string): Promise<Response> {
+    const nodeRecords = await listNodeRecords();
+    const nodeRecord = nodeRecords.find((node) => node.nodeId === hostId);
+
+    if (!nodeRecord || !nodeRecord.enabled) {
+        return createSessionNotFoundResponse();
     }
 
+    const abortController = new AbortController();
+    let timedOut = false;
+    const timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        abortController.abort();
+    }, REMOTE_NODE_ACTION_TIMEOUT_MS);
+
     try {
-        const { hostId, sessionId } = parseSourceKey(id);
-        return hostId === 'local' ? sessionId : null;
+        const response = await fetch(`${nodeRecord.baseUrl}/api/node/sessions/${sessionId}/delete`, {
+            method: 'POST',
+            headers: createNodeRequestHeaders(nodeRecord.token),
+            signal: abortController.signal,
+        });
+
+        if (response.ok) {
+            return Response.json({ success: true });
+        }
+
+        const body = await response.json().catch(() => ({}));
+        return Response.json(
+            {
+                error: 'Remote delete failed',
+                reason: typeof body.reason === 'string' ? body.reason : `node_request_failed_${response.status}`,
+            },
+            { status: response.status }
+        );
     } catch {
-        return null;
+        return Response.json(
+            {
+                error: timedOut ? 'Remote node request timed out' : 'Remote node request failed',
+                reason: timedOut ? 'upstream_timeout' : 'upstream_unreachable',
+            },
+            { status: timedOut ? 504 : 503 }
+        );
+    } finally {
+        clearTimeout(timeoutHandle);
     }
 }
 
 export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
-    const sessionId = resolveLocalSessionId(id);
+    const sessionId = resolveLocalActionSessionId(id);
 
     if (!sessionId) {
-        return Response.json(
-            { error: 'Session not found' },
-            { status: 404 }
-        );
+        try {
+            const actionTarget = parseActionSessionReference(id);
+            if (actionTarget.isRemote) {
+                return forwardRemoteDelete(actionTarget.hostId, actionTarget.sessionId);
+            }
+        } catch {
+            return createInvalidActionSessionIdResponse();
+        }
+    }
+
+    if (!sessionId) {
+        return createInvalidActionSessionIdResponse();
     }
 
     const { ports, timedOut } = discoverOpencodePortsWithMeta();
@@ -58,6 +122,10 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
     }
 
     const lastError = errors[errors.length - 1];
+    if (errors.length > 0 && errors.every((error) => /not found|404/i.test(error.message))) {
+        return createSessionNotFoundResponse(lastError?.message);
+    }
+
     return Response.json(
         {
             error: 'Failed to delete session',

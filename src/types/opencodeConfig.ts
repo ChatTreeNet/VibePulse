@@ -44,6 +44,15 @@ export interface CategoryConfig {
   description?: string;
 }
 
+export type OpenEditorTargetMode = 'remote' | 'hub';
+
+export interface VibePulseConfig {
+  stickyBusyDelayMs?: number;
+  sessionsRefreshIntervalMs?: number;
+  openEditorTargetMode?: OpenEditorTargetMode;
+  [key: string]: unknown;
+}
+
 /**
  * OhMyOpencode configuration
  * Root configuration object for oh-my-opencode
@@ -84,13 +93,7 @@ export interface OhMyOpencodeConfig {
   /** Custom environment variables */
   env?: Record<string, string>;
   /** VibePulse settings */
-  vibepulse?: {
-    /** Delay in milliseconds to keep session status 'busy' to prevent flickering */
-    stickyBusyDelayMs?: number;
-    /** Interval in milliseconds to refresh session data */
-    sessionsRefreshIntervalMs?: number;
-    [key: string]: unknown;
-  };
+  vibepulse?: VibePulseConfig;
   /** Additional custom configuration */
   [key: string]: unknown;
 }

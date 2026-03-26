@@ -4,15 +4,18 @@ import * as React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, Controller } from 'react-hook-form';
 import { Settings as SettingsIcon, Save, Loader2, Check, AlertCircle } from 'lucide-react';
+import type { OpenEditorTargetMode } from '@/types/opencodeConfig';
 
 interface GeneralSettingsFormData {
   stickyBusyDelaySeconds: number;
   sessionsRefreshIntervalSeconds: number;
+  openEditorTargetMode: OpenEditorTargetMode;
 }
 
 interface VibepulseConfig {
   stickyBusyDelayMs?: number;
   sessionsRefreshIntervalMs?: number;
+  openEditorTargetMode?: OpenEditorTargetMode;
 }
 
 interface ConfigResponse {
@@ -44,7 +47,8 @@ export function GeneralSettingsForm() {
   } = useForm<GeneralSettingsFormData>({
     defaultValues: {
       stickyBusyDelaySeconds: 1,
-      sessionsRefreshIntervalSeconds: 5
+      sessionsRefreshIntervalSeconds: 5,
+      openEditorTargetMode: 'remote'
     }
   });
 
@@ -56,7 +60,8 @@ export function GeneralSettingsForm() {
           : 1,
         sessionsRefreshIntervalSeconds: typeof config.vibepulse?.sessionsRefreshIntervalMs === 'number'
           ? Math.round(config.vibepulse.sessionsRefreshIntervalMs / 1000)
-          : 5
+          : 5,
+        openEditorTargetMode: config.vibepulse?.openEditorTargetMode === 'hub' ? 'hub' : 'remote'
       });
     }
   }, [config, reset]);
@@ -76,7 +81,8 @@ export function GeneralSettingsForm() {
         body: JSON.stringify({
           vibepulse: {
             stickyBusyDelayMs: data.stickyBusyDelaySeconds * 1000,
-            sessionsRefreshIntervalMs: data.sessionsRefreshIntervalSeconds * 1000
+            sessionsRefreshIntervalMs: data.sessionsRefreshIntervalSeconds * 1000,
+            openEditorTargetMode: data.openEditorTargetMode
           }
         })
       });
@@ -138,6 +144,31 @@ export function GeneralSettingsForm() {
         )}
 
         <div className="space-y-8">
+          <div className="space-y-3">
+            <label htmlFor="open-editor-target-mode" className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+              Remote Open Target
+            </label>
+            <Controller
+              name="openEditorTargetMode"
+              control={control}
+              render={({ field }) => (
+                <select
+                  id="open-editor-target-mode"
+                  value={field.value}
+                  onChange={field.onChange}
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+                  aria-label="Remote open target"
+                >
+                  <option value="remote">Remote node</option>
+                  <option value="hub">Hub browser machine</option>
+                </select>
+              )}
+            />
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              Choose whether remote session open actions execute on the remote node itself or use the current hub/browser machine editor flow. Default is remote node.
+            </p>
+          </div>
+
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <label htmlFor="sticky-busy-slider" className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
