@@ -21,6 +21,12 @@ function resolveOpenEditorTool(value: unknown): OpenEditorTool | null {
   return value === 'antigravity' || value === 'vscode' ? value : null;
 }
 
+function toRequestBodyRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -36,8 +42,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return Response.json({ error: 'Invalid node session id' }, { status: 400 });
   }
 
-  const body = await request.json().catch(() => ({}));
-  const tool = resolveOpenEditorTool((body as Record<string, unknown>).tool ?? 'vscode');
+  const parsedBody = await request.json().catch(() => ({}));
+  const body = toRequestBodyRecord(parsedBody);
+  const tool = resolveOpenEditorTool(body.tool ?? 'vscode');
   if (!tool) {
     return Response.json({ error: 'Invalid open tool' }, { status: 400 });
   }

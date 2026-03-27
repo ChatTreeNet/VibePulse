@@ -69,6 +69,22 @@ describe('/api/node/sessions/[id]/open-editor', () => {
     expect(data).toEqual({ success: true, uri: 'vscode://file/tmp/demo' });
   });
 
+  it('treats null JSON body as empty and defaults tool to vscode', async () => {
+    const response = await POST(
+      new Request('http://localhost/api/node/sessions/ses_123/open-editor', {
+        method: 'POST',
+        headers: createNodeRequestHeaders('shared-secret'),
+        body: 'null',
+      }),
+      { params: Promise.resolve({ id: 'ses_123' }) }
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mockOpenEditorOnCurrentMachine).toHaveBeenCalledWith('vscode', '/tmp/demo');
+    expect(data).toEqual({ success: true, uri: 'vscode://file/tmp/demo' });
+  });
+
   it('rejects invalid auth before attempting editor launch', async () => {
     const response = await POST(
       new Request('http://localhost/api/node/sessions/ses_123/open-editor', {
