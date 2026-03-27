@@ -124,6 +124,54 @@ describe('/api/node/sessions/[id]/open-editor', () => {
     expect(data).toEqual({ error: 'Session not found', reason: 'session_not_found' });
   });
 
+  it('surfaces non-404 upstream lookup failures without misclassifying as not found', async () => {
+    mockSessionGet.mockRejectedValue(new Error('connection refused'));
+
+    const response = await POST(
+      new Request('http://localhost/api/node/sessions/ses_123/open-editor', {
+        method: 'POST',
+        headers: createNodeRequestHeaders('shared-secret'),
+        body: JSON.stringify({ tool: 'vscode' }),
+      }),
+      { params: Promise.resolve({ id: 'ses_123' }) }
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(data).toEqual({
+      error: 'Failed to open editor for session',
+      reason: 'upstream_unreachable',
+      message: 'connection refused',
+    });
+  });
+
+  it('returns editor_unavailable when session directory is missing', async () => {
+    mockSessionGet.mockResolvedValue({
+      data: {
+        id: 'ses_123',
+        directory: '   ',
+      },
+    });
+
+    const response = await POST(
+      new Request('http://localhost/api/node/sessions/ses_123/open-editor', {
+        method: 'POST',
+        headers: createNodeRequestHeaders('shared-secret'),
+        body: JSON.stringify({ tool: 'vscode' }),
+      }),
+      { params: Promise.resolve({ id: 'ses_123' }) }
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(data).toEqual({
+      error: 'Editor unavailable',
+      reason: 'editor_unavailable',
+      message: 'Session directory is missing or empty',
+    });
+    expect(mockOpenEditorOnCurrentMachine).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid open tools', async () => {
     const response = await POST(
       new Request('http://localhost/api/node/sessions/ses_123/open-editor', {

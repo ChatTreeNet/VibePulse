@@ -53,6 +53,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     });
   }
 
+  let sawMissingDirectory = false;
+  const errors: Error[] = [];
+
   for (const port of ports) {
     try {
       const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
@@ -60,6 +63,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       const directory = result.data?.directory;
 
       if (typeof directory !== 'string' || !directory.trim()) {
+        sawMissingDirectory = true;
         continue;
       }
 
@@ -76,8 +80,36 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           { status: 503 }
         );
       }
-    } catch {
+    } catch (error) {
+      errors.push(error as Error);
     }
+  }
+
+  if (sawMissingDirectory) {
+    return Response.json(
+      {
+        error: 'Editor unavailable',
+        reason: 'editor_unavailable',
+        message: 'Session directory is missing or empty',
+      },
+      { status: 503 }
+    );
+  }
+
+  if (errors.length > 0) {
+    const lastErrorMessage = errors[errors.length - 1]?.message;
+    if (errors.every((error) => /not found|404/i.test(error.message))) {
+      return Response.json({ error: 'Session not found', reason: 'session_not_found' }, { status: 404 });
+    }
+
+    return Response.json(
+      {
+        error: 'Failed to open editor for session',
+        reason: 'upstream_unreachable',
+        ...(lastErrorMessage ? { message: lastErrorMessage } : {}),
+      },
+      { status: 503 }
+    );
   }
 
   return Response.json({ error: 'Session not found', reason: 'session_not_found' }, { status: 404 });
