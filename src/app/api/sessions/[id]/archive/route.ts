@@ -23,11 +23,15 @@ function createSessionNotFoundResponse() {
     );
 }
 
-function createArchiveFailureResponse(status: number, message?: string) {
+function createArchiveFailureResponse(
+    status: number,
+    message?: string,
+    reason: 'archive_request_failed' | 'upstream_unreachable' = 'archive_request_failed'
+) {
     return Response.json(
         {
             error: 'Failed to archive session',
-            reason: 'archive_request_failed',
+            reason,
             ...(message ? { message } : {}),
         },
         { status }
@@ -117,6 +121,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
     let sawNotFound = false;
     let lastFailureStatus: number | null = null;
     let lastFailureMessage: string | undefined;
+    let lastFailureReason: 'archive_request_failed' | 'upstream_unreachable' = 'archive_request_failed';
 
     for (const port of ports) {
         try {
@@ -144,15 +149,17 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
 
             lastFailureStatus = response.status;
             lastFailureMessage = responseText || undefined;
+            lastFailureReason = 'archive_request_failed';
         } catch (error) {
             console.error(`Failed to archive session on port ${port}:`, error);
-            lastFailureStatus = 500;
+            lastFailureStatus = 503;
             lastFailureMessage = error instanceof Error ? error.message : String(error);
+            lastFailureReason = 'upstream_unreachable';
         }
     }
 
     if (lastFailureStatus !== null) {
-        return createArchiveFailureResponse(lastFailureStatus, lastFailureMessage);
+        return createArchiveFailureResponse(lastFailureStatus, lastFailureMessage, lastFailureReason);
     }
 
     if (sawNotFound) {

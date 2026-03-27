@@ -114,4 +114,23 @@ describe('/api/sessions/[id]/archive', () => {
       message: JSON.stringify({ error: 'boom' }),
     });
   });
+
+  it('maps local archive transport failures to upstream_unreachable', async () => {
+    const mockFetch = vi.fn(async () => {
+      throw new Error('ECONNREFUSED');
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(new Request('http://localhost/api/sessions/local:abc/archive', { method: 'POST' }), {
+      params: Promise.resolve({ id: 'local:abc' }),
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(data).toEqual({
+      error: 'Failed to archive session',
+      reason: 'upstream_unreachable',
+      message: 'ECONNREFUSED',
+    });
+  });
 });
