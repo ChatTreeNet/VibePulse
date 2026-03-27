@@ -231,6 +231,47 @@ describe('ProjectCard', () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it('prefers stored SSH host overrides for remote hub-mode project opens', async () => {
+        window.localStorage.setItem('vibepulse:ssh-host', 'override-host.test');
+        const remoteCard: KanbanCard = {
+            ...mockCard,
+            id: 'node-1:123',
+            hostId: 'node-1',
+            hostLabel: 'Node 1',
+            hostKind: 'remote',
+            hostBaseUrl: 'https://node-1.test',
+        };
+        const queryClient = createQueryClient();
+        queryClient.setQueryData(['opencode-config'], { vibepulse: { openEditorTargetMode: 'hub' } });
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+            if (!init?.method || init.method === 'GET') {
+                return new Response(JSON.stringify({ vibepulse: { openEditorTargetMode: 'hub' } }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+
+            return new Response(JSON.stringify({ success: true }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        });
+        Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+
+        render(
+            <QueryClientProvider client={queryClient}>
+                <ProjectCard projectName="TestProject" cards={[remoteCard]} />
+            </QueryClientProvider>
+        );
+
+        const { fireEvent } = TestingLibraryReact;
+        await TestingLibraryReact.screen.findByText('TestProject');
+        fireEvent.click(screen.getByTitle('Open project'));
+
+        expect(window.location.assign).toHaveBeenCalledWith('vscode://vscode-remote/ssh-remote+override-host.test/path/to/project');
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it('shows an explicit error for remote hub-mode Antigravity project opens', async () => {
         window.localStorage.setItem('vibepulse:open-tool', 'antigravity');
         const remoteCard: KanbanCard = {

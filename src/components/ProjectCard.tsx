@@ -395,17 +395,17 @@ export function ProjectCard({ projectName, branch, cards, readOnly: _readOnly, h
             return '';
         }
 
+        const storedHost = window.localStorage.getItem('vibepulse:ssh-host');
+        if (storedHost) {
+            return storedHost;
+        }
+
         const firstRemoteBaseUrl = firstCard?.hostBaseUrl;
         if (firstRemoteBaseUrl && firstCard?.hostId !== 'local') {
             try {
                 return new URL(firstRemoteBaseUrl).hostname;
             } catch {
             }
-        }
-
-        const storedHost = window.localStorage.getItem('vibepulse:ssh-host');
-        if (storedHost) {
-            return storedHost;
         }
 
         const hostname = window.location.hostname;
