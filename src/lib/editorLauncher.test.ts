@@ -24,4 +24,12 @@ describe('editorLauncher', () => {
     expect(command.command).toBeTruthy();
     expect(command.args.length).toBeGreaterThan(0);
   });
+
+  it('uses explorer on Windows to avoid cmd start parsing issues', () => {
+    const uri = buildEditorUri('vscode', 'C:\\work\\R&D\\demo project');
+    const command = getEditorLaunchCommand(uri, 'win32');
+
+    expect(command).toEqual({ command: 'explorer', args: [uri] });
+    expect(command.command).not.toBe('cmd');
+  });
 });

@@ -2,13 +2,16 @@ import { execFile } from 'child_process';
 
 import { buildEditorUri, type OpenEditorTool } from './editorLauncher';
 
-export function getEditorLaunchCommand(uri: string): { command: string; args: string[] } {
-  if (process.platform === 'darwin') {
+export function getEditorLaunchCommand(
+  uri: string,
+  platform: NodeJS.Platform = process.platform
+): { command: string; args: string[] } {
+  if (platform === 'darwin') {
     return { command: 'open', args: [uri] };
   }
 
-  if (process.platform === 'win32') {
-    return { command: 'cmd', args: ['/c', 'start', '', uri] };
+  if (platform === 'win32') {
+    return { command: 'explorer', args: [uri] };
   }
 
   return { command: 'xdg-open', args: [uri] };
