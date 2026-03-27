@@ -102,4 +102,27 @@ describe('/api/node/sessions/[id]/archive', () => {
     expect(response.status).toBe(404);
     expect(data).toEqual({ error: 'Session not found', reason: 'session_not_found' });
   });
+
+  it('surfaces non-404 upstream archive failures', async () => {
+    Object.defineProperty(globalThis, 'fetch', {
+      value: vi.fn(async () => new Response(JSON.stringify({ error: 'boom' }), { status: 500 })),
+      configurable: true,
+    });
+
+    const response = await POST(
+      new Request('http://localhost/api/node/sessions/ses_123/archive', {
+        method: 'POST',
+        headers: createNodeRequestHeaders('shared-secret'),
+      }),
+      { params: Promise.resolve({ id: 'ses_123' }) }
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(data).toEqual({
+      error: 'Failed to archive session',
+      reason: 'node_request_failed_500',
+      message: JSON.stringify({ error: 'boom' }),
+    });
+  });
 });

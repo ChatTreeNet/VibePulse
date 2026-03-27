@@ -44,6 +44,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     });
   }
 
+  let sawNotFound = false;
+  let lastFailureStatus: number | null = null;
+  let lastFailureMessage: string | undefined;
+
   for (const port of ports) {
     try {
       const response = await fetch(`http://localhost:${port}/session/${sessionId}`, {
@@ -59,7 +63,34 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         markSessionStickyStatusBlocked(sessionId);
         return Response.json({ success: true });
       }
-    } catch {}
+
+      if (response.status === 404) {
+        sawNotFound = true;
+        continue;
+      }
+
+      lastFailureStatus = response.status;
+      const responseBody = await response.text().catch(() => '');
+      lastFailureMessage = responseBody || undefined;
+    } catch (error) {
+      lastFailureStatus = 503;
+      lastFailureMessage = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  if (lastFailureStatus !== null) {
+    return Response.json(
+      {
+        error: 'Failed to archive session',
+        reason: lastFailureStatus === 503 ? 'upstream_unreachable' : `node_request_failed_${lastFailureStatus}`,
+        ...(lastFailureMessage ? { message: lastFailureMessage } : {}),
+      },
+      { status: lastFailureStatus }
+    );
+  }
+
+  if (sawNotFound) {
+    return Response.json({ error: 'Session not found', reason: 'session_not_found' }, { status: 404 });
   }
 
   return Response.json({ error: 'Session not found', reason: 'session_not_found' }, { status: 404 });
