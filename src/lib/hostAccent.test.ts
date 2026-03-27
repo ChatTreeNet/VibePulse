@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { getHostAccentTextClass, resetHostAccentAssignmentsForTests } from './hostAccent';
+import { getHostAccentTextClass } from './hostAccent';
 
 const PALETTE_SIZE = 5;
 
@@ -32,10 +32,6 @@ function findCollisionPair(): Array<{ hostKey: string; hostLabel: string }> {
 }
 
 describe('host accent assignment', () => {
-  beforeEach(() => {
-    resetHostAccentAssignmentsForTests();
-  });
-
   it('returns fallback class when host identity is missing', () => {
     expect(getHostAccentTextClass(undefined, undefined)).toBe('text-zinc-400 dark:text-zinc-500');
   });
@@ -47,7 +43,7 @@ describe('host accent assignment', () => {
     expect(accentB).toBe(accentA);
   });
 
-  it('avoids assigning identical accents when two hosts collide', () => {
+  it('maps colliding hosts to the same deterministic accent', () => {
     const [firstHost, secondHost] = findCollisionPair();
     const firstPreferred = preferredAccentIndex(firstHost.hostKey, firstHost.hostLabel);
     const secondPreferred = preferredAccentIndex(secondHost.hostKey, secondHost.hostLabel);
@@ -57,6 +53,6 @@ describe('host accent assignment', () => {
     const firstAccent = getHostAccentTextClass(firstHost.hostKey, firstHost.hostLabel);
     const secondAccent = getHostAccentTextClass(secondHost.hostKey, secondHost.hostLabel);
 
-    expect(secondAccent).not.toBe(firstAccent);
+    expect(secondAccent).toBe(firstAccent);
   });
 });
