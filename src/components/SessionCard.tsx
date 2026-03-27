@@ -118,6 +118,12 @@ export function SessionCard({ card }: SessionCardProps) {
             setOpenTool(storedTool);
         }
 
+        const storedHost = window.localStorage.getItem('vibepulse:ssh-host');
+        if (storedHost) {
+            setRemoteSshHost(storedHost);
+            return;
+        }
+
         const hostFromBaseUrl = (() => {
             if (!card.hostBaseUrl || !isRemoteCard) {
                 return '';
@@ -132,18 +138,13 @@ export function SessionCard({ card }: SessionCardProps) {
 
         if (hostFromBaseUrl) {
             setRemoteSshHost(hostFromBaseUrl);
-        } else {
-            const storedHost = window.localStorage.getItem('vibepulse:ssh-host');
-            if (storedHost) {
-                setRemoteSshHost(storedHost);
-                return;
-            }
+            return;
+        }
 
-            const hostname = window.location.hostname;
-            if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
-                setRemoteSshHost(hostname);
-                window.localStorage.setItem('vibepulse:ssh-host', hostname);
-            }
+        const hostname = window.location.hostname;
+        if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+            setRemoteSshHost(hostname);
+            window.localStorage.setItem('vibepulse:ssh-host', hostname);
         }
     }, [card.hostBaseUrl, isRemoteCard]);
 

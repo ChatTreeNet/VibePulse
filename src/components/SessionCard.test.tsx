@@ -100,6 +100,42 @@ describe('SessionCard', () => {
     expect((fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>).filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
   });
 
+  it('prefers stored SSH host overrides for remote hub-mode opens', async () => {
+    window.localStorage.setItem('vibepulse:ssh-host', 'override-host.test');
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+    queryClient.setQueryData(['opencode-config'], { vibepulse: { openEditorTargetMode: 'hub' } });
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (!init?.method || init.method === 'GET') {
+        return new Response(JSON.stringify({ vibepulse: { openEditorTargetMode: 'hub' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SessionCard card={createCard()} />
+      </QueryClientProvider>
+    );
+
+    await screen.findByText('Remote Session');
+    fireEvent.doubleClick(screen.getByRole('button', { name: /remote session/i }));
+
+    expect(window.location.assign).toHaveBeenCalledWith('vscode://vscode-remote/ssh-remote+override-host.test/tmp/demo');
+    expect((fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>).filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  });
+
   it('shows an explicit error for remote hub-mode Antigravity opens', async () => {
     window.localStorage.setItem('vibepulse:open-tool', 'antigravity');
     const queryClient = new QueryClient({
