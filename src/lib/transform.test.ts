@@ -106,7 +106,7 @@ describe('transformSession archive precedence', () => {
       hostId: 'remote-1',
       hostLabel: 'Remote 1',
       hostKind: 'remote',
-      readOnly: true,
+      readOnly: false,
       }),
       slug: undefined,
     } as unknown as OpencodeSession;
@@ -116,6 +116,6 @@ describe('transformSession archive precedence', () => {
     expect(card.sessionSlug).toBe('');
     expect(card.agents).toEqual([]);
     expect(card.hostId).toBe('remote-1');
-    expect(card.readOnly).toBe(true);
+    expect(card.readOnly).toBe(false);
   });
 });

@@ -111,6 +111,7 @@ type HostAwareFields = {
   hostId?: string;
   hostLabel?: string;
   hostKind?: SessionSource['hostKind'];
+  hostBaseUrl?: string;
   rawSessionId?: string;
   sourceSessionKey?: string;
   readOnly?: boolean;
@@ -810,9 +811,10 @@ function addHostMetadataToChildEntry(child: ChildEntry, source: SessionSource): 
     hostId: source.hostId,
     hostLabel: source.hostLabel,
     hostKind: source.hostKind,
+    ...(isRemoteSource(source) ? { hostBaseUrl: source.baseUrl } : {}),
     rawSessionId,
     sourceSessionKey,
-    readOnly: source.hostKind === 'remote',
+    readOnly: false,
   };
 }
 
@@ -842,9 +844,10 @@ function addHostMetadataToSession(session: EnrichedSession, source: SessionSourc
     hostId: source.hostId,
     hostLabel: source.hostLabel,
     hostKind: source.hostKind,
+    ...(isRemoteSource(source) ? { hostBaseUrl: source.baseUrl } : {}),
     rawSessionId,
     sourceSessionKey,
-    readOnly: source.hostKind === 'remote',
+    readOnly: false,
     children,
   };
 }

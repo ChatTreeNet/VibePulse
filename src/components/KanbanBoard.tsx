@@ -69,6 +69,7 @@ export type SessionHostStatus = {
     online: boolean;
     degraded?: boolean;
     reason?: string;
+    baseUrl?: string;
 };
 
 type SessionsResponse = {

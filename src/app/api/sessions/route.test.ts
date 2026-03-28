@@ -675,7 +675,7 @@ describe('/api/sessions route source handling', () => {
       hostId: 'remote-a',
       hostLabel: 'Remote A',
       hostKind: 'remote',
-      readOnly: true,
+      readOnly: false,
       branch: null,
       realTimeStatus: 'busy',
     });
@@ -688,7 +688,7 @@ describe('/api/sessions route source handling', () => {
       hostId: 'remote-a',
       hostLabel: 'Remote A',
       hostKind: 'remote',
-      readOnly: true,
+      readOnly: false,
       realTimeStatus: 'busy',
     });
     expect(mockCreateOpencodeClient.mock.calls).toEqual([[{ baseUrl: 'http://localhost:7777' }]]);

@@ -22,8 +22,12 @@ const HOST_ACCENT_PALETTE: HostAccentPaletteItem[] = [
 
 const DEFAULT_TEXT_CLASS = 'text-zinc-400 dark:text-zinc-500';
 
+function toHostAccentKey(hostKey?: string, hostLabel?: string): string {
+  return `${hostKey ?? ''}:${hostLabel ?? ''}`;
+}
+
 function getHostAccentIndex(hostKey?: string, hostLabel?: string): number {
-  const source = `${hostKey ?? ''}:${hostLabel ?? ''}`;
+  const source = toHostAccentKey(hostKey, hostLabel);
   let hash = 0;
 
   for (let index = 0; index < source.length; index += 1) {

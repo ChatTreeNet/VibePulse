@@ -208,7 +208,7 @@ describe('KanbanBoard Host Filter', () => {
                     hostId: 'remote-1',
                     hostLabel: 'Remote 1',
                     hostKind: 'remote',
-                    readOnly: true,
+                    readOnly: false,
                     time: { created: 100, updated: 200 },
                 },
             ],
@@ -251,7 +251,7 @@ describe('KanbanBoard Host Filter', () => {
 
         expect(screen.getAllByText('Shared Project')).toHaveLength(2);
         expect(screen.getByTitle('Source: Remote 1')).toBeTruthy();
-        expect(screen.queryAllByTitle('Open project')).toHaveLength(1);
+        expect(screen.queryAllByTitle('Open project')).toHaveLength(2);
     });
 
     it('shows Local as online in the local-only fast path without hostStatuses', () => {

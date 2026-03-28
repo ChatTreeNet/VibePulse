@@ -23,6 +23,7 @@ type RemoteEventSource = {
   hostId: string;
   hostLabel: string;
   hostKind: 'remote';
+  hostBaseUrl: string;
 };
 
 function getPreflightTimeoutMs(): number {
@@ -36,11 +37,40 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function isAbortLikeError(error: unknown): boolean {
+  if (error instanceof Error && error.name === 'AbortError') {
+    return true;
+  }
+
+  if (!isRecord(error)) {
+    return false;
+  }
+
+  return error['name'] === 'AbortError' || error['code'] === 20;
+}
+
+function formatErrorForLog(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 function toRemoteEventSource(nodeRecord: StoredNodeRecord): RemoteEventSource {
   return {
     hostId: nodeRecord.nodeId,
     hostLabel: nodeRecord.nodeLabel,
     hostKind: 'remote',
+    hostBaseUrl: nodeRecord.baseUrl,
   };
 }
 
@@ -322,7 +352,7 @@ export async function GET(request: Request) {
       const settled = await Promise.allSettled(preflightAttempts);
       for (const result of settled) {
         if (result.status === 'rejected') {
-          console.warn('Failed to connect to event source during preflight:', result.reason);
+          console.warn('Failed to connect to event source during preflight:', formatErrorForLog(result.reason));
         }
       }
       return null;
@@ -405,7 +435,9 @@ export async function GET(request: Request) {
               }
             }
           } catch (error) {
-            console.warn('Event stream failed for source:', connected.label, error);
+            if (!isClosed && !request.signal.aborted && !isAbortLikeError(error)) {
+              console.warn('Event stream failed for source:', connected.label, formatErrorForLog(error));
+            }
           } finally {
             activeIterators.delete(iterator);
             activeControllers.delete(connected.controller);
@@ -432,7 +464,9 @@ export async function GET(request: Request) {
                 }
                 await streamEvents(connected);
               } catch (error) {
-                console.warn('Failed to connect to secondary event source:', sourceSpec.label, error);
+                if (!isClosed && !request.signal.aborted && !isAbortLikeError(error)) {
+                  console.warn('Failed to connect to secondary event source:', sourceSpec.label, formatErrorForLog(error));
+                }
               }
             });
 

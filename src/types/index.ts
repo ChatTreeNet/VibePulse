@@ -32,6 +32,7 @@ export interface KanbanCard {
   hostId?: string;
   hostLabel?: string;
   hostKind?: HostSourceKind;
+  hostBaseUrl?: string;
   rawSessionId?: string; // original session ID without host prefix
   sourceSessionKey?: string; // alias for id, kept for compatibility
   readOnly?: boolean;
@@ -71,6 +72,7 @@ export interface OpencodeSession {
   hostId?: string;
   hostLabel?: string;
   hostKind?: HostSourceKind;
+  hostBaseUrl?: string;
   rawSessionId?: string; // original session ID without host prefix
   sourceSessionKey?: string; // alias for id, kept for compatibility
   readOnly?: boolean;

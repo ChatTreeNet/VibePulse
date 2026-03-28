@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readConfig, writeConfig } from '@/lib/opencodeConfig';
+import { normalizeVibePulseConfig, readConfig, writeConfig } from '@/lib/opencodeConfig';
 
 // Allowed fields to expose in the API
 const ALLOWED_AGENT_FIELDS = ['model', 'temperature', 'top_p', 'variant', 'prompt_append'] as const;
@@ -46,9 +46,7 @@ export async function GET() {
       }
     }
 
-    const vibepulse = config.vibepulse && typeof config.vibepulse === 'object' && !Array.isArray(config.vibepulse)
-      ? config.vibepulse
-      : {};
+    const vibepulse = normalizeVibePulseConfig(config.vibepulse);
 
     return NextResponse.json({ 
       agents: filteredAgents,
@@ -292,9 +290,7 @@ export async function POST(request: NextRequest) {
 
   // Process vibepulse updates if provided
   const updatedVibepulse: Record<string, unknown> = {};
-  const currentVibepulse = (currentConfig.vibepulse && typeof currentConfig.vibepulse === 'object' && !Array.isArray(currentConfig.vibepulse))
-    ? (currentConfig.vibepulse as Record<string, unknown>)
-    : {};
+  const currentVibepulse = normalizeVibePulseConfig(currentConfig.vibepulse);
 
   if (vibepulse !== undefined) {
     for (const [key, value] of Object.entries(currentVibepulse)) {
@@ -331,11 +327,20 @@ export async function POST(request: NextRequest) {
              );
            }
 
-           updatedVibepulse[field] = value;
+            updatedVibepulse[field] = value;
+         }
+      } else if (field === 'openEditorTargetMode') {
+        if (value !== 'remote' && value !== 'hub') {
+          return NextResponse.json(
+            { error: `Vibepulse: '${field}' must be either 'remote' or 'hub'` },
+            { status: 400 }
+          );
         }
+
+        updatedVibepulse[field] = value;
       } else {
          return NextResponse.json(
-           { error: `Vibepulse: unknown field '${field}'` },
+            { error: `Vibepulse: unknown field '${field}'` },
            { status: 400 }
          );
       }

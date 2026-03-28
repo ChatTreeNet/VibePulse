@@ -16,6 +16,7 @@ type EventSourceContext = {
     hostId: string;
     hostLabel: string;
     hostKind: 'local' | 'remote';
+    hostBaseUrl?: string;
 };
 
 type HostedOpencodeEvent = {
@@ -114,9 +115,10 @@ function normalizeSessionForSource(info: OpencodeSession, source: EventSourceCon
         hostId: source.hostId,
         hostLabel: source.hostLabel,
         hostKind: source.hostKind,
+        hostBaseUrl: source.hostBaseUrl,
         rawSessionId,
         sourceSessionKey,
-        readOnly: source.hostKind === 'remote',
+        readOnly: false,
         children: info.children?.map((child) =>
             normalizeSessionForSource({
                 ...child,
@@ -352,10 +354,19 @@ export function useOpencodeSync() {
                     }
 
                     const applyEvent = (s: OpencodeSession): OpencodeSession => {
+                        const baseSession: OpencodeSession = {
+                            ...s,
+                            hostId: source.hostId,
+                            hostLabel: source.hostLabel,
+                            hostKind: source.hostKind,
+                            hostBaseUrl: source.hostBaseUrl ?? s.hostBaseUrl,
+                            readOnly: false,
+                        };
+
                         switch (event.type) {
                             case 'session.status': {
                                 const statusType = event.properties?.status?.type as 'idle' | 'busy' | 'retry' | undefined;
-                                if (!statusType) return s;
+                                if (!statusType) return baseSession;
                                 recordSseStatus(s.id, statusType);
                                 const isParentSession = !s.parentID;
                                 const shouldAutoUnarchive = statusType === 'busy' || statusType === 'retry';
@@ -381,7 +392,7 @@ export function useOpencodeSync() {
                                     scheduleRefetch();
                                 }
                                 return { 
-                                    ...s, 
+                                    ...baseSession, 
                                     time: shouldAutoUnarchive ? { ...(s.time || {}), archived: undefined } : s.time,
                                     realTimeStatus: statusType, 
                                     waitingForUser:
@@ -403,14 +414,14 @@ export function useOpencodeSync() {
                                 }
                                 scheduleWaitingActivation(sourceSessionId, shouldPersistWaiting);
                                 return {
-                                    ...s,
+                                    ...baseSession,
                                     time: { ...(s.time || {}), archived: undefined },
                                     waitingForUser: true,
                                 };
                             case 'permission.updated':
                                 clearWaitingActivation(sourceSessionId);
                                 scheduleRefetch();
-                                return s;
+                                return baseSession;
                             case 'question.replied':
                             case 'question.rejected':
                             case 'permission.replied':
@@ -418,14 +429,14 @@ export function useOpencodeSync() {
                                 if (shouldPersistWaiting) {
                                     persistWaiting(sourceSessionId, false);
                                 }
-                                return { ...s, waitingForUser: false };
+                                return { ...baseSession, waitingForUser: false };
                             case 'session.archived':
                                 return { 
-                                    ...s, 
+                                    ...baseSession, 
                                     time: { ...(s.time || {}), archived: Date.now() } 
                                 };
                             default:
-                                return s;
+                                return baseSession;
                         }
                     };
 

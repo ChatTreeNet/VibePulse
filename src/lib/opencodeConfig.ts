@@ -3,16 +3,34 @@ import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { parse, stringify } from 'comment-json';
+import type { OpenEditorTargetMode, VibePulseConfig } from '@/types/opencodeConfig';
 
 export const CONFIG_DIR = join(homedir(), '.config', 'opencode');
 export const CONFIG_PATH = join(CONFIG_DIR, 'oh-my-opencode.jsonc');
 export const OPEN_CODE_CONFIG_SCHEMA = 'https://opencode.ai/config.json';
+export const DEFAULT_OPEN_EDITOR_TARGET_MODE: OpenEditorTargetMode = 'remote';
 
 export type OpenCodeConfig = {
   $schema?: string;
   agents?: Record<string, unknown>;
+  vibepulse?: VibePulseConfig;
   [key: string]: unknown;
 };
+
+export function normalizeOpenEditorTargetMode(value: unknown): OpenEditorTargetMode {
+  return value === 'hub' ? 'hub' : DEFAULT_OPEN_EDITOR_TARGET_MODE;
+}
+
+export function normalizeVibePulseConfig(value: unknown): VibePulseConfig {
+  const vibepulse = typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {};
+
+  return {
+    ...vibepulse,
+    openEditorTargetMode: normalizeOpenEditorTargetMode(vibepulse.openEditorTargetMode),
+  };
+}
 
 export function detectConfig(configPath: string = CONFIG_PATH): boolean {
   try {
