@@ -12,7 +12,7 @@ A tiny dashboard that sits in your browser tab — tired of switching IDE tabs j
 - **Remote Nodes** — Connect multiple VibePulse instances to a single hub for a unified view
 - **Audio alerts** — Makes a sound when sessions complete or need attention
 - **Zero setup** — No manual card creation; auto-scans ports and processes
-- **Profile switcher** — Flip between OMO presets without touching config files
+- **Profile switcher** — Flip between Oh My OpenAgent presets without touching config files
 
 ## Quick Start
 
@@ -73,4 +73,3 @@ npm run dev
 ## License
 
 MIT
-

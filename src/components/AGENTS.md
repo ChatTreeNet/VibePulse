@@ -3,7 +3,7 @@
 **Scope:** `src/components/`
 
 ## OVERVIEW
-`src/components/` contains the kanban board experience, shared UI primitives, and the OpenCode configuration interface (agents/categories/profiles).
+`src/components/` contains the kanban board experience, shared UI primitives, and the Oh My OpenAgent configuration interface (agents/categories/profiles).
 
 ## STRUCTURE
 ```text
@@ -12,7 +12,7 @@ src/components/
 ├── ProjectCard.tsx                 # per-project group renderer
 ├── SessionCard.tsx                 # session card presentation
 ├── SessionList.tsx                 # list-style view support
-├── opencode-config/                # full config UX
+├── opencode-config/                # full Oh My OpenAgent config UX
 │   ├── categories/                 # category form/list/manager
 │   └── profiles/                   # profile editor/list/manager/card
 └── ui/                             # small reusable primitives
