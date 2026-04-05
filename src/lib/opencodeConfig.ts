@@ -3,19 +3,14 @@ import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { parse, stringify } from 'comment-json';
-import type { OpenEditorTargetMode, VibePulseConfig } from '@/types/opencodeConfig';
+import type { OhMyOpenAgentConfig, OpenEditorTargetMode, VibePulseConfig } from '@/types/opencodeConfig';
 
 export const CONFIG_DIR = join(homedir(), '.config', 'opencode');
-export const CONFIG_PATH = join(CONFIG_DIR, 'oh-my-opencode.jsonc');
-export const OPEN_CODE_CONFIG_SCHEMA = 'https://opencode.ai/config.json';
+export const CONFIG_PATH = join(CONFIG_DIR, 'oh-my-openagent.jsonc');
+export const OH_MY_OPENAGENT_CONFIG_SCHEMA = 'https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-openagent.schema.json';
 export const DEFAULT_OPEN_EDITOR_TARGET_MODE: OpenEditorTargetMode = 'remote';
 
-export type OpenCodeConfig = {
-  $schema?: string;
-  agents?: Record<string, unknown>;
-  vibepulse?: VibePulseConfig;
-  [key: string]: unknown;
-};
+export type OpenCodeConfig = OhMyOpenAgentConfig;
 
 export function normalizeOpenEditorTargetMode(value: unknown): OpenEditorTargetMode {
   return value === 'hub' ? 'hub' : DEFAULT_OPEN_EDITOR_TARGET_MODE;
@@ -64,7 +59,7 @@ export async function writeConfig(
     const configWithSchema: OpenCodeConfig = shouldEnforceSchema
       ? {
           ...config,
-          $schema: config.$schema || OPEN_CODE_CONFIG_SCHEMA,
+          $schema: config.$schema || OH_MY_OPENAGENT_CONFIG_SCHEMA,
         }
       : config;
 

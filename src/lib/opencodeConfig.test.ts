@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { normalizeVibePulseConfig, readConfig, writeConfig } from './opencodeConfig';
-import { writeFile, unlink, mkdir } from 'fs/promises';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { OH_MY_OPENAGENT_CONFIG_SCHEMA, normalizeVibePulseConfig, readConfig, writeConfig } from './opencodeConfig';
+import { writeFile, unlink, mkdir, mkdtemp, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
 const TEST_CONFIG_DIR = join(tmpdir(), 'vibepulse-test-' + Date.now());
-const TEST_CONFIG_PATH = join(TEST_CONFIG_DIR, 'oh-my-opencode.jsonc');
+const TEST_CONFIG_PATH = join(TEST_CONFIG_DIR, 'oh-my-openagent.jsonc');
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -95,6 +95,27 @@ describe('opencodeConfig', () => {
       expect(normalizeVibePulseConfig({ openEditorTargetMode: 'hub' })).toEqual({
         openEditorTargetMode: 'hub',
       });
+    });
+
+    it('injects the canonical schema when writing the default config path', async () => {
+      vi.resetModules();
+      const testHomeDir = await mkdtemp(join(tmpdir(), 'vibepulse-home-'));
+      const originalHome = process.env.HOME;
+
+      process.env.HOME = testHomeDir;
+
+      try {
+        const { CONFIG_PATH: defaultConfigPath, readConfig: readDefaultConfig, writeConfig: writeDefaultConfig } = await import('./opencodeConfig');
+
+        await writeDefaultConfig({ agents: { sisyphus: { model: 'claude' } } });
+
+        const persisted = await readDefaultConfig(defaultConfigPath);
+
+        expect(persisted.$schema).toBe(OH_MY_OPENAGENT_CONFIG_SCHEMA);
+      } finally {
+        process.env.HOME = originalHome;
+        await rm(testHomeDir, { recursive: true, force: true });
+      }
     });
   });
 });
