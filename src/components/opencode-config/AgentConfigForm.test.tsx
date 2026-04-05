@@ -69,4 +69,32 @@ describe('AgentConfigForm - echo bug fix', () => {
     });
   });
 
+  it('shows the upstream hephaestus fallback chain when no model is configured', async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        jsonResponse({
+          agents: {},
+          categories: {},
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          models: [],
+          source: 'test',
+        })
+      );
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AgentConfigForm agentName="hephaestus" />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/using default fallback chain/i)).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('openai/gpt-5.4')).toBeInTheDocument();
+  });
+
 });

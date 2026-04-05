@@ -1,12 +1,11 @@
-import { detectConfig, CONFIG_PATH } from '@/lib/opencodeConfig';
+import { detectConfig, resolveConfigPath } from '@/lib/opencodeConfig';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
-async function detectPlugin(): Promise<boolean> {
+async function detectOpenCodeCli(): Promise<boolean> {
   try {
-    // Check if oh-my-opencode CLI is available
     await execAsync('opencode --version');
     return true;
   } catch {
@@ -16,15 +15,15 @@ async function detectPlugin(): Promise<boolean> {
 
 export async function GET() {
   const hasConfig = detectConfig();
-  const hasPlugin = await detectPlugin();
+  const hasOpenCodeCli = await detectOpenCodeCli();
 
-  const response: { hasConfig: boolean; hasPlugin: boolean; path?: string } = {
+  const response: { hasConfig: boolean; hasOpenCodeCli: boolean; path?: string } = {
     hasConfig,
-    hasPlugin,
+    hasOpenCodeCli,
   };
 
   if (hasConfig) {
-    response.path = CONFIG_PATH;
+    response.path = resolveConfigPath();
   }
 
   return Response.json(response);

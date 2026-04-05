@@ -3,7 +3,7 @@
 **Scope:** `src/app/api/`
 
 ## OVERVIEW
-`src/app/api/` hosts Next.js route handlers that discover OpenCode instances, aggregate session state, stream events, and manage config/profile data.
+`src/app/api/` hosts Next.js route handlers that discover OpenCode instances, aggregate session state, stream events, and manage Oh My OpenAgent config/profile data.
 
 ## STRUCTURE
 ```text
@@ -11,7 +11,7 @@ src/app/api/
 ├── sessions/                     # session list/status aggregation
 │   └── [id]/                     # per-session read/archive/delete actions
 ├── opencode-events/              # SSE fan-in endpoint
-├── opencode-config/              # config read/update + status helper
+├── opencode-config/              # Oh My OpenAgent config read/update + status helper
 ├── opencode-models/              # model listing helpers
 └── profiles/                     # profile CRUD, apply, import/export
 ```

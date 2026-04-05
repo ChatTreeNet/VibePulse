@@ -1,6 +1,3 @@
-// oh-my-opencode configuration types
-// Reference: comment-json configuration structure
-
 /**
  * Agent configuration - defines how an agent behaves
  * All fields are optional as configuration may be partial
@@ -53,12 +50,7 @@ export interface VibePulseConfig {
   [key: string]: unknown;
 }
 
-/**
- * OhMyOpencode configuration
- * Root configuration object for oh-my-opencode
- * All fields are optional as configuration may be partial
- */
-export interface OhMyOpencodeConfig {
+export interface OhMyOpenAgentConfig {
   /** Global agent configurations keyed by agent name */
   agents?: Record<string, AgentConfig>;
   /** Category configurations for task type model selection */

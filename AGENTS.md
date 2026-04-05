@@ -5,7 +5,7 @@
 **Branch:** C3-317-vibepluse-profile
 
 ## OVERVIEW
-VibePulse is a Next.js App Router dashboard for monitoring OpenCode sessions in real time (SSE + polling), with built-in OpenCode profile/config management.
+VibePulse is a Next.js App Router dashboard for monitoring OpenCode sessions in real time (SSE + polling), with built-in Oh My OpenAgent profile/config management.
 This repository is dual-purpose: web app runtime, publishable library surface (`src/index.ts`), and npm CLI launcher (`bin/vibepulse.js`).
 
 ## STRUCTURE
@@ -14,7 +14,7 @@ VibePulse/
 ├── src/app/                          # Next.js app shell and API routes
 │   └── api/                          # OpenCode sessions/config/profiles/events handlers
 ├── src/components/                   # board UI and settings/config panels
-│   └── opencode-config/              # agent/category/profile editing flows
+│   └── opencode-config/              # Oh My OpenAgent agent/category/profile editing flows
 ├── src/hooks/                        # SSE stream sync + cache orchestration
 ├── src/lib/                          # discovery/config IO/transform utilities
 ├── src/types/                        # app-level and config-level TS types

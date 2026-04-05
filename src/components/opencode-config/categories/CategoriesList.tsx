@@ -35,13 +35,13 @@ interface CategoryDefinition {
 
 const CATEGORY_FALLBACK_CHAINS: Record<string, string[]> = {
   'visual-engineering': ['google/gemini-3.1-pro', 'glm-5', 'anthropic/claude-opus-4-6'],
-  ultrabrain: ['openai/gpt-5.3-codex', 'google/gemini-3.1-pro', 'anthropic/claude-opus-4-6'],
-  deep: ['openai/gpt-5.3-codex', 'anthropic/claude-opus-4-6', 'google/gemini-3.1-pro'],
+  ultrabrain: ['openai/gpt-5.4', 'google/gemini-3.1-pro', 'anthropic/claude-opus-4-6', 'glm-5'],
+  deep: ['openai/gpt-5.4', 'anthropic/claude-opus-4-6', 'google/gemini-3.1-pro'],
   artistry: ['google/gemini-3.1-pro', 'anthropic/claude-opus-4-6', 'openai/gpt-5.4'],
-  quick: ['anthropic/claude-haiku-4-5', 'google/gemini-3-flash', 'opencode/gpt-5-nano'],
-  'unspecified-low': ['anthropic/claude-sonnet-4-6', 'openai/gpt-5.3-codex', 'google/gemini-3-flash'],
-  'unspecified-high': ['openai/gpt-5.4', 'anthropic/claude-opus-4-6', 'glm-5', 'kimi-for-coding/k2p5'],
-  writing: ['google/gemini-3-flash', 'anthropic/claude-sonnet-4-6'],
+  quick: ['openai/gpt-5.4-mini', 'anthropic/claude-haiku-4-5', 'google/gemini-3-flash', 'minimax-m2.7', 'gpt-5-nano'],
+  'unspecified-low': ['anthropic/claude-sonnet-4-6', 'openai/gpt-5.3-codex', 'kimi-k2.5', 'google/gemini-3-flash', 'minimax-m2.7'],
+  'unspecified-high': ['anthropic/claude-opus-4-6', 'openai/gpt-5.4', 'glm-5', 'k2p5', 'kimi-k2.5'],
+  writing: ['google/gemini-3-flash', 'kimi-k2.5', 'anthropic/claude-sonnet-4-6', 'minimax-m2.7'],
 };
 
 const BUILT_IN_CATEGORIES: CategoryDefinition[] = [
@@ -149,6 +149,8 @@ function CategoryCard({
   const info = getCategoryInfo(categoryKey);
   const hasConfig = !!(config.model || config.variant);
   const isModelInvalid = config.model && availableModels && availableModels.size > 0 && !availableModels.has(config.model);
+  const fallbackModel = !hasConfig ? CATEGORY_FALLBACK_CHAINS[categoryKey]?.[0] : undefined;
+  const displayModel = config.model || fallbackModel;
   
   // Dynamic border/bg classes based on status
   let cardStateClasses = hasConfig
@@ -201,11 +203,11 @@ function CategoryCard({
         <div className="mt-2 flex items-center gap-3 text-xs">
           <span className="text-zinc-600 dark:text-zinc-400">
             <span className="text-zinc-400 dark:text-zinc-500">Provider:</span>{' '}
-            {formatProvider(config.model)}
+            {formatProvider(displayModel)}
           </span>
           <span className="text-zinc-600 dark:text-zinc-400">
             <span className="text-zinc-400 dark:text-zinc-500">Model:</span>{' '}
-            {formatModel(config.model)}
+            {formatModel(displayModel)}
           </span>
           {config.variant && (
             <span className="text-zinc-600 dark:text-zinc-400">

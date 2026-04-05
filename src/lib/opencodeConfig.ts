@@ -3,19 +3,15 @@ import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { parse, stringify } from 'comment-json';
-import type { OpenEditorTargetMode, VibePulseConfig } from '@/types/opencodeConfig';
+import type { OhMyOpenAgentConfig, OpenEditorTargetMode, VibePulseConfig } from '@/types/opencodeConfig';
 
 export const CONFIG_DIR = join(homedir(), '.config', 'opencode');
-export const CONFIG_PATH = join(CONFIG_DIR, 'oh-my-opencode.jsonc');
-export const OPEN_CODE_CONFIG_SCHEMA = 'https://opencode.ai/config.json';
+export const CONFIG_PATH = join(CONFIG_DIR, 'oh-my-openagent.jsonc');
+export const LEGACY_CONFIG_PATH = join(CONFIG_DIR, 'oh-my-opencode.jsonc');
+export const OH_MY_OPENAGENT_CONFIG_SCHEMA = 'https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/v3.15.2/assets/oh-my-opencode.schema.json';
 export const DEFAULT_OPEN_EDITOR_TARGET_MODE: OpenEditorTargetMode = 'remote';
 
-export type OpenCodeConfig = {
-  $schema?: string;
-  agents?: Record<string, unknown>;
-  vibepulse?: VibePulseConfig;
-  [key: string]: unknown;
-};
+export type OpenCodeConfig = OhMyOpenAgentConfig;
 
 export function normalizeOpenEditorTargetMode(value: unknown): OpenEditorTargetMode {
   return value === 'hub' ? 'hub' : DEFAULT_OPEN_EDITOR_TARGET_MODE;
@@ -32,9 +28,25 @@ export function normalizeVibePulseConfig(value: unknown): VibePulseConfig {
   };
 }
 
+export function resolveConfigPath(configPath: string = CONFIG_PATH): string {
+  if (configPath !== CONFIG_PATH) {
+    return configPath;
+  }
+
+  if (existsSync(CONFIG_PATH)) {
+    return CONFIG_PATH;
+  }
+
+  if (existsSync(LEGACY_CONFIG_PATH)) {
+    return LEGACY_CONFIG_PATH;
+  }
+
+  return CONFIG_PATH;
+}
+
 export function detectConfig(configPath: string = CONFIG_PATH): boolean {
   try {
-    return existsSync(configPath);
+    return existsSync(resolveConfigPath(configPath));
   } catch {
     return false;
   }
@@ -42,7 +54,7 @@ export function detectConfig(configPath: string = CONFIG_PATH): boolean {
 
 export async function readConfig(configPath: string = CONFIG_PATH): Promise<OpenCodeConfig> {
   try {
-    const content = await readFile(configPath, 'utf-8');
+    const content = await readFile(resolveConfigPath(configPath), 'utf-8');
     const config = parse(content, null, false) as OpenCodeConfig;
     return config;
   } catch {
@@ -64,7 +76,7 @@ export async function writeConfig(
     const configWithSchema: OpenCodeConfig = shouldEnforceSchema
       ? {
           ...config,
-          $schema: config.$schema || OPEN_CODE_CONFIG_SCHEMA,
+          $schema: config.$schema || OH_MY_OPENAGENT_CONFIG_SCHEMA,
         }
       : config;
 

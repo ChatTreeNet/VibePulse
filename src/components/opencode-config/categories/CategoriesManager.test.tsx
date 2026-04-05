@@ -57,7 +57,35 @@ describe('CategoriesManager', () => {
     });
 
     expect(screen.getAllByText('Provider:').length).toBeGreaterThan(0);
-    expect(screen.getByText('google')).toBeInTheDocument();
+    expect(screen.getAllByText('google').length).toBeGreaterThan(0);
+  });
+
+  it('shows the aligned built-in fallback model for unconfigured quick category cards', async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        jsonResponse({
+          agents: {},
+          categories: {},
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          models: [],
+          source: 'test',
+        })
+      );
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CategoriesManager />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Quick')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('gpt-5.4-mini')).toBeInTheDocument();
   });
 
   it('should save category correctly after editing', async () => {

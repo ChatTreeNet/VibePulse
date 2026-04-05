@@ -55,15 +55,15 @@ interface AgentConfigFormProps {
 }
 
 const AGENT_FALLBACK_CHAINS: Record<string, string[]> = {
-  sisyphus: ['anthropic/claude-opus-4-6', 'glm-5', 'big-pickle'],
-  prometheus: ['anthropic/claude-opus-4-6', 'openai/gpt-5.4', 'google/gemini-3.1-pro'],
-  metis: ['anthropic/claude-opus-4-6', 'openai/gpt-5.4', 'google/gemini-3.1-pro'],
-  atlas: ['anthropic/claude-sonnet-4-6', 'openai/gpt-5.4'],
-  hephaestus: ['openai/gpt-5.3-codex'],
-  oracle: ['openai/gpt-5.4', 'google/gemini-3.1-pro', 'anthropic/claude-opus-4-6'],
-  momus: ['openai/gpt-5.4', 'anthropic/claude-opus-4-6', 'google/gemini-3.1-pro'],
-  explore: ['github-copilot/grok-code-fast-1', 'minimax-m2.5-free', 'anthropic/claude-haiku-4-5', 'opencode/gpt-5-nano'],
-  librarian: ['google/gemini-3-flash', 'minimax-m2.5-free', 'big-pickle'],
+  sisyphus: ['anthropic/claude-opus-4-6', 'kimi-k2.5', 'openai/gpt-5.4', 'glm-5', 'big-pickle'],
+  prometheus: ['anthropic/claude-opus-4-6', 'openai/gpt-5.4', 'glm-5', 'google/gemini-3.1-pro'],
+  metis: ['anthropic/claude-opus-4-6', 'openai/gpt-5.4', 'glm-5', 'k2p5'],
+  atlas: ['anthropic/claude-sonnet-4-6', 'kimi-k2.5', 'openai/gpt-5.4', 'minimax-m2.7'],
+  hephaestus: ['openai/gpt-5.4'],
+  oracle: ['openai/gpt-5.4', 'google/gemini-3.1-pro', 'anthropic/claude-opus-4-6', 'glm-5'],
+  momus: ['openai/gpt-5.4', 'anthropic/claude-opus-4-6', 'google/gemini-3.1-pro', 'glm-5'],
+  explore: ['grok-code-fast-1', 'minimax-m2.7-highspeed', 'minimax-m2.7', 'anthropic/claude-haiku-4-5', 'gpt-5-nano'],
+  librarian: ['minimax-m2.7', 'minimax-m2.7-highspeed', 'anthropic/claude-haiku-4-5', 'gpt-5-nano'],
   default: ['anthropic/claude-opus-4-6', 'openai/gpt-5.4'],
 };
 
