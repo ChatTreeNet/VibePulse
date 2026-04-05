@@ -1,4 +1,4 @@
-import { detectConfig, CONFIG_PATH } from '@/lib/opencodeConfig';
+import { detectConfig, resolveConfigPath } from '@/lib/opencodeConfig';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -23,7 +23,7 @@ export async function GET() {
   };
 
   if (hasConfig) {
-    response.path = CONFIG_PATH;
+    response.path = resolveConfigPath();
   }
 
   return Response.json(response);

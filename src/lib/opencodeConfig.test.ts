@@ -117,5 +117,33 @@ describe('opencodeConfig', () => {
         await rm(testHomeDir, { recursive: true, force: true });
       }
     });
+
+    it('detects and reads the legacy default config when the new file is absent', async () => {
+      vi.resetModules();
+      const testHomeDir = await mkdtemp(join(tmpdir(), 'vibepulse-home-'));
+      const originalHome = process.env.HOME;
+
+      process.env.HOME = testHomeDir;
+
+      try {
+        const {
+          LEGACY_CONFIG_PATH: legacyConfigPath,
+          detectConfig: detectDefaultConfig,
+          readConfig: readDefaultConfig,
+        } = await import('./opencodeConfig');
+
+        await mkdir(join(testHomeDir, '.config', 'opencode'), { recursive: true });
+        await writeFile(legacyConfigPath, '{"agents":{"sisyphus":{"model":"claude"}}}');
+
+        expect(detectDefaultConfig()).toBe(true);
+
+        const config = await readDefaultConfig();
+
+        expect(config.agents?.sisyphus).toEqual({ model: 'claude' });
+      } finally {
+        process.env.HOME = originalHome;
+        await rm(testHomeDir, { recursive: true, force: true });
+      }
+    });
   });
 });

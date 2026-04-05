@@ -7,7 +7,8 @@ import type { OhMyOpenAgentConfig, OpenEditorTargetMode, VibePulseConfig } from 
 
 export const CONFIG_DIR = join(homedir(), '.config', 'opencode');
 export const CONFIG_PATH = join(CONFIG_DIR, 'oh-my-openagent.jsonc');
-export const OH_MY_OPENAGENT_CONFIG_SCHEMA = 'https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-openagent.schema.json';
+export const LEGACY_CONFIG_PATH = join(CONFIG_DIR, 'oh-my-opencode.jsonc');
+export const OH_MY_OPENAGENT_CONFIG_SCHEMA = 'https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-opencode.schema.json';
 export const DEFAULT_OPEN_EDITOR_TARGET_MODE: OpenEditorTargetMode = 'remote';
 
 export type OpenCodeConfig = OhMyOpenAgentConfig;
@@ -27,9 +28,25 @@ export function normalizeVibePulseConfig(value: unknown): VibePulseConfig {
   };
 }
 
+export function resolveConfigPath(configPath: string = CONFIG_PATH): string {
+  if (configPath !== CONFIG_PATH) {
+    return configPath;
+  }
+
+  if (existsSync(CONFIG_PATH)) {
+    return CONFIG_PATH;
+  }
+
+  if (existsSync(LEGACY_CONFIG_PATH)) {
+    return LEGACY_CONFIG_PATH;
+  }
+
+  return CONFIG_PATH;
+}
+
 export function detectConfig(configPath: string = CONFIG_PATH): boolean {
   try {
-    return existsSync(configPath);
+    return existsSync(resolveConfigPath(configPath));
   } catch {
     return false;
   }
@@ -37,7 +54,7 @@ export function detectConfig(configPath: string = CONFIG_PATH): boolean {
 
 export async function readConfig(configPath: string = CONFIG_PATH): Promise<OpenCodeConfig> {
   try {
-    const content = await readFile(configPath, 'utf-8');
+    const content = await readFile(resolveConfigPath(configPath), 'utf-8');
     const config = parse(content, null, false) as OpenCodeConfig;
     return config;
   } catch {
