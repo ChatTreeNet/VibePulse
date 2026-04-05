@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { parse } from 'comment-json';
 
-const SCHEMA_URL = 'https://opencode.ai/config.json';
+const SCHEMA_URL = 'https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-openagent.schema.json';
 
 describe('profile storage schema handling', () => {
   let testHomeDir: string;
@@ -104,5 +104,42 @@ describe('profile storage schema handling', () => {
     } finally {
       await chmod(configPath, 0o600);
     }
+  });
+
+  it('creates the built-in balanced profile with upstream-aligned defaults', async () => {
+    await storage.readProfileIndex();
+
+    const balanced = await storage.readProfileConfig('balanced');
+
+    expect(balanced.agents.hephaestus).toMatchObject({
+      model: 'openai/gpt-5.4',
+      variant: 'medium',
+    });
+    expect((balanced.agents as Record<string, unknown>).hepheastus).toBeUndefined();
+    expect(balanced.agents.librarian).toMatchObject({
+      model: 'minimax-m2.7',
+    });
+    expect(balanced.agents.explore).toMatchObject({
+      model: 'grok-code-fast-1',
+    });
+    expect(balanced.agents['multimodal-looker']).toMatchObject({
+      model: 'openai/gpt-5.4',
+      variant: 'medium',
+    });
+    expect(balanced.categories?.quick).toMatchObject({
+      model: 'openai/gpt-5.4-mini',
+    });
+    expect(balanced.categories?.ultrabrain).toMatchObject({
+      model: 'openai/gpt-5.4',
+      variant: 'xhigh',
+    });
+    expect(balanced.categories?.deep).toMatchObject({
+      model: 'openai/gpt-5.4',
+      variant: 'medium',
+    });
+    expect(balanced.categories?.['unspecified-high']).toMatchObject({
+      model: 'anthropic/claude-opus-4-6',
+      variant: 'max',
+    });
   });
 });

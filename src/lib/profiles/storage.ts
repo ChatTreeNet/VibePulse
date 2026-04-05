@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { parse, stringify } from 'comment-json';
-import { OPEN_CODE_CONFIG_SCHEMA } from '../opencodeConfig';
+import { OH_MY_OPENAGENT_CONFIG_SCHEMA } from '../opencodeConfig';
 import type { AgentConfig, CategoryConfig } from '@/types/opencodeConfig';
 
 export const PROFILES_DIR = join(homedir(), '.config', 'opencode', 'profiles');
@@ -83,25 +83,25 @@ const BUILTIN_PROFILE_CONFIGS: Record<string, ProfileConfig> = {
         temperature: 0.2,
         top_p: 0.9,
       },
-      hepheastus: {
-        model: 'openai/gpt-5.3-codex',
-        variant: 'xhigh',
+      hephaestus: {
+        model: 'openai/gpt-5.4',
+        variant: 'medium',
         temperature: 0.2,
         top_p: 0.9,
       },
       librarian: {
-        model: 'anthropic/claude-sonnet-4-6',
+        model: 'minimax-m2.7',
         temperature: 0.3,
         top_p: 0.9,
       },
       explore: {
-        model: 'anthropic/claude-haiku-4-5',
+        model: 'grok-code-fast-1',
         temperature: 0.1,
         top_p: 0.9,
       },
       'multimodal-looker': {
-        model: 'google/gemini-3.1-pro',
-        variant: 'high',
+        model: 'openai/gpt-5.4',
+        variant: 'medium',
         temperature: 0.2,
         top_p: 0.9,
       },
@@ -118,11 +118,11 @@ const BUILTIN_PROFILE_CONFIGS: Record<string, ProfileConfig> = {
         variant: 'high',
       },
       ultrabrain: {
-        model: 'openai/gpt-5.3-codex',
+        model: 'openai/gpt-5.4',
         variant: 'xhigh',
       },
       deep: {
-        model: 'openai/gpt-5.3-codex',
+        model: 'openai/gpt-5.4',
         variant: 'medium',
       },
       artistry: {
@@ -130,7 +130,7 @@ const BUILTIN_PROFILE_CONFIGS: Record<string, ProfileConfig> = {
         variant: 'high',
       },
       quick: {
-        model: 'anthropic/claude-haiku-4-5',
+        model: 'openai/gpt-5.4-mini',
         temperature: 0.1,
       },
       'unspecified-low': {
@@ -138,8 +138,8 @@ const BUILTIN_PROFILE_CONFIGS: Record<string, ProfileConfig> = {
         temperature: 0.2,
       },
       'unspecified-high': {
-        model: 'openai/gpt-5.4',
-        variant: 'high',
+        model: 'anthropic/claude-opus-4-6',
+        variant: 'max',
         temperature: 0.2,
       },
       writing: {
@@ -163,7 +163,7 @@ function getProfileConfigPath(id: string): string {
 function normalizeProfileConfig(config: unknown): ProfileConfig {
   if (!config || typeof config !== 'object') {
     return {
-      $schema: OPEN_CODE_CONFIG_SCHEMA,
+      $schema: OH_MY_OPENAGENT_CONFIG_SCHEMA,
       agents: {},
     };
   }
@@ -182,7 +182,7 @@ function normalizeProfileConfig(config: unknown): ProfileConfig {
   const schema =
     typeof candidate.$schema === 'string' && candidate.$schema.trim().length > 0
       ? candidate.$schema
-      : OPEN_CODE_CONFIG_SCHEMA;
+      : OH_MY_OPENAGENT_CONFIG_SCHEMA;
 
   return {
     $schema: schema,
@@ -291,7 +291,7 @@ export async function readProfileConfig(id: string): Promise<ProfileConfig> {
     
     if (!existsSync(configPath)) {
       return {
-        $schema: OPEN_CODE_CONFIG_SCHEMA,
+        $schema: OH_MY_OPENAGENT_CONFIG_SCHEMA,
         agents: {},
       };
     }
@@ -315,7 +315,7 @@ export async function readProfileConfig(id: string): Promise<ProfileConfig> {
     return normalizedConfig;
   } catch {
     return {
-      $schema: OPEN_CODE_CONFIG_SCHEMA,
+        $schema: OH_MY_OPENAGENT_CONFIG_SCHEMA,
       agents: {},
     };
   }
