@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { parse } from 'comment-json';
 
-const SCHEMA_URL = 'https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-openagent.schema.json';
+const SCHEMA_URL = 'https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/v3.15.2/assets/oh-my-opencode.schema.json';
 
 describe('profile storage schema handling', () => {
   let testHomeDir: string;

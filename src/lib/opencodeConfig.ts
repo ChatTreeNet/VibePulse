@@ -8,7 +8,7 @@ import type { OhMyOpenAgentConfig, OpenEditorTargetMode, VibePulseConfig } from 
 export const CONFIG_DIR = join(homedir(), '.config', 'opencode');
 export const CONFIG_PATH = join(CONFIG_DIR, 'oh-my-openagent.jsonc');
 export const LEGACY_CONFIG_PATH = join(CONFIG_DIR, 'oh-my-opencode.jsonc');
-export const OH_MY_OPENAGENT_CONFIG_SCHEMA = 'https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-opencode.schema.json';
+export const OH_MY_OPENAGENT_CONFIG_SCHEMA = 'https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/v3.15.2/assets/oh-my-opencode.schema.json';
 export const DEFAULT_OPEN_EDITOR_TARGET_MODE: OpenEditorTargetMode = 'remote';
 
 export type OpenCodeConfig = OhMyOpenAgentConfig;
