@@ -5,7 +5,7 @@ import { Settings } from 'lucide-react';
 
 interface OpencodeConfigStatus {
   hasConfig: boolean;
-  hasPlugin: boolean;
+  hasOpenCodeCli: boolean;
   path?: string;
 }
 
@@ -25,7 +25,7 @@ export function ConfigButton({ onClick }: ConfigButtonProps) {
     },
   });
 
-  if (!status?.hasPlugin) {
+  if (!status?.hasOpenCodeCli) {
     return null;
   }
 
@@ -34,8 +34,8 @@ export function ConfigButton({ onClick }: ConfigButtonProps) {
       type="button"
       onClick={onClick}
       className="inline-flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-zinc-800 transition-colors duration-200"
-      aria-label="OpenCode Settings"
-      title="OpenCode Settings"
+      aria-label="Oh My OpenAgent Settings"
+      title="Oh My OpenAgent Settings"
     >
       <Settings className="w-5 h-5" />
     </button>

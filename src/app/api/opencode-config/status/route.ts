@@ -4,9 +4,8 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
-async function detectPlugin(): Promise<boolean> {
+async function detectOpenCodeCli(): Promise<boolean> {
   try {
-    // Check if oh-my-opencode CLI is available
     await execAsync('opencode --version');
     return true;
   } catch {
@@ -16,11 +15,11 @@ async function detectPlugin(): Promise<boolean> {
 
 export async function GET() {
   const hasConfig = detectConfig();
-  const hasPlugin = await detectPlugin();
+  const hasOpenCodeCli = await detectOpenCodeCli();
 
-  const response: { hasConfig: boolean; hasPlugin: boolean; path?: string } = {
+  const response: { hasConfig: boolean; hasOpenCodeCli: boolean; path?: string } = {
     hasConfig,
-    hasPlugin,
+    hasOpenCodeCli,
   };
 
   if (hasConfig) {
