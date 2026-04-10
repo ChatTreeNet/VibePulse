@@ -1,6 +1,7 @@
-import { parseActionSessionReference } from '@/lib/hostIdentity';
+import { ActionSessionReference, parseActionSessionReference } from '@/lib/hostIdentity';
 import { listNodeRecords } from '@/lib/nodeRegistry';
 import { createNodeRequestHeaders } from '@/lib/nodeProtocol';
+import { detectProviderFromRawId, extractProviderRawId, getDefaultProviderContext } from '@/lib/session-providers/providerIds';
 
 const REMOTE_NODE_ACTION_TIMEOUT_MS = 5_000;
 
@@ -18,14 +19,33 @@ function createSessionNotFoundResponse() {
   );
 }
 
+function createUnsupportedCapabilityResponse(capability: 'openEditor', sessionId: string) {
+  const provider = detectProviderFromRawId(extractProviderRawId(sessionId));
+
+  return Response.json(
+    {
+      error: 'Session action not supported by provider',
+      reason: 'provider_capability_unsupported',
+      provider,
+      capability,
+    },
+    { status: 403 }
+  );
+}
+
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  let actionTarget;
+  let actionTarget: ActionSessionReference;
   try {
     actionTarget = parseActionSessionReference(id);
   } catch {
     return createInvalidActionSessionIdResponse();
+  }
+
+  const provider = detectProviderFromRawId(extractProviderRawId(actionTarget.sessionId));
+  if (!getDefaultProviderContext(provider).capabilities.openEditor) {
+    return createUnsupportedCapabilityResponse('openEditor', actionTarget.sessionId);
   }
 
   if (!actionTarget.isRemote) {

@@ -1,11 +1,13 @@
 import { discoverOpencodePortsWithMeta } from '@/lib/opencodeDiscovery';
-import { parseActionSessionReference, resolveLocalActionSessionId } from '@/lib/hostIdentity';
+import { ActionSessionReference, parseActionSessionReference, resolveLocalActionSessionId } from '@/lib/hostIdentity';
 import { listNodeRecords } from '@/lib/nodeRegistry';
 import { createNodeRequestHeaders } from '@/lib/nodeProtocol';
+import { detectProviderFromRawId, extractProviderRawId, getDefaultProviderContext } from '@/lib/session-providers/providerIds';
 import {
-    clearSessionForceUnarchived,
-    markSessionStickyStatusBlocked,
+  clearSessionForceUnarchived,
+  markSessionStickyStatusBlocked,
 } from '@/lib/sessionArchiveOverrides';
+import { markClaudeSessionArchived } from '@/lib/claudeSessionOverrides';
 
 const REMOTE_NODE_ACTION_TIMEOUT_MS = 5_000;
 
@@ -20,6 +22,20 @@ function createSessionNotFoundResponse() {
     return Response.json(
         { error: 'Session not found', reason: 'session_not_found' },
         { status: 404 }
+    );
+}
+
+function createUnsupportedCapabilityResponse(capability: 'archive', sessionId: string) {
+    const provider = detectProviderFromRawId(extractProviderRawId(sessionId));
+
+    return Response.json(
+        {
+            error: 'Session action not supported by provider',
+            reason: 'provider_capability_unsupported',
+            provider,
+            capability,
+        },
+        { status: 403 }
     );
 }
 
@@ -87,17 +103,36 @@ async function forwardRemoteArchive(hostId: string, sessionId: string): Promise<
 
 export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
-    const sessionId = resolveLocalActionSessionId(id);
+    let actionTarget: ActionSessionReference;
 
-    if (!sessionId) {
-        try {
-            const actionTarget = parseActionSessionReference(id);
-            if (actionTarget.isRemote) {
-                return forwardRemoteArchive(actionTarget.hostId, actionTarget.sessionId);
-            }
-        } catch {
-            return createInvalidActionSessionIdResponse();
+    try {
+        actionTarget = parseActionSessionReference(id);
+    } catch {
+        return createInvalidActionSessionIdResponse();
+    }
+
+    const provider = detectProviderFromRawId(extractProviderRawId(actionTarget.sessionId));
+    if (!getDefaultProviderContext(provider).capabilities.archive) {
+        return createUnsupportedCapabilityResponse('archive', actionTarget.sessionId);
+    }
+
+    if (provider === 'claude-code' && actionTarget.isRemote) {
+        return createUnsupportedCapabilityResponse('archive', actionTarget.sessionId);
+    }
+
+    if (provider === 'claude-code') {
+        await markClaudeSessionArchived(extractProviderRawId(actionTarget.sessionId));
+        const localSessionId = resolveLocalActionSessionId(id);
+        if (localSessionId) {
+            clearSessionForceUnarchived(localSessionId);
+            markSessionStickyStatusBlocked(localSessionId);
         }
+        return Response.json({ success: true });
+    }
+
+    const sessionId = resolveLocalActionSessionId(id);
+    if (!sessionId && actionTarget.isRemote) {
+        return forwardRemoteArchive(actionTarget.hostId, actionTarget.sessionId);
     }
 
     if (!sessionId) {

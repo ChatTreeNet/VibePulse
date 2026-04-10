@@ -1,12 +1,14 @@
 import { createOpencodeClient } from '@opencode-ai/sdk';
 import { discoverOpencodePortsWithMeta } from '@/lib/opencodeDiscovery';
-import { parseActionSessionReference, resolveLocalActionSessionId } from '@/lib/hostIdentity';
+import { ActionSessionReference, parseActionSessionReference, resolveLocalActionSessionId } from '@/lib/hostIdentity';
 import { listNodeRecords } from '@/lib/nodeRegistry';
 import { createNodeRequestHeaders } from '@/lib/nodeProtocol';
+import { detectProviderFromRawId, extractProviderRawId, getDefaultProviderContext } from '@/lib/session-providers/providerIds';
 import {
     clearSessionForceUnarchived,
     clearSessionStickyStatusBlocked,
 } from '@/lib/sessionArchiveOverrides';
+import { markClaudeSessionDeleted } from '@/lib/claudeSessionOverrides';
 
 const REMOTE_NODE_ACTION_TIMEOUT_MS = 5_000;
 
@@ -25,6 +27,20 @@ function createSessionNotFoundResponse(message?: string) {
             ...(message ? { message } : {}),
         },
         { status: 404 }
+    );
+}
+
+function createUnsupportedCapabilityResponse(capability: 'delete', sessionId: string) {
+    const provider = detectProviderFromRawId(extractProviderRawId(sessionId));
+
+    return Response.json(
+        {
+            error: 'Session action not supported by provider',
+            reason: 'provider_capability_unsupported',
+            provider,
+            capability,
+        },
+        { status: 403 }
     );
 }
 
@@ -77,17 +93,36 @@ async function forwardRemoteDelete(hostId: string, sessionId: string): Promise<R
 
 export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
-    const sessionId = resolveLocalActionSessionId(id);
+    let actionTarget: ActionSessionReference;
 
-    if (!sessionId) {
-        try {
-            const actionTarget = parseActionSessionReference(id);
-            if (actionTarget.isRemote) {
-                return forwardRemoteDelete(actionTarget.hostId, actionTarget.sessionId);
-            }
-        } catch {
-            return createInvalidActionSessionIdResponse();
+    try {
+        actionTarget = parseActionSessionReference(id);
+    } catch {
+        return createInvalidActionSessionIdResponse();
+    }
+
+    const provider = detectProviderFromRawId(extractProviderRawId(actionTarget.sessionId));
+    if (!getDefaultProviderContext(provider).capabilities.delete) {
+        return createUnsupportedCapabilityResponse('delete', actionTarget.sessionId);
+    }
+
+    if (provider === 'claude-code' && actionTarget.isRemote) {
+        return createUnsupportedCapabilityResponse('delete', actionTarget.sessionId);
+    }
+
+    if (provider === 'claude-code') {
+        await markClaudeSessionDeleted(extractProviderRawId(actionTarget.sessionId));
+        const localSessionId = resolveLocalActionSessionId(id);
+        if (localSessionId) {
+            clearSessionForceUnarchived(localSessionId);
+            clearSessionStickyStatusBlocked(localSessionId);
         }
+        return Response.json({ success: true });
+    }
+
+    const sessionId = resolveLocalActionSessionId(id);
+    if (!sessionId && actionTarget.isRemote) {
+        return forwardRemoteDelete(actionTarget.hostId, actionTarget.sessionId);
     }
 
     if (!sessionId) {
