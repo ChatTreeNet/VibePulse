@@ -8,8 +8,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 type RenderFn = (ui: React.ReactElement) => { rerender: (ui: React.ReactElement) => void };
 type Screen = {
     getByText: (text: string | RegExp) => HTMLElement;
+    getAllByText: (text: string | RegExp) => HTMLElement[];
     getByTitle: (title: string | RegExp) => HTMLElement;
+    getAllByTitle: (title: string | RegExp) => HTMLElement[];
     queryByTitle: (title: string | RegExp) => HTMLElement | null;
+    queryAllByTitle: (title: string | RegExp) => HTMLElement[];
 };
 
 const tlReact = TestingLibraryReact as unknown as { 
@@ -684,14 +687,105 @@ describe('ProjectCard', () => {
 
         expect(screen.getByText('TestProject')).toBeTruthy();
         expect(screen.getByTitle('Source: Remote 1')).toBeTruthy();
-        expect(screen.queryByTitle('Open project')).toBeNull();
+        expect(screen.getByTitle('Open project')).toBeTruthy();
     });
 
     it('respects readOnly prop when explicitly passed', () => {
         renderWithProviders(
             <ProjectCard projectName="TestProject" cards={[mockCard]} readOnly={true} />
         );
-        expect(screen.queryByTitle('Open project')).toBeNull();
+        expect(screen.getByTitle('Open project')).toBeTruthy();
+    });
+
+    it('renders Claude-backed cards as read-only but with footer controls', () => {
+        const claudeCard: KanbanCard = {
+            ...mockCard,
+            provider: 'claude-code',
+            readOnly: true,
+            id: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+            capabilities: {
+                openProject: true,
+                openEditor: false,
+                archive: true,
+                delete: true,
+            },
+        };
+
+        renderWithProviders(
+            <ProjectCard projectName="TestProject" cards={[claudeCard]} />
+        );
+
+        expect(screen.getByText('TestProject')).toBeTruthy();
+        expect(screen.getByTitle('Open project')).toBeTruthy();
+        expect(screen.getByTitle('Batch actions')).toBeTruthy();
+        expect(screen.getByTitle('Actions')).toBeTruthy();
+    });
+
+    it('keeps writable OpenCode controls in mixed local Claude groups while hiding Claude row actions', async () => {
+        const claudeCard: KanbanCard = {
+            ...mockCard,
+            id: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+            sessionSlug: '550e8400-e29b-41d4-a716-446655440000',
+            title: 'Claude Code Session',
+            provider: 'claude-code',
+            providerRawId: '550e8400-e29b-41d4-a716-446655440000',
+            rawSessionId: '550e8400-e29b-41d4-a716-446655440000',
+            readOnly: true,
+            sortOrder: 1,
+            capabilities: {
+                openProject: true,
+                openEditor: false,
+                archive: true,
+                delete: true,
+            },
+        };
+
+        renderWithProviders(
+            <ProjectCard projectName="TestProject" cards={[mockCard, claudeCard]} />
+        );
+
+        expect(screen.getByTitle('Open project')).toBeTruthy();
+        expect(screen.getByTitle('Batch actions')).toBeTruthy();
+        expect(screen.queryAllByTitle('Actions')).toHaveLength(2);
+
+        const { fireEvent, waitFor } = TestingLibraryReact;
+        fireEvent.click(screen.getByTitle('Batch actions'));
+        fireEvent.click(screen.getByText('Archive all'));
+
+        await waitFor(() => {
+            expect(globalThis.fetch).toHaveBeenCalledWith('/api/sessions/local:123/archive', expect.objectContaining({
+                method: 'POST',
+            }));
+            expect(globalThis.fetch).toHaveBeenCalledWith('/api/sessions/local:claude~550e8400-e29b-41d4-a716-446655440000/archive', expect.objectContaining({
+                method: 'POST',
+            }));
+        });
+    });
+
+    it('respects capabilities for action visibility regardless of readOnly status', () => {
+        const capabilityCard: KanbanCard = {
+            ...mockCard,
+            readOnly: true,
+            capabilities: {
+                openProject: true,
+                openEditor: true,
+                archive: true,
+                delete: false
+            }
+        };
+
+        renderWithProviders(
+            <ProjectCard projectName="TestProject" cards={[capabilityCard]} />
+        );
+
+        expect(screen.getByTitle('Batch actions')).toBeTruthy();
+        expect(screen.getByTitle('Actions')).toBeTruthy();
+
+        const { fireEvent } = TestingLibraryReact;
+        fireEvent.click(screen.getByTitle('Batch actions'));
+        
+        expect(TestingLibraryReact.screen.getByText('Archive all')).toBeTruthy();
+        expect(TestingLibraryReact.screen.queryByText('Delete all')).toBeNull();
     });
 
     it('distinguishes same project name on different hosts via badges', () => {
@@ -764,10 +858,102 @@ describe('ProjectCard Host Badges', () => {
         expect(screen.getByTitle('main')).toBeTruthy();
     });
 
+    it('renders branch metadata and Open project for pure Claude read-only projects', () => {
+        const claudeCard: KanbanCard = {
+            ...mockCard,
+            provider: 'claude-code',
+            readOnly: true,
+            id: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+        };
+
+        renderWithProviders(
+            <ProjectCard projectName="TestProject" branch="claude-branch" cards={[claudeCard]} />
+        );
+
+        expect(screen.getByTitle('claude-branch')).toBeTruthy();
+        expect(screen.getByTitle('Open project')).toBeTruthy();
+    });
+
+    it('shows restore actions for archived Claude sessions', async () => {
+        const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+        Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+
+        const archivedClaudeCard: KanbanCard = {
+            ...mockCard,
+            provider: 'claude-code',
+            readOnly: true,
+            status: 'done',
+            id: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+            capabilities: {
+                openProject: true,
+                openEditor: false,
+                archive: true,
+                delete: true,
+            },
+        };
+
+        renderWithProviders(
+            <ProjectCard projectName="TestProject" cards={[archivedClaudeCard]} />
+        );
+
+        const { fireEvent, waitFor } = TestingLibraryReact;
+        fireEvent.click(screen.getByTitle('Batch actions'));
+        fireEvent.click(screen.getByText('Restore all'));
+
+        await waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith('/api/sessions/local:claude~550e8400-e29b-41d4-a716-446655440000/restore', expect.objectContaining({ method: 'POST' }));
+        });
+    });
+
     it('hides Local badge when multipleHostsEnabled is false', () => {
         renderWithProviders(
             <ProjectCard projectName="TestProject" cards={[mockCard]} multipleHostsEnabled={false} />
         );
         expect(screen.queryByTitle('Source: Local')).toBeNull();
+    });
+});
+
+describe('ProjectCard Provider Visuals', () => {
+    const mockCard: KanbanCard = {
+        id: 'local:123',
+        sessionSlug: 'session_123',
+        title: 'Session',
+        directory: '/',
+        projectName: 'Prj',
+        agents: [],
+        messageCount: 0,
+        status: 'idle',
+        opencodeStatus: 'idle',
+        waitingForUser: false,
+        todosTotal: 0,
+        todosCompleted: 0,
+        createdAt: 0,
+        updatedAt: 0,
+        sortOrder: 0,
+        provider: 'opencode',
+    };
+
+    it('does not show a provider badge at the project-card level for opencode-only projects', () => {
+        renderWithProviders(<ProjectCard projectName="Prj" cards={[{ ...mockCard, provider: 'opencode' }]} />);
+        expect(screen.queryByTitle('Provider: OpenCode')).toBeNull();
+    });
+
+    it('renders Claude row status as a diamond instead of a round dot', () => {
+        renderWithProviders(<ProjectCard projectName="Prj" cards={[{ ...mockCard, provider: 'claude-code' }]} />);
+        const status = screen.getByTitle('Idle');
+        expect(status.className).toContain('rotate-45');
+        expect(screen.queryByTitle('Provider: Claude Code')).toBeNull();
+    });
+
+    it('does not render a mixed provider badge at the project-card level', () => {
+        renderWithProviders(<ProjectCard projectName="Prj" cards={[
+            { ...mockCard, provider: 'opencode' },
+            { ...mockCard, id: '2', provider: 'claude-code' }
+        ]} />);
+        expect(screen.queryByTitle('Provider: Mixed (OpenCode & Claude)')).toBeNull();
+        expect(screen.getAllByTitle('Idle').some((node) => node.className.includes('rotate-45'))).toBe(true);
     });
 });

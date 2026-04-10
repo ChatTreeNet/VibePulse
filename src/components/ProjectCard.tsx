@@ -38,12 +38,13 @@ function buildTooltipTitle(lines: string[], debugReason?: string): string {
     return debugReason ? [...lines, `Reason: ${debugReason}`].join('\n') : lines.join('\n');
 }
 
-function StatusDot({ status, waitingForUser }: { status: string; waitingForUser: boolean }) {
+function StatusDot({ status, waitingForUser, provider }: { status: string; waitingForUser: boolean; provider?: string }) {
+    const shapeClass = provider === 'claude-code' ? 'rotate-45 rounded-[1px]' : 'rounded-full';
     if (waitingForUser) {
         return (
             <span className="relative flex h-2 w-2 flex-shrink-0" title="Waiting">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                <span className={`animate-ping absolute inline-flex h-full w-full ${shapeClass} bg-amber-400 opacity-75`}></span>
+                <span className={`relative inline-flex h-2 w-2 ${shapeClass} bg-amber-500`}></span>
             </span>
         );
     }
@@ -51,23 +52,23 @@ function StatusDot({ status, waitingForUser }: { status: string; waitingForUser:
         case 'busy':
             return (
                 <span className="relative flex h-2 w-2 flex-shrink-0" title="Running">
-                    <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    <span className={`animate-pulse absolute inline-flex h-full w-full ${shapeClass} bg-emerald-400 opacity-75`}></span>
+                    <span className={`relative inline-flex h-2 w-2 ${shapeClass} bg-emerald-500`}></span>
                 </span>
             );
         case 'retry':
             return (
                 <span className="relative flex h-2 w-2 flex-shrink-0" title="Retrying">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                    <span className={`animate-ping absolute inline-flex h-full w-full ${shapeClass} bg-red-400 opacity-75`}></span>
+                    <span className={`relative inline-flex h-2 w-2 ${shapeClass} bg-red-500`}></span>
                 </span>
             );
         default:
-            return <span className="inline-flex rounded-full h-2 w-2 bg-gray-400 flex-shrink-0" title="Idle"></span>;
+            return <span className={`inline-flex h-2 w-2 bg-gray-400 flex-shrink-0 ${shapeClass}`} title="Idle"></span>;
     }
 }
 
-function HeaderActionMenu({ cards, readOnly = false, isActionPending, onActionError, onPendingActionChange }: { cards: KanbanCard[]; readOnly?: boolean; isActionPending: boolean; onActionError: (message: string | null) => void; onPendingActionChange: (value: 'open' | 'archive' | 'delete' | null) => void }) {
+function HeaderActionMenu({ cards, isActionPending, onActionError, onPendingActionChange }: { cards: KanbanCard[]; isActionPending: boolean; onActionError: (message: string | null) => void; onPendingActionChange: (value: 'open' | 'archive' | 'restore' | 'delete' | null) => void }) {
     const queryClient = useQueryClient();
     const [open, setOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
@@ -83,7 +84,11 @@ function HeaderActionMenu({ cards, readOnly = false, isActionPending, onActionEr
         return () => document.removeEventListener('mousedown', handler);
     }, [open]);
 
-    const hasUnarchived = cards.some(c => c.status !== 'done');
+    const canArchiveAny = cards.some(c => c.capabilities ? c.capabilities.archive : !c.readOnly);
+    const canDeleteAny = cards.some(c => c.capabilities ? c.capabilities.delete : !c.readOnly);
+
+    if (!canArchiveAny && !canDeleteAny) return null;
+
     const hasMixedHosts = new Set(cards.map((card) => card.hostId ?? 'local')).size > 1;
 
     const handleArchiveAll = async (e: React.MouseEvent) => {
@@ -96,7 +101,15 @@ function HeaderActionMenu({ cards, readOnly = false, isActionPending, onActionEr
             return;
         }
 
-        const unarchivedCards = cards.filter(c => c.status !== 'done');
+        const unarchivedCards = cards.filter(c => {
+            if (c.status === 'done') return false;
+            return c.capabilities ? c.capabilities.archive : !c.readOnly;
+        });
+        if (unarchivedCards.length === 0) {
+            setOpen(false);
+            return;
+        }
+
         onPendingActionChange('archive');
         try {
             const responses = await Promise.all(unarchivedCards.map(card =>
@@ -106,6 +119,41 @@ function HeaderActionMenu({ cards, readOnly = false, isActionPending, onActionEr
             if (failedResponse) {
                 const errorBody = await failedResponse.json().catch(() => null);
                 onActionError(mapSessionActionError(errorBody, 'Failed to archive sessions'));
+            }
+        } catch {
+            onActionError('Remote node is offline or unreachable.');
+        } finally {
+            onPendingActionChange(null);
+        }
+        setOpen(false);
+        await queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    };
+
+    const handleRestoreAll = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (isActionPending) return;
+        onActionError(null);
+        if (hasMixedHosts) {
+            onActionError('Mixed-host restore is not supported');
+            setOpen(false);
+            return;
+        }
+
+        const archivedCards = cards.filter(c => c.status === 'done' && (c.capabilities ? c.capabilities.archive : !c.readOnly));
+        if (archivedCards.length === 0) {
+            setOpen(false);
+            return;
+        }
+
+        onPendingActionChange('restore');
+        try {
+            const responses = await Promise.all(archivedCards.map(card =>
+                fetch(`/api/sessions/${card.id}/restore`, { method: 'POST' })
+            ));
+            const failedResponse = responses.find((response) => !response.ok);
+            if (failedResponse) {
+                const errorBody = await failedResponse.json().catch(() => null);
+                onActionError(mapSessionActionError(errorBody, 'Failed to restore sessions'));
             }
         } catch {
             onActionError('Remote node is offline or unreachable.');
@@ -126,10 +174,16 @@ function HeaderActionMenu({ cards, readOnly = false, isActionPending, onActionEr
             return;
         }
 
-        if (!confirm(`Delete ${cards.length} session(s)? This cannot be undone.`)) return;
+        const deletableCards = cards.filter(c => c.capabilities ? c.capabilities.delete : !c.readOnly);
+        if (deletableCards.length === 0) {
+            setOpen(false);
+            return;
+        }
+
+        if (!confirm(`Delete ${deletableCards.length} session(s)? This cannot be undone.`)) return;
         onPendingActionChange('delete');
         try {
-            const responses = await Promise.all(cards.map(card =>
+            const responses = await Promise.all(deletableCards.map(card =>
                 fetch(`/api/sessions/${card.id}/delete`, { method: 'POST' })
             ));
             const failedResponse = responses.find((response) => !response.ok);
@@ -146,7 +200,8 @@ function HeaderActionMenu({ cards, readOnly = false, isActionPending, onActionEr
         await queryClient.invalidateQueries({ queryKey: ['sessions'] });
     };
 
-    if (readOnly) return null;
+    const hasArchivableInBatch = cards.some(c => (c.status !== 'done') && (c.capabilities ? c.capabilities.archive : !c.readOnly));
+    const hasRestorableInBatch = cards.some(c => c.status === 'done' && (c.capabilities ? c.capabilities.archive : !c.readOnly));
 
     return (
         <div className="relative" ref={menuRef}>
@@ -163,7 +218,7 @@ function HeaderActionMenu({ cards, readOnly = false, isActionPending, onActionEr
             </button>
             {open && (
                 <div className="absolute right-0 top-6 w-32 rounded-md border border-gray-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900 z-20">
-                    {hasUnarchived && (
+                    {hasArchivableInBatch && (
                         <button
                             type="button"
                             className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-zinc-800"
@@ -173,14 +228,26 @@ function HeaderActionMenu({ cards, readOnly = false, isActionPending, onActionEr
                             Archive all
                         </button>
                     )}
-                    <button
-                        type="button"
-                        className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
-                        onClick={handleDeleteAll}
-                        disabled={isActionPending}
-                    >
-                        Delete all
-                    </button>
+                    {hasRestorableInBatch && (
+                        <button
+                            type="button"
+                            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-zinc-800"
+                            onClick={handleRestoreAll}
+                            disabled={isActionPending}
+                        >
+                            Restore all
+                        </button>
+                    )}
+                    {canDeleteAny && (
+                        <button
+                            type="button"
+                            className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+                            onClick={handleDeleteAll}
+                            disabled={isActionPending}
+                        >
+                            Delete all
+                        </button>
+                    )}
                 </div>
             )}
         </div>
@@ -188,7 +255,7 @@ function HeaderActionMenu({ cards, readOnly = false, isActionPending, onActionEr
 }
 
 // Hover-reveal action menu for each session row
-function RowActionMenu({ cardId, archived, isActionPending, onActionError, onPendingActionChange }: { cardId: string; archived: boolean; isActionPending: boolean; onActionError: (message: string | null) => void; onPendingActionChange: (value: 'open' | 'archive' | 'delete' | null) => void }) {
+function RowActionMenu({ card, isActionPending, onActionError, onPendingActionChange }: { card: KanbanCard; isActionPending: boolean; onActionError: (message: string | null) => void; onPendingActionChange: (value: 'open' | 'archive' | 'restore' | 'delete' | null) => void }) {
     const queryClient = useQueryClient();
     const [open, setOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
@@ -204,16 +271,41 @@ function RowActionMenu({ cardId, archived, isActionPending, onActionError, onPen
         return () => document.removeEventListener('mousedown', handler);
     }, [open]);
 
+    const canArchive = card.capabilities ? card.capabilities.archive : !card.readOnly;
+    const canDelete = card.capabilities ? card.capabilities.delete : !card.readOnly;
+
+    if (!canArchive && !canDelete) return null;
+
     const handleArchive = async (e: React.MouseEvent) => {
         e.stopPropagation();
         if (isActionPending) return;
         onActionError(null);
         onPendingActionChange('archive');
         try {
-            const response = await fetch(`/api/sessions/${cardId}/archive`, { method: 'POST' });
+            const response = await fetch(`/api/sessions/${card.id}/archive`, { method: 'POST' });
             if (!response.ok) {
                 const errorBody = await response.json().catch(() => null);
                 onActionError(mapSessionActionError(errorBody, 'Failed to archive session'));
+            }
+        } catch {
+            onActionError('Remote node is offline or unreachable.');
+        } finally {
+            onPendingActionChange(null);
+            setOpen(false);
+            await queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        }
+    };
+
+    const handleRestore = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (isActionPending) return;
+        onActionError(null);
+        onPendingActionChange('restore');
+        try {
+            const response = await fetch(`/api/sessions/${card.id}/restore`, { method: 'POST' });
+            if (!response.ok) {
+                const errorBody = await response.json().catch(() => null);
+                onActionError(mapSessionActionError(errorBody, 'Failed to restore session'));
             }
         } catch {
             onActionError('Remote node is offline or unreachable.');
@@ -230,7 +322,7 @@ function RowActionMenu({ cardId, archived, isActionPending, onActionError, onPen
         onActionError(null);
         onPendingActionChange('delete');
         try {
-            const response = await fetch(`/api/sessions/${cardId}/delete`, { method: 'POST' });
+            const response = await fetch(`/api/sessions/${card.id}/delete`, { method: 'POST' });
             if (!response.ok) {
                 const errorBody = await response.json().catch(() => null);
                 onActionError(mapSessionActionError(errorBody, 'Failed to delete session'));
@@ -259,7 +351,7 @@ function RowActionMenu({ cardId, archived, isActionPending, onActionError, onPen
             </button>
             {open && (
                 <div className="absolute right-0 top-6 w-28 rounded-md border border-gray-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900 z-20">
-                    {!archived ? (
+                    {(card.status !== 'done' && canArchive) && (
                         <button
                             type="button"
                             className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-zinc-800"
@@ -268,15 +360,27 @@ function RowActionMenu({ cardId, archived, isActionPending, onActionError, onPen
                         >
                             Archive
                         </button>
-                    ) : null}
-                    <button
-                        type="button"
-                        className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
-                        onClick={handleDelete}
-                        disabled={isActionPending}
-                    >
-                        Delete
-                    </button>
+                    )}
+                    {(card.status === 'done' && canArchive) && (
+                        <button
+                            type="button"
+                            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-zinc-800"
+                            onClick={handleRestore}
+                            disabled={isActionPending}
+                        >
+                            Restore
+                        </button>
+                    )}
+                    {canDelete && (
+                        <button
+                            type="button"
+                            className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+                            onClick={handleDelete}
+                            disabled={isActionPending}
+                        >
+                            Delete
+                        </button>
+                    )}
                 </div>
             )}
         </div>
@@ -284,7 +388,7 @@ function RowActionMenu({ cardId, archived, isActionPending, onActionError, onPen
 }
 
 // Session row with expandable subagent children
-function SessionRow({ card, isLast, readOnly = false, isActionPending, onActionError, onPendingActionChange }: { card: KanbanCard; isLast: boolean; readOnly?: boolean; isActionPending: boolean; onActionError: (message: string | null) => void; onPendingActionChange: (value: 'open' | 'archive' | 'delete' | null) => void }) {
+function SessionRow({ card, isLast, isActionPending, onActionError, onPendingActionChange }: { card: KanbanCard; isLast: boolean; isActionPending: boolean; onActionError: (message: string | null) => void; onPendingActionChange: (value: 'open' | 'archive' | 'restore' | 'delete' | null) => void }) {
     const [expanded, setExpanded] = useState(true);
     const visibleChildren = (card.children || []).filter(
         (child) => child.realTimeStatus !== 'idle' || child.waitingForUser
@@ -319,7 +423,7 @@ function SessionRow({ card, isLast, readOnly = false, isActionPending, onActionE
                         </svg>
                     </button>
                 )}
-                <StatusDot status={card.opencodeStatus} waitingForUser={card.waitingForUser} />
+                <StatusDot status={card.opencodeStatus} waitingForUser={card.waitingForUser} provider={card.provider} />
                 <span className="text-sm text-gray-700 dark:text-gray-300 truncate flex-1 min-w-0">
                     {card.title || 'Untitled Session'}
                 </span>
@@ -334,11 +438,9 @@ function SessionRow({ card, isLast, readOnly = false, isActionPending, onActionE
                     {formatRelativeTime(card.updatedAt)}
                 </span>
                 {/* Action menu: hidden by default, visible on hover */}
-                {!readOnly ? (
-                    <div className="hidden group-hover/row:flex flex-shrink-0">
-                        <RowActionMenu cardId={card.id} archived={card.status === 'done'} isActionPending={isActionPending} onActionError={onActionError} onPendingActionChange={onPendingActionChange} />
-                    </div>
-                ) : null}
+                <div className="hidden group-hover/row:flex flex-shrink-0">
+                    <RowActionMenu card={card} isActionPending={isActionPending} onActionError={onActionError} onPendingActionChange={onPendingActionChange} />
+                </div>
             </div>
             {/* Subagent children */}
             {hasChildren && expanded && (
@@ -365,15 +467,19 @@ function SessionRow({ card, isLast, readOnly = false, isActionPending, onActionE
     );
 }
 
-export function ProjectCard({ projectName, branch, cards, readOnly: _readOnly, hostLabel: _hostLabel, multipleHostsEnabled }: ProjectCardProps) {
+export function ProjectCard({ projectName, branch, cards, hostLabel: _hostLabel, multipleHostsEnabled }: ProjectCardProps) {
     const firstCard = cards[0];
-    const readOnly = _readOnly ?? firstCard?.readOnly ?? false;
+    const actionableCards = useMemo(
+        () => cards,
+        [cards]
+    );
+    const primaryCard = actionableCards[0] ?? firstCard;
     const hostLabel = _hostLabel ?? firstCard?.hostLabel;
-    const hostId = firstCard?.hostId;
+    const hostId = primaryCard?.hostId ?? firstCard?.hostId;
     const showHostBadge = hostLabel && (multipleHostsEnabled || hostLabel !== 'Local');
     const hostAccentClass = getHostAccentTextClass(hostId, hostLabel);
     const [actionError, setActionError] = useState<string | null>(null);
-    const [pendingAction, setPendingAction] = useState<'open' | 'archive' | 'delete' | null>(null);
+    const [pendingAction, setPendingAction] = useState<'open' | 'archive' | 'restore' | 'delete' | null>(null);
     const [openTool, setOpenTool] = useState(() => {
         if (typeof window === 'undefined') return 'vscode';
         return window.localStorage.getItem('vibepulse:open-tool') || 'vscode';
@@ -400,8 +506,8 @@ export function ProjectCard({ projectName, branch, cards, readOnly: _readOnly, h
             return storedHost;
         }
 
-        const firstRemoteBaseUrl = firstCard?.hostBaseUrl;
-        if (firstRemoteBaseUrl && firstCard?.hostId !== 'local') {
+        const firstRemoteBaseUrl = primaryCard?.hostBaseUrl;
+        if (firstRemoteBaseUrl && primaryCard?.hostId !== 'local') {
             try {
                 return new URL(firstRemoteBaseUrl).hostname;
             } catch {
@@ -414,16 +520,18 @@ export function ProjectCard({ projectName, branch, cards, readOnly: _readOnly, h
         }
 
         return '';
-    }, [firstCard?.hostBaseUrl, firstCard?.hostId]);
+    }, [primaryCard?.hostBaseUrl, primaryCard?.hostId]);
     const isActionPending = pendingAction !== null;
     const pendingActionLabel = pendingAction === 'open'
         ? 'Opening…'
         : pendingAction === 'archive'
             ? 'Archiving…'
-            : pendingAction === 'delete'
-                ? 'Deleting…'
-                : null;
-    const isRemoteProjectCard = !!firstCard && firstCard.hostId !== undefined && firstCard.hostId !== 'local';
+            : pendingAction === 'restore'
+                ? 'Restoring…'
+                : pendingAction === 'delete'
+                    ? 'Deleting…'
+                    : null;
+    const isRemoteProjectCard = !!primaryCard && primaryCard.hostId !== undefined && primaryCard.hostId !== 'local';
     const isConfigPendingForRemoteOpen = isRemoteProjectCard && isConfigLoading && !config;
     const isConfigUnavailableForRemoteOpen = isRemoteProjectCard && !config && !isConfigLoading;
 
@@ -441,10 +549,10 @@ export function ProjectCard({ projectName, branch, cards, readOnly: _readOnly, h
             return;
         }
 
-        const directory = cards[0]?.directory;
+        const directory = primaryCard?.directory;
         if (!directory) return;
         setActionError(null);
-        const firstProjectCard = cards[0];
+        const firstProjectCard = primaryCard;
         const openEditorTargetMode = config?.vibepulse?.openEditorTargetMode === 'hub' ? 'hub' : 'remote';
         const isRemoteProject = firstProjectCard?.hostId !== undefined && firstProjectCard.hostId !== 'local';
 
@@ -498,23 +606,21 @@ export function ProjectCard({ projectName, branch, cards, readOnly: _readOnly, h
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
                     </svg>
                 </div>
-                <span className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate flex-1 min-w-0">
-                    {projectName}
-                </span>
-                {(cards.length > 1 || !readOnly) && (
-                    <div className="flex items-center flex-shrink-0 bg-gray-100 dark:bg-zinc-700/50 rounded-full h-6 border border-gray-200/50 dark:border-zinc-700">
-                        {cards.length > 1 && (
-                            <span className={`text-[11px] font-medium text-gray-500 dark:text-gray-400 ${!readOnly ? 'pl-2.5 pr-1' : 'px-2.5'}`}>
-                                {cards.length}
-                            </span>
-                        )}
-                        {!readOnly && (
-                            <div className={`${cards.length > 1 ? 'pr-0.5' : 'px-0.5'}`}>
-                                <HeaderActionMenu cards={cards} readOnly={readOnly} isActionPending={isActionPending} onActionError={setActionError} onPendingActionChange={setPendingAction} />
-                            </div>
-                        )}
+                <div className="flex-1 min-w-0 flex items-center gap-2">
+                    <span className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate">
+                        {projectName}
+                    </span>
+                </div>
+                <div className="flex items-center flex-shrink-0 bg-gray-100 dark:bg-zinc-700/50 rounded-full h-6 border border-gray-200/50 dark:border-zinc-700">
+                    {cards.length > 1 && (
+                        <span className="text-[11px] font-medium text-gray-500 dark:text-gray-400 pl-2.5 pr-1">
+                            {cards.length}
+                        </span>
+                    )}
+                    <div className={`${cards.length > 1 ? 'pr-0.5' : 'px-0.5'}`}>
+                        <HeaderActionMenu cards={actionableCards} isActionPending={isActionPending} onActionError={setActionError} onPendingActionChange={setPendingAction} />
                     </div>
-                )}
+                </div>
             </div>
 
             {/* Session rows */}
@@ -524,7 +630,6 @@ export function ProjectCard({ projectName, branch, cards, readOnly: _readOnly, h
                         key={card.id}
                         card={card}
                         isLast={index === cards.length - 1}
-                        readOnly={readOnly}
                         isActionPending={isActionPending}
                         onActionError={setActionError}
                         onPendingActionChange={setPendingAction}
@@ -533,7 +638,7 @@ export function ProjectCard({ projectName, branch, cards, readOnly: _readOnly, h
             </div>
 
             {/* Footer */}
-            {!readOnly && (
+            {(branch || primaryCard?.directory) && (
                 <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-t border-gray-100 dark:border-zinc-700/50 bg-gray-50/50 dark:bg-zinc-800/50">
                     <div className="min-w-0 flex-1 text-[10px] text-gray-400 dark:text-gray-500 truncate">
                         {branch ? (
