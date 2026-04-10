@@ -158,6 +158,21 @@ sequenceDiagram
 
 ---
 
+## Claude Code Detection (Phase 1)
+
+VibePulse includes experimental host-global discovery for Claude Code sessions (`provider = 'claude-code'`). The detection mechanisms used for OpenCode differ for Claude Code due to the nature of Phase-1 integration:
+
+- **Host-Global Discovery:** Uses file-system artifacts (`~/.claude/projects/`, `~/.claude/sessions/`) across the entire host to automatically detect active projects without requiring current-repo constraints.
+- **Polling Isolation:** Claude Code sessions are discovered entirely via local polling without live SSE stream propagation or node-protocol support.
+- **Robust Stale-Busy Mitigation:**
+  - Status inference uses explicit liveness checks (pid polling/verification) at the provider boundary to ensure zombie processes do not stall the UI in a "busy" state.
+  - Active pid mapping yields `realTimeStatus = 'busy'`.
+  - Artifact-only fallback with dead pids maps to `realTimeStatus = 'idle'`.
+  - Claude never emits `retry`, but it can emit `waitingForUser = true` when fresh transcript evidence shows either a direct assistant question or a pending `tool_use` approval with no later user/tool_result resolution.
+- **Capability-Aware Contracts:** Claude sessions have discrete capability scopes. Claude now supports VibePulse-managed `archive` and `delete`, while `open-editor` remains explicitly disabled until a provider-safe execution path is available.
+
+---
+
 ## Detection Limitations (Shortcomings)
 
 ### Root Cause: Unreliable Signal Source

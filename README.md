@@ -8,11 +8,20 @@ A tiny dashboard that sits in your browser tab — tired of switching IDE tabs j
 
 ## What It Does
 
-- **Kanban board** — Auto-discovers OpenCode sessions, organizes them into Idle / Busy / Review / Done
-- **Remote Nodes** — Connect multiple VibePulse instances to a single hub for a unified view
+- **Kanban board** — Auto-discovers OpenCode sessions and host-global Claude Code sessions, organizes them into Idle / Busy / Review / Done
+- **Remote Nodes** — Connect multiple VibePulse instances to a single hub for a unified view (OpenCode only)
 - **Audio alerts** — Makes a sound when sessions complete or need attention
 - **Zero setup** — No manual card creation; auto-scans ports and processes
 - **Profile switcher** — Flip between Oh My OpenAgent presets without touching config files
+
+## Claude Code Support (Phase 1)
+VibePulse includes experimental, capability-aware support for tracking local [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview) sessions:
+- **Host-Global Discovery:** Automatically detects all Claude Code sessions running on the machine, aggregating projects seamlessly.
+- **Explicit Capabilities:** Supported actions are explicitly modeled per provider. Claude now supports VibePulse-managed `archive` and `delete`, while `openEditor` remains disabled until a provider-safe execution path is defined.
+- **Visual Differentiation:** Mixed environments feature distinct visual indicators distinguishing OpenCode and Claude groups inside projects.
+- **Robust Liveness Semantics:** Stale busy states and zombie parsing are prevented at the provider boundary using stricter liveness verification.
+- **Polling Integration:** Claude status updates via polling only. Live SSE streams and node-protocol propagation to remote hubs are not supported in Phase 1.
+- **No Transcript Rendering:** Message contents and child sessions are not exposed.
 
 ## Quick Start
 
@@ -62,6 +71,21 @@ git clone https://github.com/ChatTreeNet/VibePulse.git
 cd VibePulse
 npm install
 npm run dev
+```
+
+### Phase 1 Verification
+If modifying Claude Code integration, run the targeted regression matrix to ensure discovery order, bounded idle fallback, capability alignment, stronger liveness semantics, and mixed Claude/OpenCode visual behavior all stay intact:
+
+| Area | Command |
+|------|---------|
+| Claude discovery + liveness rules | `npm run test:run -- src/lib/session-providers/claudeCode.test.ts` |
+| Capability alignment + rejection | `npm run test:run -- src/lib/session-providers/providerIds.test.ts src/app/api/sessions/route.test.ts` |
+| Mixed project-group visual behavior | `npm run test:run -- src/components/ProjectCard.test.tsx src/components/SessionCard.test.tsx` |
+| Local provider aggregation and route wiring | `npm run test:run -- src/lib/transform.test.ts src/hooks/useOpencodeSync.test.ts` |
+
+```bash
+npm run test:run -- src/lib/session-providers/providerIds.test.ts src/lib/session-providers/claudeCode.test.ts src/components/ProjectCard.test.tsx src/components/SessionCard.test.tsx src/app/api/sessions/route.test.ts src/lib/transform.test.ts src/hooks/useOpencodeSync.test.ts
+npm run lint && npm run build
 ```
 
 ## Tech Stack
