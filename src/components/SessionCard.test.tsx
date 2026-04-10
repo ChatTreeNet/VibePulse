@@ -515,6 +515,91 @@ describe('SessionCard', () => {
     expect(await screen.findByText('Session was not found.')).toBeTruthy();
   });
 
+  it('respects capabilities for action visibility over readOnly alone', async () => {
+    const capabilityCard = createCard({
+      readOnly: true,
+      capabilities: {
+        openProject: true,
+        openEditor: true,
+        archive: true,
+        delete: false,
+      },
+    });
+
+    const user = userEvent.setup();
+    renderWithProviders(<SessionCard card={capabilityCard} />);
+
+    await screen.findByText('Remote Session');
+
+    await user.click(screen.getByTitle('Actions'));
+
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+  });
+
+  it('shows no actions menu if both archive and delete capabilities are false', async () => {
+    const capabilityCard = createCard({
+      capabilities: {
+        openProject: true,
+        openEditor: true,
+        archive: false,
+        delete: false,
+      },
+    });
+
+    renderWithProviders(<SessionCard card={capabilityCard} />);
+
+    await screen.findByText('Remote Session');
+
+    expect(screen.queryByTitle('Actions')).toBeNull();
+  });
+
+  it('shows archive and delete actions for Claude sessions when capabilities allow them', async () => {
+    renderWithProviders(<SessionCard card={createCard({
+      provider: 'claude-code',
+      readOnly: true,
+      id: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+      rawSessionId: '550e8400-e29b-41d4-a716-446655440000',
+      capabilities: {
+        openProject: true,
+        openEditor: false,
+        archive: true,
+        delete: true,
+      },
+    })} />);
+
+    expect(screen.getByTitle('Actions')).toBeTruthy();
+  });
+
+  it('shows restore for archived Claude sessions', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+
+    renderWithProviders(<SessionCard card={createCard({
+      provider: 'claude-code',
+      readOnly: true,
+      status: 'done',
+      id: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+      rawSessionId: '550e8400-e29b-41d4-a716-446655440000',
+      capabilities: {
+        openProject: true,
+        openEditor: false,
+        archive: true,
+        delete: true,
+      },
+    })} />);
+
+    fireEvent.click(screen.getByTitle('Actions'));
+    fireEvent.click(screen.getByText('Restore'));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/sessions/local:claude~550e8400-e29b-41d4-a716-446655440000/restore', expect.objectContaining({ method: 'POST' }));
+    });
+  });
+
   it('shows a loading-settings state before remote open mode is hydrated', async () => {
     const fetchMock = vi.fn(async () => new Promise<Response>(() => {}));
     Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
@@ -562,5 +647,16 @@ describe('SessionCard', () => {
     fireEvent.doubleClick(screen.getByRole('button', { name: /remote session/i }));
 
     expect(await screen.findByText('Remote node is offline or unreachable.')).toBeTruthy();
+  });
+});
+describe('SessionCard Provider Visuals', () => {
+  it('does not show a provider marker for OpenCode sessions', () => {
+    renderWithProviders(<SessionCard card={createCard({ provider: 'opencode' })} />);
+    expect(screen.queryByTitle('Provider: OpenCode')).toBeNull();
+  });
+
+  it('renders Claude status as a diamond instead of showing a separate provider marker', () => {
+    renderWithProviders(<SessionCard card={createCard({ provider: 'claude-code' })} />);
+    expect(screen.getByTitle('Idle').className).toContain('rotate-45');
   });
 });
