@@ -493,7 +493,7 @@ describe('/api/opencode-events', () => {
     const reader = response.body?.getReader();
     expect(reader).toBeTruthy();
 
-    const first = await readPayload(reader!);
+    const first = (await readPayload(reader!)) as any;
     expect(first).toEqual({
       type: 'session.status',
       properties: {
@@ -502,6 +502,8 @@ describe('/api/opencode-events', () => {
       },
       timestamp: 100,
     });
+    expect(first.source).toBeUndefined();
+    expect(first.event).toBeUndefined();
 
     await reader!.cancel();
   });

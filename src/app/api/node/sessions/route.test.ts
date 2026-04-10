@@ -225,6 +225,8 @@ describe('/api/node/sessions', () => {
       waitingForUser: true,
     });
     expect(JSON.stringify(data).includes('baseUrl')).toBe(false);
+    expect(data.sessions.every((session: any) => session.hostId === 'local')).toBe(true);
+    expect(data.sessions.every((session: any) => !session.baseUrl)).toBe(true);
     expect(mockCreateOpencodeClient.mock.calls).toEqual([[{ baseUrl: 'http://localhost:7777' }]]);
   });
 
