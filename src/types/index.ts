@@ -9,8 +9,17 @@ export type SessionDebugReason =
   | 'unknown_fallback'
   | 'waiting_for_user';
 
+export type SessionProvider = 'opencode' | 'claude-code';
+
+export interface SessionCapabilities {
+  openProject: boolean;
+  openEditor: boolean;
+  archive: boolean;
+  delete: boolean;
+}
+
 export interface KanbanCard {
-  id: string; // composite key: hostId:sessionId
+  id: string;
   sessionSlug: string;
   title: string;
   directory: string;
@@ -28,14 +37,16 @@ export interface KanbanCard {
   updatedAt: number;
   archivedAt?: number;
   sortOrder: number;
-  // Host-aware fields (direct, not nested)
   hostId?: string;
   hostLabel?: string;
   hostKind?: HostSourceKind;
   hostBaseUrl?: string;
-  rawSessionId?: string; // original session ID without host prefix
-  sourceSessionKey?: string; // alias for id, kept for compatibility
+  rawSessionId?: string;
+  sourceSessionKey?: string;
   readOnly?: boolean;
+  capabilities?: SessionCapabilities;
+  provider?: SessionProvider;
+  providerRawId?: string;
    children?: {
      id: string;
      title?: string;
@@ -47,15 +58,14 @@ export interface KanbanCard {
    }[];
 }
 
-// OpenCode event types
 export interface OpencodeSession {
-  id: string; // composite key: hostId:sessionId
+  id: string;
   slug: string;
   title?: string;
   directory: string;
   projectName?: string;
   branch?: string;
-  parentID?: string;  // Used to filter subagents
+  parentID?: string;
   time: {
     created: number;
     updated: number;
@@ -64,18 +74,20 @@ export interface OpencodeSession {
   messageCount?: number;
   hasTodos?: boolean;
   hasTranscript?: boolean;
-  realTimeStatus?: 'idle' | 'busy' | 'retry';  // Real-time status
+  realTimeStatus?: 'idle' | 'busy' | 'retry';
   waitingForUser?: boolean;
   debugReason?: SessionDebugReason;
   children?: OpencodeSession[];
-  // Host-aware fields (direct, not nested)
   hostId?: string;
   hostLabel?: string;
   hostKind?: HostSourceKind;
   hostBaseUrl?: string;
-  rawSessionId?: string; // original session ID without host prefix
-  sourceSessionKey?: string; // alias for id, kept for compatibility
+  rawSessionId?: string;
+  sourceSessionKey?: string;
   readOnly?: boolean;
+  capabilities?: SessionCapabilities;
+  provider?: SessionProvider;
+  providerRawId?: string;
 }
 
 export type OpencodeEventType =
@@ -105,10 +117,8 @@ export interface OpencodeEvent {
   timestamp: number;
 }
 
-// Status mapping
 export type OpencodeStatus = 'idle' | 'busy' | 'retry';
 
-// Host source types
 export type HostSourceKind = 'local' | 'remote';
 
 export interface BuiltInHostSource {
@@ -139,10 +149,6 @@ export interface HostStatus {
   baseUrl?: string;
 }
 
-// Host-aware fields that appear directly on sessions/cards
-// (not nested in a wrapper object)
-
-// Type guards
 export function isKanbanColumn(value: string): value is KanbanColumn {
   return ['idle', 'busy', 'review', 'done'].includes(value);
 }
