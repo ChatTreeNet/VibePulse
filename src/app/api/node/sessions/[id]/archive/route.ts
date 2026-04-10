@@ -6,6 +6,7 @@ import {
 } from '@/lib/nodeProtocol';
 import {
   clearSessionForceUnarchived,
+  markSessionForceUnarchived,
   markSessionStickyStatusBlocked,
 } from '@/lib/sessionArchiveOverrides';
 
@@ -20,28 +21,34 @@ function resolveNodeLocalSessionId(id: string): string | null {
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const guardResult = guardNodeRequest(request);
-  if (!guardResult.ok) {
-    return toNodeRequestGuardResponse(guardResult);
-  }
+function createInvalidNodeSessionIdResponse() {
+  return Response.json({ error: 'Invalid node session id' }, { status: 400 });
+}
 
-  const { id } = await params;
-  const sessionId = resolveNodeLocalSessionId(id);
+function createNodeUpstreamUnavailableResponse(timedOut: boolean) {
+  return createNodeFailureResponse(timedOut ? 'upstream_timeout' : 'upstream_unreachable', {
+    role: 'node',
+    upstream: {
+      kind: 'opencode',
+      reachable: false,
+    },
+  });
+}
 
-  if (!sessionId) {
-    return Response.json({ error: 'Invalid node session id' }, { status: 400 });
-  }
-
+async function runArchiveMutation({
+  sessionId,
+  archived,
+  failureMessage,
+  onSuccess,
+}: {
+  sessionId: string;
+  archived: number | null;
+  failureMessage: string;
+  onSuccess: () => void;
+}): Promise<Response> {
   const { ports, timedOut } = discoverOpencodePortsWithMeta();
   if (!ports.length) {
-    return createNodeFailureResponse(timedOut ? 'upstream_timeout' : 'upstream_unreachable', {
-      role: 'node',
-      upstream: {
-        kind: 'opencode',
-        reachable: false,
-      },
-    });
+    return createNodeUpstreamUnavailableResponse(timedOut);
   }
 
   let sawNotFound = false;
@@ -55,12 +62,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ time: { archived: Date.now() } }),
+        body: JSON.stringify({ time: { archived } }),
       });
 
       if (response.ok) {
-        clearSessionForceUnarchived(sessionId);
-        markSessionStickyStatusBlocked(sessionId);
+        onSuccess();
         return Response.json({ success: true });
       }
 
@@ -81,7 +87,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (lastFailureStatus !== null) {
     return Response.json(
       {
-        error: 'Failed to archive session',
+        error: failureMessage,
         reason: lastFailureStatus === 503 ? 'upstream_unreachable' : `node_request_failed_${lastFailureStatus}`,
         ...(lastFailureMessage ? { message: lastFailureMessage } : {}),
       },
@@ -94,4 +100,51 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   return Response.json({ error: 'Session not found', reason: 'session_not_found' }, { status: 404 });
+}
+
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guardResult = guardNodeRequest(request);
+  if (!guardResult.ok) {
+    return toNodeRequestGuardResponse(guardResult);
+  }
+
+  const { id } = await params;
+  const sessionId = resolveNodeLocalSessionId(id);
+
+  if (!sessionId) {
+    return createInvalidNodeSessionIdResponse();
+  }
+
+  return runArchiveMutation({
+    sessionId,
+    archived: Date.now(),
+    failureMessage: 'Failed to archive session',
+    onSuccess: () => {
+      clearSessionForceUnarchived(sessionId);
+      markSessionStickyStatusBlocked(sessionId);
+    },
+  });
+}
+
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guardResult = guardNodeRequest(request);
+  if (!guardResult.ok) {
+    return toNodeRequestGuardResponse(guardResult);
+  }
+
+  const { id } = await params;
+  const sessionId = resolveNodeLocalSessionId(id);
+
+  if (!sessionId) {
+    return createInvalidNodeSessionIdResponse();
+  }
+
+  return runArchiveMutation({
+    sessionId,
+    archived: null,
+    failureMessage: 'Failed to restore session',
+    onSuccess: () => {
+      markSessionForceUnarchived(sessionId);
+    },
+  });
 }

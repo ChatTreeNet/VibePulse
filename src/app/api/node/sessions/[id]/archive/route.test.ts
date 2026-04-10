@@ -6,15 +6,24 @@ vi.mock('@/lib/opencodeDiscovery', () => ({
 
 vi.mock('@/lib/sessionArchiveOverrides', () => ({
   clearSessionForceUnarchived: vi.fn(),
+  markSessionForceUnarchived: vi.fn(),
   markSessionStickyStatusBlocked: vi.fn(),
 }));
 
 import { discoverOpencodePortsWithMeta } from '@/lib/opencodeDiscovery';
 import { createNodeRequestHeaders } from '@/lib/nodeProtocol';
+import {
+  clearSessionForceUnarchived,
+  markSessionForceUnarchived,
+  markSessionStickyStatusBlocked,
+} from '@/lib/sessionArchiveOverrides';
 
-import { POST } from './route';
+import { DELETE, POST } from './route';
 
 const mockDiscoverOpencodePortsWithMeta: any = discoverOpencodePortsWithMeta;
+const mockClearSessionForceUnarchived: any = clearSessionForceUnarchived;
+const mockMarkSessionForceUnarchived: any = markSessionForceUnarchived;
+const mockMarkSessionStickyStatusBlocked: any = markSessionStickyStatusBlocked;
 
 describe('/api/node/sessions/[id]/archive', () => {
   const originalRuntimeRole = process.env.VIBEPULSE_RUNTIME_ROLE;
@@ -52,6 +61,27 @@ describe('/api/node/sessions/[id]/archive', () => {
       'http://localhost:7777/session/ses_123',
       expect.objectContaining({ method: 'PATCH' })
     );
+    expect(mockClearSessionForceUnarchived).toHaveBeenCalledWith('ses_123');
+    expect(mockMarkSessionStickyStatusBlocked).toHaveBeenCalledWith('ses_123');
+  });
+
+  it('restores a node-local session with valid auth', async () => {
+    const response = await DELETE(
+      new Request('http://localhost/api/node/sessions/ses_123/archive', {
+        method: 'DELETE',
+        headers: createNodeRequestHeaders('shared-secret'),
+      }),
+      { params: Promise.resolve({ id: 'ses_123' }) }
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({ success: true });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://localhost:7777/session/ses_123',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ time: { archived: null } }) })
+    );
+    expect(mockMarkSessionForceUnarchived).toHaveBeenCalledWith('ses_123');
   });
 
   it('rejects invalid auth before mutating', async () => {
