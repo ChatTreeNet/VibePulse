@@ -33,9 +33,11 @@ vi.mock('@tanstack/react-query', () => ({
 
 vi.mock('@/lib/notificationSound', () => ({
     playCompleteSound: vi.fn(),
+    playAttentionSound: vi.fn(),
 }));
 
 import { useQuery } from '@tanstack/react-query';
+import { playAttentionSound } from '@/lib/notificationSound';
 
 type MockFn = {
     mockReturnValue: (val: unknown) => void;
@@ -46,6 +48,7 @@ type HostSourcesState = ReturnType<typeof useHostSources>;
 
 const mockUseQuery = useQuery as unknown as MockFn;
 const mockSetActiveFilter = vi.fn();
+const mockPlayAttentionSound = playAttentionSound as unknown as ReturnType<typeof vi.fn>;
 
 function createHostSourcesState(overrides: Partial<HostSourcesState> = {}): HostSourcesState {
     return {
@@ -289,6 +292,88 @@ describe('KanbanBoard Host Filter', () => {
         const localStatus = screen.getByTestId('host-status-local');
         expect(localStatus.className).toContain('bg-emerald-500');
         expect(localStatus.getAttribute('title')).toBe('Online');
+    });
+});
+
+describe('KanbanBoard sounds', () => {
+    let timeoutSpy: any;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        timeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((((callback: TimerHandler) => {
+            if (typeof callback === 'function') {
+                callback();
+            }
+            return 0 as unknown as ReturnType<typeof setTimeout>;
+        }) as unknown) as typeof setTimeout);
+    });
+
+    afterEach(() => {
+        timeoutSpy.mockRestore();
+    });
+
+    it('plays the attention sound when a card transitions into review', async () => {
+        const now = Date.now();
+        const hostSourcesState = createHostSourcesState();
+        const session = {
+            id: 'local:claude~session-1',
+            sourceSessionKey: 'local:claude~session-1',
+            rawSessionId: 'claude~session-1',
+            providerRawId: 'session-1',
+            provider: 'claude-code',
+            title: 'Claude Code Session',
+            slug: 'session-1',
+            directory: '/tmp/apps-guide',
+            projectName: 'apps-guide',
+            branch: 'main',
+            hostId: 'local',
+            hostLabel: 'Local',
+            hostKind: 'local',
+            readOnly: true,
+            capabilities: { openProject: true, openEditor: false, archive: true, delete: true },
+            realTimeStatus: 'busy',
+            waitingForUser: false,
+            children: [],
+            time: { created: now - 1000, updated: now },
+        };
+
+        mockUseQuery.mockImplementation((opts: unknown) => {
+            const options = opts as { queryKey: string[] };
+            if (options.queryKey[0] === 'sessions') {
+                return {
+                    data: { sessions: [session], processHints: [], hostStatuses: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }] },
+                    isLoading: false,
+                    error: null,
+                    dataUpdatedAt: now,
+                    refetch: vi.fn(),
+                    isFetching: false,
+                    failureCount: 0,
+                };
+            }
+            return { isLoading: false, data: {} };
+        });
+
+        const view = render(<KanbanBoard filterDays={7} hostSources={hostSourcesState} isNodeMode={false} />) as { rerender: (ui: React.ReactElement) => void };
+
+        mockUseQuery.mockImplementation((opts: unknown) => {
+            const options = opts as { queryKey: string[] };
+            if (options.queryKey[0] === 'sessions') {
+                return {
+                    data: { sessions: [{ ...session, waitingForUser: true }], processHints: [], hostStatuses: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }] },
+                    isLoading: false,
+                    error: null,
+                    dataUpdatedAt: now + 1000,
+                    refetch: vi.fn(),
+                    isFetching: false,
+                    failureCount: 0,
+                };
+            }
+            return { isLoading: false, data: {} };
+        });
+
+        view.rerender(<KanbanBoard filterDays={7} hostSources={hostSourcesState} isNodeMode={false} />);
+
+        expect(mockPlayAttentionSound).toHaveBeenCalled();
     });
 });
 

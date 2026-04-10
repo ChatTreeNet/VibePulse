@@ -5,7 +5,7 @@ import { KanbanColumn, KanbanCard, OpencodeSession } from '@/types';
 import { ProjectCard } from './ProjectCard';
 import { transformSessions } from '@/lib/transform';
 import { LoadingState } from './LoadingState';
-import { playCompleteSound } from '@/lib/notificationSound';
+import { playAttentionSound, playCompleteSound } from '@/lib/notificationSound';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getSseStatusSnapshot } from '@/hooks/useOpencodeSync';
 import { useHostSources } from '@/hooks/useHostSources';
@@ -118,8 +118,12 @@ function areHostStatusesEqual(
 }
 
 function getLocalWaitingPersistenceKey(
-    session: Pick<OpencodeSession, 'id' | 'sourceSessionKey' | 'hostId' | 'hostKind'>
+    session: Pick<OpencodeSession, 'id' | 'sourceSessionKey' | 'hostId' | 'hostKind' | 'provider'>
 ): string | null {
+    if (session.provider === 'claude-code') {
+        return null;
+    }
+
     const sourceKey = session.sourceSessionKey || session.id;
     if (session.hostKind === 'local' || session.hostId === 'local' || sourceKey.startsWith('local:')) {
         return sourceKey;
@@ -529,12 +533,21 @@ export function KanbanBoard({
             return;
         }
 
+        const shouldPlayReview = Object.entries(nextCardStatus).some(([id, currentStatus]) => {
+            const previousStatus = cardStatusStateRef.current[id];
+            return !!previousStatus && previousStatus !== 'review' && currentStatus === 'review';
+        });
+
         const shouldPlayComplete = Object.entries(nextCardStatus).some(([id, currentStatus]) => {
             const previousStatus = cardStatusStateRef.current[id];
             return !!previousStatus && previousStatus !== 'idle' && currentStatus === 'idle';
         });
 
         cardStatusStateRef.current = nextCardStatus;
+
+        if (shouldPlayReview && !isShowingStaleData) {
+            setTimeout(() => playAttentionSound(), CARD_ANIMATION_DURATION_MS);
+        }
 
         if (shouldPlayComplete && !isShowingStaleData) {
             setTimeout(() => playCompleteSound(), CARD_ANIMATION_DURATION_MS);
@@ -774,7 +787,7 @@ export function KanbanBoard({
 
             const group = groups.get(key)!;
             group.cards.push(card);
-            group.readOnly = group.readOnly || !!card.readOnly;
+            group.readOnly = group.readOnly && !!card.readOnly;
 
             if (!group.branch && card.branch) {
                 group.branch = card.branch;
