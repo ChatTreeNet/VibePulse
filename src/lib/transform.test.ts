@@ -33,6 +33,8 @@ function makeSession(overrides: SessionOverrides = {}): OpencodeSession {
     rawSessionId: overrides.rawSessionId,
     sourceSessionKey: overrides.sourceSessionKey,
     readOnly: overrides.readOnly,
+    provider: overrides.provider,
+    providerRawId: overrides.providerRawId,
   };
 }
 
@@ -117,5 +119,88 @@ describe('transformSession archive precedence', () => {
     expect(card.agents).toEqual([]);
     expect(card.hostId).toBe('remote-1');
     expect(card.readOnly).toBe(false);
+  });
+});
+
+describe('transformSession provider propagation', () => {
+  it('defaults provider to opencode when not specified', () => {
+    const session = makeSession();
+
+    const card = transformSession(session);
+
+    expect(card.provider).toBe('opencode');
+  });
+
+  it('defaults readOnly to false for OpenCode sessions', () => {
+    const session = makeSession();
+
+    const card = transformSession(session);
+
+    expect(card.readOnly).toBe(false);
+    expect(card.capabilities).toEqual({
+      openProject: true,
+      openEditor: true,
+      archive: true,
+      delete: true,
+    });
+  });
+
+  it('preserves explicit claude-code provider', () => {
+    const session = makeSession({
+      provider: 'claude-code',
+      providerRawId: '550e8400-e29b-41d4-a716-446655440000',
+    });
+
+    const card = transformSession(session);
+
+    expect(card.provider).toBe('claude-code');
+    expect(card.providerRawId).toBe('550e8400-e29b-41d4-a716-446655440000');
+  });
+
+  it('preserves explicit readOnly true', () => {
+    const session = makeSession({ readOnly: true });
+
+    const card = transformSession(session);
+
+    expect(card.readOnly).toBe(true);
+  });
+
+  it('falls back to rawSessionId when providerRawId not specified', () => {
+    const session = makeSession({ rawSessionId: 'ses_123' });
+
+    const card = transformSession(session);
+
+    expect(card.providerRawId).toBe('ses_123');
+  });
+
+  it('uses providerRawId over rawSessionId when both specified', () => {
+    const session = makeSession({
+      rawSessionId: 'ses_123',
+      providerRawId: 'claude~550e8400-e29b-41d4-a716-446655440000',
+    });
+
+    const card = transformSession(session);
+
+    expect(card.providerRawId).toBe('claude~550e8400-e29b-41d4-a716-446655440000');
+  });
+
+  it('correctly handles Claude-backed sessions from provider properties', () => {
+    const session = makeSession({
+      provider: 'claude-code',
+      readOnly: true,
+      providerRawId: '550e8400-e29b-41d4-a716-446655440000',
+    });
+
+    const card = transformSession(session);
+
+    expect(card.provider).toBe('claude-code');
+    expect(card.readOnly).toBe(true);
+    expect(card.capabilities).toEqual({
+      openProject: true,
+      openEditor: false,
+      archive: true,
+      delete: true,
+    });
+    expect(card.providerRawId).toBe('550e8400-e29b-41d4-a716-446655440000');
   });
 });

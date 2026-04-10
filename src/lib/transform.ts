@@ -1,4 +1,5 @@
-import { KanbanCard, OpencodeSession, KanbanColumn, SessionDebugReason } from '@/types';
+import { KanbanCard, OpencodeSession, KanbanColumn, SessionDebugReason, SessionProvider } from '@/types';
+import { DEFAULT_PROVIDER_CONTEXT, getDefaultProviderContext } from './session-providers/providerIds';
 
 interface EnrichedSession extends OpencodeSession {
   realTimeStatus?: 'idle' | 'busy' | 'retry';
@@ -136,8 +137,10 @@ export function transformSession(session: EnrichedSession): KanbanCard {
         status = 'idle';
     }
     
-     return {
-         id: session.id,
+      const providerDefaults = getDefaultProviderContext(session.provider ?? DEFAULT_PROVIDER_CONTEXT.provider);
+
+      return {
+          id: session.id,
          sessionSlug,
          title: session.title || 'Untitled Session',
          directory: session.directory,
@@ -161,7 +164,10 @@ export function transformSession(session: EnrichedSession): KanbanCard {
           hostBaseUrl: session.hostBaseUrl,
           rawSessionId: session.rawSessionId,
           sourceSessionKey: session.sourceSessionKey,
-          readOnly: session.readOnly,
+          readOnly: session.readOnly ?? providerDefaults.readOnly,
+          capabilities: session.capabilities ?? providerDefaults.capabilities,
+          provider: session.provider ?? providerDefaults.provider,
+          providerRawId: session.providerRawId ?? session.rawSessionId,
          children: children.map(c => ({
              id: c.id,
              title: c.title,
