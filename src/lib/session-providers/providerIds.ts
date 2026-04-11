@@ -52,9 +52,13 @@ export function isClaudeUuid(rawId: string): boolean {
 }
 
 export function detectProviderFromRawId(rawId: string): SessionProvider {
-  if (isClaudeUuid(rawId)) {
+  const sourceSessionId = getSessionIdFromSourceKey(rawId);
+  const candidate = sourceSessionId ?? rawId;
+
+  if (isReservedClaudeNamespacedUuid(candidate)) {
     return 'claude-code';
   }
+
   return 'opencode';
 }
 
@@ -72,7 +76,7 @@ export function extractRawIdFromNamespaced(namespacedId: string): string {
   return namespacedId;
 }
 
-export function normalizeProviderRawId(rawId: string): {
+export function normalizeProviderRawId(rawId: string, providerHint?: SessionProvider): {
   normalizedId: string;
   provider: SessionProvider;
 } {
@@ -80,7 +84,7 @@ export function normalizeProviderRawId(rawId: string): {
     throw new Error(`Invalid raw session id: reserved claude namespace (${rawId})`);
   }
 
-  const provider = detectProviderFromRawId(rawId);
+  const provider = providerHint ?? detectProviderFromRawId(rawId);
 
   if (provider === 'claude-code') {
     return { normalizedId: namespaceClaudeRawId(rawId), provider };
@@ -100,7 +104,7 @@ export function composeProviderSourceKey(
   capabilities: SessionCapabilities;
   providerRawId: string;
 } {
-  const { normalizedId, provider } = normalizeProviderRawId(rawId);
+  const { normalizedId, provider } = normalizeProviderRawId(rawId, overrides?.provider);
   const providerDefaults = getDefaultProviderContext(provider);
   const defaultReadOnly = providerDefaults.readOnly;
   const readOnly = overrides?.readOnly ?? defaultReadOnly;

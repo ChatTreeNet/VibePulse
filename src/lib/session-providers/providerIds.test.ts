@@ -57,12 +57,16 @@ describe('extractRawIdFromNamespaced', () => {
 });
 
 describe('detectProviderFromRawId', () => {
-  it('detects Claude UUIDs with standard format', () => {
-    expect(detectProviderFromRawId('550e8400-e29b-41d4-a716-446655440000')).toBe('claude-code');
+  it('detects namespaced Claude IDs with standard UUID format', () => {
+    expect(detectProviderFromRawId('claude~550e8400-e29b-41d4-a716-446655440000')).toBe('claude-code');
   });
 
-  it('detects Claude UUIDs with uppercase', () => {
-    expect(detectProviderFromRawId('550E8400-E29B-41D4-A716-446655440000')).toBe('claude-code');
+  it('detects namespaced Claude source keys with host prefixes', () => {
+    expect(detectProviderFromRawId('local:claude~550E8400-E29B-41D4-A716-446655440000')).toBe('claude-code');
+  });
+
+  it('defaults to opencode for plain UUID-like ids without claude namespace', () => {
+    expect(detectProviderFromRawId('550e8400-e29b-41d4-a716-446655440000')).toBe('opencode');
   });
 
   it('defaults to opencode for OpenCode-style IDs with underscores', () => {
@@ -80,17 +84,24 @@ describe('detectProviderFromRawId', () => {
 });
 
 describe('normalizeProviderRawId', () => {
-  it('namespaces Claude UUIDs', () => {
+  it('namespaces Claude UUIDs when provider is explicitly claude-code', () => {
     const uuid = '550e8400-e29b-41d4-a716-446655440000';
-    const result = normalizeProviderRawId(uuid);
+    const result = normalizeProviderRawId(uuid, 'claude-code');
     expect(result.normalizedId).toBe('claude~550e8400-e29b-41d4-a716-446655440000');
     expect(result.provider).toBe('claude-code');
   });
 
-  it('preserves OpenCode IDs as-is', () => {
+  it('preserves OpenCode IDs as-is with default provider detection', () => {
     const id = 'ses_1744181234567_build';
     const result = normalizeProviderRawId(id);
     expect(result.normalizedId).toBe(id);
+    expect(result.provider).toBe('opencode');
+  });
+
+  it('treats plain UUID-like ids as opencode unless provider is explicit', () => {
+    const uuid = '550e8400-e29b-41d4-a716-446655440000';
+    const result = normalizeProviderRawId(uuid);
+    expect(result.normalizedId).toBe(uuid);
     expect(result.provider).toBe('opencode');
   });
 });
@@ -110,9 +121,9 @@ describe('composeProviderSourceKey', () => {
     expect(result.providerRawId).toBe('ses_1744181234567_build');
   });
 
-  it('creates composite key for Claude sessions with claude~ prefix and read-only default', () => {
+  it('creates composite key for explicit Claude sessions with claude~ prefix and read-only default', () => {
     const uuid = '550e8400-e29b-41d4-a716-446655440000';
-    const result = composeProviderSourceKey('local', uuid);
+    const result = composeProviderSourceKey('local', uuid, { provider: 'claude-code' });
     expect(result.sourceKey).toBe('local:claude~550e8400-e29b-41d4-a716-446655440000');
     expect(result.provider).toBe('claude-code');
     expect(result.readOnly).toBe(true);
@@ -127,7 +138,7 @@ describe('composeProviderSourceKey', () => {
 
   it('allows overriding readOnly for Claude sessions', () => {
     const uuid = '550e8400-e29b-41d4-a716-446655440000';
-    const result = composeProviderSourceKey('local', uuid, { readOnly: false });
+    const result = composeProviderSourceKey('local', uuid, { provider: 'claude-code', readOnly: false });
     expect(result.readOnly).toBe(false);
   });
 
@@ -147,9 +158,9 @@ describe('composeProviderSourceKey', () => {
     expect(colonCount).toBe(1);
   });
 
-  it('maintains exactly one colon in final app ID for Claude (namespace is part of sessionId)', () => {
+  it('maintains exactly one colon in final app ID for explicit Claude sessions (namespace is part of sessionId)', () => {
     const uuid = '550e8400-e29b-41d4-a716-446655440000';
-    const result = composeProviderSourceKey('local', uuid);
+    const result = composeProviderSourceKey('local', uuid, { provider: 'claude-code' });
     const colonCount = (result.sourceKey.match(/:/g) || []).length;
     expect(colonCount).toBe(1);
     expect(result.sourceKey).toBe('local:claude~550e8400-e29b-41d4-a716-446655440000');
@@ -157,7 +168,7 @@ describe('composeProviderSourceKey', () => {
 
   it('maintains hostId:sessionId contract for all provider types', () => {
     const openCodeResult = composeProviderSourceKey('local', 'ses_123');
-    const claudeResult = composeProviderSourceKey('local', '550e8400-e29b-41d4-a716-446655440000');
+    const claudeResult = composeProviderSourceKey('local', '550e8400-e29b-41d4-a716-446655440000', { provider: 'claude-code' });
 
     expect(openCodeResult.sourceKey).toMatch(/^[^:]+:[^:]+$/);
     expect(claudeResult.sourceKey).toMatch(/^[^:]+:[^:]+$/);
@@ -256,7 +267,7 @@ describe('collision safety', () => {
     const claudeId = '12345678-1234-1234-1234-123456789abc';
 
     const openCodeResult = composeProviderSourceKey('local', openCodeId);
-    const claudeResult = composeProviderSourceKey('local', claudeId);
+    const claudeResult = composeProviderSourceKey('local', claudeId, { provider: 'claude-code' });
 
     expect(openCodeResult.sourceKey).not.toBe(claudeResult.sourceKey);
     expect(openCodeResult.provider).toBe('opencode');
@@ -277,7 +288,7 @@ describe('collision safety', () => {
     const claudeUuid = '550e8400-e29b-41d4-a716-446655440000';
     const hypotheticalOpenCodeId = 'claude~550e8400-e29b-41d4-a716-446655440000';
 
-    const claudeResult = composeProviderSourceKey('local', claudeUuid);
+    const claudeResult = composeProviderSourceKey('local', claudeUuid, { provider: 'claude-code' });
 
     expect(claudeResult.sourceKey).toBe('local:claude~550e8400-e29b-41d4-a716-446655440000');
     expect(claudeResult.provider).toBe('claude-code');
