@@ -171,6 +171,26 @@ VibePulse includes experimental host-global discovery for Claude Code sessions (
   - Claude never emits `retry`, but it can emit `waitingForUser = true` when fresh transcript evidence shows either a direct assistant question or a pending `tool_use` approval with no later user/tool_result resolution.
 - **Capability-Aware Contracts:** Claude sessions have discrete capability scopes. Claude now supports VibePulse-managed `archive` and `delete`, while `open-editor` remains explicitly disabled until a provider-safe execution path is available.
 
+### Claude "Waiting for User" Decision Rules (Detailed)
+
+Claude detection is transcript-tail based and event-order sensitive:
+
+1. **Freshness gate**
+   - If the transcript artifact is older than the waiting window (currently 10 minutes), `waitingForUser = false`.
+2. **Scan from newest to oldest event**
+   - If the first relevant newest event is a **user** turn, `waitingForUser = false`.
+   - If the first relevant newest event is an **assistant** turn:
+     - `stop_reason === tool_use` or message content contains `tool_use` → `waitingForUser = true`
+     - `stop_reason === end_turn` and assistant text ends with `?` / `？` → `waitingForUser = true`
+     - otherwise → `waitingForUser = false`
+3. **Restore suppression**
+   - Immediately after restore, stale waiting signals can be suppressed until new transcript activity appears.
+
+Practical implication for board status:
+
+- Claude can be `realTimeStatus = idle` **and** `waitingForUser = true` at the same time.
+- In that case, Kanban maps the session to `review` ("Needs Attention") by design, because the session is waiting for user input/approval rather than actively running.
+
 ---
 
 ## Detection Limitations (Shortcomings)
