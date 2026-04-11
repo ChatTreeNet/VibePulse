@@ -178,6 +178,42 @@ type CandidateSessionMetadata = {
   runningPid?: number;
 };
 
+function candidateMetadataScore(candidate: CandidateSessionMetadata): number {
+  let score = 0;
+  if (typeof candidate.runningPid === 'number') {
+    score += 2;
+  }
+  if (typeof candidate.startedAt === 'number') {
+    score += 1;
+  }
+  return score;
+}
+
+function mergeCandidateSessionMetadata(
+  existing: CandidateSessionMetadata,
+  incoming: CandidateSessionMetadata
+): CandidateSessionMetadata {
+  const existingScore = candidateMetadataScore(existing);
+  const incomingScore = candidateMetadataScore(incoming);
+
+  if (incomingScore > existingScore) {
+    return incoming;
+  }
+
+  if (incomingScore < existingScore) {
+    return existing;
+  }
+
+  const existingStartedAt = existing.startedAt ?? -Infinity;
+  const incomingStartedAt = incoming.startedAt ?? -Infinity;
+
+  if (incomingStartedAt > existingStartedAt) {
+    return incoming;
+  }
+
+  return existing;
+}
+
 function getClaudeDir({ claudeDir, homeDir }: ClaudeCodeDiscoveryOptions): string {
   if (claudeDir) {
     return claudeDir;
@@ -457,7 +493,7 @@ async function readCandidateSessionMetadata(
 
   let entries: Dirent[];
   try {
-    entries = await readdir(sessionsDir, { withFileTypes: true });
+    entries = (await readdir(sessionsDir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
   } catch {
     return new Map();
   }
@@ -504,7 +540,13 @@ async function readCandidateSessionMetadata(
       }
     }
 
-    metadataBySessionId.set(metadata.sessionId, candidate);
+    const existing = metadataBySessionId.get(metadata.sessionId);
+    if (!existing) {
+      metadataBySessionId.set(metadata.sessionId, candidate);
+      continue;
+    }
+
+    metadataBySessionId.set(metadata.sessionId, mergeCandidateSessionMetadata(existing, candidate));
   }
 
   return metadataBySessionId;

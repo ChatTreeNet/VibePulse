@@ -464,6 +464,53 @@ describe('discoverClaudeCodeSessions', () => {
     });
   });
 
+  it('prefers live sidecar metadata when duplicate session sidecars exist', async () => {
+    const fixture = await createFixture();
+
+    const artifactPath = await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: createJsonlHead({
+        sessionId: SESSION_ONE,
+        cwd: fixture.repoDir,
+        gitBranch: 'feature/current',
+        timestamp: new Date().toISOString(),
+      }),
+    });
+
+    await writeSessionIndexEntry({
+      sessionsDir: fixture.sessionsDir,
+      pid: 12345,
+      sessionId: SESSION_ONE,
+      cwd: fixture.repoDir,
+      startedAt: Date.now() - 5_000,
+    });
+
+    await writeSessionIndexEntry({
+      sessionsDir: fixture.sessionsDir,
+      pid: 99999,
+      sessionId: SESSION_ONE,
+      cwd: fixture.repoDir,
+    });
+
+    const nowDate = new Date();
+    await utimes(artifactPath, nowDate, nowDate);
+
+    const sessions = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: (pid) => pid === 12345,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: SESSION_ONE,
+      pid: 12345,
+      isRunning: true,
+    });
+  });
+
   it('treats an alive Claude process with stale-enough artifact activity as idle instead of busy', async () => {
     const fixture = await createFixture();
 
