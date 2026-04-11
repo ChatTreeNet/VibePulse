@@ -5,6 +5,7 @@ import {
   toNodeRequestGuardResponse,
 } from '@/lib/nodeProtocol';
 import {
+  clearSessionStickyStatusBlocked,
   clearSessionForceUnarchived,
   markSessionForceUnarchived,
   markSessionStickyStatusBlocked,
@@ -145,6 +146,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     failureMessage: 'Failed to restore session',
     onSuccess: () => {
       markSessionForceUnarchived(sessionId);
+      clearSessionStickyStatusBlocked(sessionId);
     },
   });
 }
