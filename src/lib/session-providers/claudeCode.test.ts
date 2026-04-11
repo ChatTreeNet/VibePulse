@@ -888,4 +888,81 @@ describe('normalizeClaudeCodeSessions', () => {
       },
     ]);
   });
+
+  it('strips only known Claude wrapper tags while preserving legitimate angle-bracket titles', () => {
+    const normalizeClaudeCodeSessions = getNormalizeClaudeCodeSessions();
+
+    expect(normalizeClaudeCodeSessions).toBeTypeOf('function');
+
+    const sessions = normalizeClaudeCodeSessions?.([
+      makeDiscoveredSession({
+        sessionId: SESSION_ONE,
+        title: '<command-message>graphify notes into clusters</command-message>',
+      }),
+      makeDiscoveredSession({
+        sessionId: SESSION_TWO,
+        title: '<local-command-caveat>Caveat about local command execution</local-command-caveat>',
+      }),
+      makeDiscoveredSession({
+        sessionId: `${SESSION_ONE}-open-only`,
+        title: '<command-message>graphify roadmap next',
+      }),
+      makeDiscoveredSession({
+        sessionId: `${SESSION_TWO}-close-only`,
+        title: 'graphify roadmap next</command-message>',
+      }),
+      makeDiscoveredSession({
+        sessionId: `${SESSION_ONE}-malformed-close`,
+        title: 'graphify roadmap next</command-message',
+      }),
+      makeDiscoveredSession({
+        sessionId: `${SESSION_ONE}-jsx`,
+        title: 'Investigate <Button /> inside <Card> rendering behavior',
+      }),
+      makeDiscoveredSession({
+        sessionId: `${SESSION_TWO}-generic`,
+        title: '<T> generic helper with boundary checks',
+      }),
+    ]) ?? [];
+
+    expect(sessions[0]?.title).toBe('graphify notes into clusters');
+    expect(sessions[1]?.title).toBe('Caveat about local command execution');
+    expect(sessions[2]?.title).toBe('graphify roadmap next');
+    expect(sessions[3]?.title).toBe('graphify roadmap next');
+    expect(sessions[4]?.title).toBe('graphify roadmap next');
+    expect(sessions[5]?.title).toBe('Investigate <Button /> inside <Card> rendering behavior');
+    expect(sessions[6]?.title).toBe('<T> generic helper with boundary checks');
+  });
+
+  it('applies whitespace compaction and truncation after wrapper stripping', () => {
+    const normalizeClaudeCodeSessions = getNormalizeClaudeCodeSessions();
+
+    expect(normalizeClaudeCodeSessions).toBeTypeOf('function');
+
+    const coreTitle = 'This is a deliberately long Claude title that should truncate after wrapper cleanup and normalization';
+    const expectedTitle = `${coreTitle.slice(0, 69)}...`;
+    const sessions = normalizeClaudeCodeSessions?.([
+      makeDiscoveredSession({
+        sessionId: `${SESSION_ONE}-truncation`,
+        title: `<command-message>   ${coreTitle}   </command-message>`,
+      }),
+    ]) ?? [];
+
+    expect(sessions[0]?.title).toBe(expectedTitle);
+  });
+
+  it('documents the boundary-wrapper tradeoff for literal user titles', () => {
+    const normalizeClaudeCodeSessions = getNormalizeClaudeCodeSessions();
+
+    expect(normalizeClaudeCodeSessions).toBeTypeOf('function');
+
+    const sessions = normalizeClaudeCodeSessions?.([
+      makeDiscoveredSession({
+        sessionId: `${SESSION_TWO}-literal-wrapper`,
+        title: '<command-message> literal user content',
+      }),
+    ]) ?? [];
+
+    expect(sessions[0]?.title).toBe('literal user content');
+  });
 });

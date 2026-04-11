@@ -10,15 +10,41 @@ import { namespaceClaudeRawId } from './providerIds';
 const DEFAULT_SMALL_FILE_LIMIT_BYTES = 128 * 1024;
 const DEFAULT_JSONL_HEAD_LIMIT_BYTES = 64 * 1024;
 const DEFAULT_SESSION_TITLE_MAX_CHARS = 72;
-const DEFAULT_IDLE_FALLBACK_WINDOW_MS = 30 * 60 * 1000;
 const DEFAULT_BUSY_ACTIVITY_WINDOW_MS = 10 * 1000;
 const DEFAULT_WAITING_FOR_USER_WINDOW_MS = 10 * 60 * 1000;
 const CLAUDE_PROJECTS_DIR = 'projects';
 const CLAUDE_SESSIONS_DIR = 'sessions';
 const PROJECT_INDEX_FILE = 'sessions-index.json';
+const CLAUDE_TITLE_WRAPPER_TAGS = ['command-message', 'local-command-caveat'] as const;
+
+function stripKnownClaudeTitleWrappers(title: string): string {
+  let normalized = title.trim();
+
+  for (let changed = true; changed;) {
+    changed = false;
+
+    for (const tagName of CLAUDE_TITLE_WRAPPER_TAGS) {
+      const openBoundary = new RegExp(`^<${tagName}(?:\\s*>)?\\s*`, 'i');
+      const closeBoundary = new RegExp(`\\s*</${tagName}(?:\\s*>)?\\s*$`, 'i');
+      const selfClosingBoundary = new RegExp(`^<${tagName}\\s*/\\s*>?\\s*`, 'i');
+      const strippedBoundaries = normalized
+        .replace(openBoundary, '')
+        .replace(closeBoundary, '')
+        .replace(selfClosingBoundary, '')
+        .trim();
+
+      if (strippedBoundaries !== normalized) {
+        normalized = strippedBoundaries;
+        changed = true;
+      }
+    }
+  }
+
+  return normalized;
+}
 
 function normalizeSessionTitle(title: string): string {
-  const compact = title.replace(/\s+/g, ' ').trim();
+  const compact = stripKnownClaudeTitleWrappers(title).replace(/\s+/g, ' ').trim();
   if (compact.length <= DEFAULT_SESSION_TITLE_MAX_CHARS) {
     return compact;
   }
