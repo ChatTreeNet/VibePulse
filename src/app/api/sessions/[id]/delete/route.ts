@@ -31,7 +31,7 @@ function createSessionNotFoundResponse(message?: string) {
 }
 
 function createUnsupportedCapabilityResponse(capability: 'delete', sessionId: string) {
-    const provider = detectProviderFromRawId(extractProviderRawId(sessionId));
+    const provider = detectProviderFromRawId(sessionId);
 
     return Response.json(
         {
@@ -101,7 +101,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
         return createInvalidActionSessionIdResponse();
     }
 
-    const provider = detectProviderFromRawId(extractProviderRawId(actionTarget.sessionId));
+    const provider = detectProviderFromRawId(actionTarget.sessionId);
     if (!getDefaultProviderContext(provider).capabilities.delete) {
         return createUnsupportedCapabilityResponse('delete', actionTarget.sessionId);
     }

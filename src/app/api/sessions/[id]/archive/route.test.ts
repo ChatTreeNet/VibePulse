@@ -46,6 +46,23 @@ describe('/api/sessions/[id]/archive', () => {
     expect(mockFetch).toHaveBeenCalledWith('http://localhost:7777/session/abc', expect.objectContaining({ method: 'PATCH' }));
   });
 
+  it('treats UUID-like local ids without claude namespace as opencode sessions', async () => {
+    const opencodeUuid = '550e8400-e29b-41d4-a716-446655440000';
+    const mockFetch = vi.fn(async () => new Response(JSON.stringify({ error: 'missing' }), { status: 404 }));
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(new Request(`http://localhost/api/sessions/local:${opencodeUuid}/archive`, { method: 'POST' }), {
+      params: Promise.resolve({ id: `local:${opencodeUuid}` }),
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(data).toEqual({ error: 'Session not found', reason: 'session_not_found' });
+    expect(mockMarkClaudeSessionArchived).not.toHaveBeenCalled();
+    expect(mockDiscoverPortsWithMeta).toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledWith(`http://localhost:7777/session/${opencodeUuid}`, expect.objectContaining({ method: 'PATCH' }));
+  });
+
   it('forwards remote archive ids to the matching node endpoint', async () => {
     mockListNodeRecords.mockResolvedValue([
       {

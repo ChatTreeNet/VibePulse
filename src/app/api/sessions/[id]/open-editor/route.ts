@@ -20,7 +20,7 @@ function createSessionNotFoundResponse() {
 }
 
 function createUnsupportedCapabilityResponse(capability: 'openEditor', sessionId: string) {
-  const provider = detectProviderFromRawId(extractProviderRawId(sessionId));
+  const provider = detectProviderFromRawId(sessionId);
 
   return Response.json(
     {
@@ -43,7 +43,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return createInvalidActionSessionIdResponse();
   }
 
-  const provider = detectProviderFromRawId(extractProviderRawId(actionTarget.sessionId));
+  const provider = detectProviderFromRawId(actionTarget.sessionId);
   if (!getDefaultProviderContext(provider).capabilities.openEditor) {
     return createUnsupportedCapabilityResponse('openEditor', actionTarget.sessionId);
   }

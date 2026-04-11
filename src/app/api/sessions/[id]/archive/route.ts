@@ -26,7 +26,7 @@ function createSessionNotFoundResponse() {
 }
 
 function createUnsupportedCapabilityResponse(capability: 'archive', sessionId: string) {
-    const provider = detectProviderFromRawId(extractProviderRawId(sessionId));
+    const provider = detectProviderFromRawId(sessionId);
 
     return Response.json(
         {
@@ -111,7 +111,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
         return createInvalidActionSessionIdResponse();
     }
 
-    const provider = detectProviderFromRawId(extractProviderRawId(actionTarget.sessionId));
+    const provider = detectProviderFromRawId(actionTarget.sessionId);
     if (!getDefaultProviderContext(provider).capabilities.archive) {
         return createUnsupportedCapabilityResponse('archive', actionTarget.sessionId);
     }
