@@ -916,6 +916,14 @@ describe('normalizeClaudeCodeSessions', () => {
         title: 'graphify roadmap next</command-message',
       }),
       makeDiscoveredSession({
+        sessionId: `${SESSION_TWO}-malformed-inline-close`,
+        title: 'graphify</command-message claude title 显示没有过滤好',
+      }),
+      makeDiscoveredSession({
+        sessionId: `${SESSION_ONE}-malformed-inline-local-caveat`,
+        title: 'graphify</local-command-caveat claude title caveat 没过滤好',
+      }),
+      makeDiscoveredSession({
         sessionId: `${SESSION_ONE}-jsx`,
         title: 'Investigate <Button /> inside <Card> rendering behavior',
       }),
@@ -930,8 +938,10 @@ describe('normalizeClaudeCodeSessions', () => {
     expect(sessions[2]?.title).toBe('graphify roadmap next');
     expect(sessions[3]?.title).toBe('graphify roadmap next');
     expect(sessions[4]?.title).toBe('graphify roadmap next');
-    expect(sessions[5]?.title).toBe('Investigate <Button /> inside <Card> rendering behavior');
-    expect(sessions[6]?.title).toBe('<T> generic helper with boundary checks');
+    expect(sessions[5]?.title).toBe('graphify claude title 显示没有过滤好');
+    expect(sessions[6]?.title).toBe('graphify claude title caveat 没过滤好');
+    expect(sessions[7]?.title).toBe('Investigate <Button /> inside <Card> rendering behavior');
+    expect(sessions[8]?.title).toBe('<T> generic helper with boundary checks');
   });
 
   it('applies whitespace compaction and truncation after wrapper stripping', () => {

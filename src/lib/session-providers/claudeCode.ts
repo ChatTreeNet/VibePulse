@@ -18,29 +18,16 @@ const PROJECT_INDEX_FILE = 'sessions-index.json';
 const CLAUDE_TITLE_WRAPPER_TAGS = ['command-message', 'local-command-caveat'] as const;
 
 function stripKnownClaudeTitleWrappers(title: string): string {
-  let normalized = title.trim();
+  let normalized = title;
 
-  for (let changed = true; changed;) {
-    changed = false;
+  for (const tagName of CLAUDE_TITLE_WRAPPER_TAGS) {
+    const openTagFragment = new RegExp(`<${tagName}(?=[\\s>/]|$)\\s*/?>?`, 'ig');
+    const closeTagFragment = new RegExp(`</${tagName}(?=[\\s>]|$)\\s*>?`, 'ig');
 
-    for (const tagName of CLAUDE_TITLE_WRAPPER_TAGS) {
-      const openBoundary = new RegExp(`^<${tagName}(?:\\s*>)?\\s*`, 'i');
-      const closeBoundary = new RegExp(`\\s*</${tagName}(?:\\s*>)?\\s*$`, 'i');
-      const selfClosingBoundary = new RegExp(`^<${tagName}\\s*/\\s*>?\\s*`, 'i');
-      const strippedBoundaries = normalized
-        .replace(openBoundary, '')
-        .replace(closeBoundary, '')
-        .replace(selfClosingBoundary, '')
-        .trim();
-
-      if (strippedBoundaries !== normalized) {
-        normalized = strippedBoundaries;
-        changed = true;
-      }
-    }
+    normalized = normalized.replace(openTagFragment, ' ').replace(closeTagFragment, ' ');
   }
 
-  return normalized;
+  return normalized.trim();
 }
 
 function normalizeSessionTitle(title: string): string {
