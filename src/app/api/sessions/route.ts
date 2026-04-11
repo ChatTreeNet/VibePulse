@@ -139,8 +139,24 @@ function isTimeValue(value: unknown): boolean {
   return (
     typeof created === 'number' &&
     typeof updated === 'number' &&
-    (archived === undefined || typeof archived === 'number')
+    (archived === undefined || archived === null || typeof archived === 'number')
   );
+}
+
+function normalizeSessionTimeValue<T extends { created: number; updated: number; archived?: number } | undefined>(time: T): T {
+  if (!time) {
+    return time;
+  }
+
+  const archived = (time as { archived?: number | null }).archived;
+  if (archived === null) {
+    return {
+      created: time.created,
+      updated: time.updated,
+    } as T;
+  }
+
+  return time;
 }
 
 function isChildEntryValue(value: unknown): value is ChildEntry {
@@ -423,6 +439,7 @@ function addHostMetadataToChildEntry(
     hostLabel: source.hostLabel,
     hostKind: source.hostKind,
     ...(isRemoteSource(source) ? { hostBaseUrl: source.baseUrl } : {}),
+    time: normalizeSessionTimeValue(child.time),
     rawSessionId,
     sourceSessionKey,
     readOnly: child.readOnly ?? false,
@@ -457,6 +474,7 @@ function addHostMetadataToSession(session: EnrichedSession, source: SessionSourc
     hostLabel: source.hostLabel,
     hostKind: source.hostKind,
     ...(isRemoteSource(source) ? { hostBaseUrl: source.baseUrl } : {}),
+    time: normalizeSessionTimeValue(session.time),
     rawSessionId,
     sourceSessionKey,
     readOnly: session.readOnly ?? false,

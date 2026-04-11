@@ -1298,6 +1298,95 @@ describe('/api/sessions route source handling', () => {
     });
   });
 
+  it('accepts remote node payloads with archived:null and normalizes archived away', async () => {
+    setupLocalSessionsMocks();
+    mockListNodeRecords.mockResolvedValue([
+      {
+        nodeId: 'remote-null-archived',
+        nodeLabel: 'Remote Null Archived',
+        baseUrl: 'https://remote-null-archived.test',
+        enabled: true,
+        token: 'null-archived-token',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://remote-null-archived.test/api/node/sessions') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            role: 'node',
+            protocolVersion: NODE_PROTOCOL_VERSION,
+            source: { hostId: 'local', hostLabel: 'Local', hostKind: 'local' },
+            upstream: { kind: 'opencode', reachable: true },
+            sessions: [
+              {
+                id: 'ses_remote_1',
+                rawSessionId: 'ses_remote_1',
+                title: 'Remote Session',
+                directory: '/remote/project',
+                projectName: 'remote-project',
+                branch: 'main',
+                realTimeStatus: 'idle',
+                waitingForUser: false,
+                time: { created: 2_000, updated: 2_500, archived: null },
+                children: [
+                  {
+                    id: 'child_remote_1',
+                    rawSessionId: 'child_remote_1',
+                    parentID: 'ses_remote_1',
+                    title: 'Child Session',
+                    directory: '/remote/project',
+                    realTimeStatus: 'idle',
+                    waitingForUser: false,
+                    time: { created: 2_100, updated: 2_400, archived: null },
+                  },
+                ],
+              },
+            ],
+            processHints: [],
+            hosts: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+            hostStatuses: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+
+      throw new Error(`Unexpected node sessions URL: ${url}`);
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(
+      new Request('http://localhost/api/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sources: [
+            {
+              hostId: 'remote-null-archived',
+              hostLabel: 'Remote Null Archived',
+              hostKind: 'remote',
+              baseUrl: 'https://remote-null-archived.test',
+              enabled: true,
+            },
+          ],
+        }),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    const session = data.sessions.find((entry: any) => entry.id === 'remote-null-archived:ses_remote_1');
+    expect(session).toBeTruthy();
+    expect(session.time).toEqual({ created: 2_000, updated: 2_500 });
+    expect(session.time).not.toHaveProperty('archived');
+    expect(session.children[0].time).toEqual({ created: 2_100, updated: 2_400 });
+    expect(session.children[0].time).not.toHaveProperty('archived');
+  });
+
   it('returns 400 for invalid remote source entries', async () => {
     const invalidRemoteUrlResponse = await POST(
       new Request('http://localhost/api/sessions', {
