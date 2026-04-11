@@ -118,6 +118,9 @@ describe('composeProviderSourceKey', () => {
       archive: true,
       delete: true,
     });
+    expect(result.topology).toEqual({
+      childSessions: 'authoritative',
+    });
     expect(result.providerRawId).toBe('ses_1744181234567_build');
   });
 
@@ -132,6 +135,9 @@ describe('composeProviderSourceKey', () => {
       openEditor: false,
       archive: true,
       delete: true,
+    });
+    expect(result.topology).toEqual({
+      childSessions: 'flat',
     });
     expect(result.providerRawId).toBe(uuid);
   });
@@ -226,6 +232,7 @@ describe('mergeProviderContext', () => {
     expect(result.provider).toBe('claude-code');
     expect(result.readOnly).toBe(READONLY_PROVIDER_CONTEXT.readOnly);
     expect(result.capabilities).toEqual(READONLY_PROVIDER_CONTEXT.capabilities);
+    expect(result.topology).toEqual(READONLY_PROVIDER_CONTEXT.topology);
   });
 
   it('overrides readOnly when specified', () => {
@@ -239,6 +246,19 @@ describe('mergeProviderContext', () => {
     expect(result.provider).toBe('claude-code');
     expect(result.readOnly).toBe(true);
   });
+
+  it('allows explicit authoritative topology overrides without changing Claude defaults', () => {
+    const result = mergeProviderContext({
+      provider: 'claude-code',
+      topology: { childSessions: 'authoritative' },
+    });
+
+    expect(result.provider).toBe('claude-code');
+    expect(result.readOnly).toBe(READONLY_PROVIDER_CONTEXT.readOnly);
+    expect(result.capabilities).toEqual(READONLY_PROVIDER_CONTEXT.capabilities);
+    expect(result.topology).toEqual({ childSessions: 'authoritative' });
+    expect(READONLY_PROVIDER_CONTEXT.topology).toEqual({ childSessions: 'flat' });
+  });
 });
 
 describe('DEFAULT_PROVIDER_CONTEXT', () => {
@@ -249,6 +269,10 @@ describe('DEFAULT_PROVIDER_CONTEXT', () => {
   it('defaults to writable', () => {
     expect(DEFAULT_PROVIDER_CONTEXT.readOnly).toBe(false);
   });
+
+  it('defaults to authoritative child topology', () => {
+    expect(DEFAULT_PROVIDER_CONTEXT.topology).toEqual({ childSessions: 'authoritative' });
+  });
 });
 
 describe('READONLY_PROVIDER_CONTEXT', () => {
@@ -258,6 +282,10 @@ describe('READONLY_PROVIDER_CONTEXT', () => {
 
   it('is read-only', () => {
     expect(READONLY_PROVIDER_CONTEXT.readOnly).toBe(true);
+  });
+
+  it('defaults to flat child topology until authoritative linkage is provided', () => {
+    expect(READONLY_PROVIDER_CONTEXT.topology).toEqual({ childSessions: 'flat' });
   });
 });
 

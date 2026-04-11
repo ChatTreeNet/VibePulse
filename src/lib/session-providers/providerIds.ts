@@ -1,10 +1,12 @@
 import { SessionCapabilities, SessionProvider } from '@/types';
 import { composeSourceKey, getSessionIdFromSourceKey } from '../hostIdentity';
+import type { ProviderTopology } from './types';
 
 export type ProviderContext = {
   provider: SessionProvider;
   readOnly: boolean;
   capabilities: SessionCapabilities;
+  topology: ProviderTopology;
 };
 
 const OPENCODE_CAPABILITIES: SessionCapabilities = {
@@ -21,16 +23,26 @@ const CLAUDE_CAPABILITIES: SessionCapabilities = {
   delete: true,
 };
 
+const OPENCODE_TOPOLOGY: ProviderTopology = {
+  childSessions: 'authoritative',
+};
+
+const CLAUDE_TOPOLOGY: ProviderTopology = {
+  childSessions: 'flat',
+};
+
 export const DEFAULT_PROVIDER_CONTEXT: ProviderContext = {
   provider: 'opencode',
   readOnly: false,
   capabilities: OPENCODE_CAPABILITIES,
+  topology: OPENCODE_TOPOLOGY,
 };
 
 export const READONLY_PROVIDER_CONTEXT: ProviderContext = {
   provider: 'claude-code',
   readOnly: true,
   capabilities: CLAUDE_CAPABILITIES,
+  topology: CLAUDE_TOPOLOGY,
 };
 
 export function getDefaultProviderContext(provider: SessionProvider): ProviderContext {
@@ -102,6 +114,7 @@ export function composeProviderSourceKey(
   provider: SessionProvider;
   readOnly: boolean;
   capabilities: SessionCapabilities;
+  topology: ProviderTopology;
   providerRawId: string;
 } {
   const { normalizedId, provider } = normalizeProviderRawId(rawId, overrides?.provider);
@@ -109,12 +122,14 @@ export function composeProviderSourceKey(
   const defaultReadOnly = providerDefaults.readOnly;
   const readOnly = overrides?.readOnly ?? defaultReadOnly;
   const capabilities = overrides?.capabilities ?? providerDefaults.capabilities;
+  const topology = overrides?.topology ?? providerDefaults.topology;
 
   return {
     sourceKey: composeSourceKey(hostId, normalizedId),
     provider,
     readOnly,
     capabilities,
+    topology,
     providerRawId: rawId,
   };
 }
@@ -141,5 +156,6 @@ export function mergeProviderContext(
     provider,
     readOnly: context.readOnly ?? providerDefaults.readOnly,
     capabilities: context.capabilities ?? providerDefaults.capabilities,
+    topology: context.topology ?? providerDefaults.topology,
   };
 }

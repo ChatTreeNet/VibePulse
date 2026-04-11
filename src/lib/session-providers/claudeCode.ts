@@ -2,10 +2,9 @@ import { constants, type Dirent, type Stats } from 'fs';
 import { access, open, readdir, realpath, stat, type FileHandle } from 'fs/promises';
 import { homedir } from 'os';
 import { basename, join } from 'path';
-import type { OpencodeSession } from '@/types';
 import { listClaudeSessionOverrides } from '@/lib/claudeSessionOverrides';
-import type { LocalSessionProvider, SessionsRouteResult } from './types';
-import { namespaceClaudeRawId } from './providerIds';
+import type { ChildEntry, LocalSessionProvider, ProviderTopology, SessionsRouteResult } from './types';
+import { namespaceClaudeRawId, READONLY_PROVIDER_CONTEXT } from './providerIds';
 
 const DEFAULT_SMALL_FILE_LIMIT_BYTES = 128 * 1024;
 const DEFAULT_JSONL_HEAD_LIMIT_BYTES = 64 * 1024;
@@ -63,16 +62,34 @@ export type ClaudeCodeDiscoveredSession = {
   isRunning: boolean;
   archivedAt?: number;
   waitingForUser: boolean;
+  parentSessionId?: string;
+  topology?: ProviderTopology;
 };
 
-export type ClaudeCodeNormalizedSession = OpencodeSession & {
+export type ClaudeCodeNormalizedSession = {
+  id: string;
+  slug: string;
+  title: string;
+  directory: string;
+  projectName: string;
+  branch?: string;
+  parentID?: string;
+  messageCount?: number;
+  hasTranscript?: boolean;
+  time: {
+    created: number;
+    updated: number;
+    archived?: number;
+  };
   provider: 'claude-code';
   readOnly: true;
+  capabilities: typeof READONLY_PROVIDER_CONTEXT.capabilities;
   realTimeStatus: 'idle' | 'busy';
   waitingForUser: boolean;
-  children: [];
+  children: ChildEntry[];
   rawSessionId: string;
   providerRawId: string;
+  topology: ProviderTopology;
 };
 
 export type ClaudeCodeDiscoveryOptions = {
@@ -88,11 +105,42 @@ function normalizeClaudeCodeSessionId(rawSessionId: string): string {
   return namespaceClaudeRawId(rawSessionId);
 }
 
+function normalizeClaudeTopology(topology?: ProviderTopology): ProviderTopology {
+  if (topology?.childSessions === 'authoritative') {
+    return topology;
+  }
+
+  return READONLY_PROVIDER_CONTEXT.topology;
+}
+
+function toClaudeChildEntry(
+  session: ClaudeCodeNormalizedSession,
+  parentId: string
+): ChildEntry {
+  return {
+    id: session.id,
+    slug: session.slug,
+    title: session.title,
+    directory: session.directory,
+    parentID: parentId,
+    time: session.time,
+    realTimeStatus: session.realTimeStatus,
+    waitingForUser: session.waitingForUser,
+    readOnly: session.readOnly,
+    capabilities: session.capabilities,
+    rawSessionId: session.rawSessionId,
+    provider: session.provider,
+    providerRawId: session.providerRawId,
+    topology: session.topology,
+  };
+}
+
 export function normalizeClaudeCodeSession(
   session: ClaudeCodeDiscoveredSession
 ): ClaudeCodeNormalizedSession {
   const normalizedId = normalizeClaudeCodeSessionId(session.sessionId);
   const normalizedTitle = typeof session.title === 'string' ? normalizeSessionTitle(session.title) : '';
+  const topology = normalizeClaudeTopology(session.topology);
 
   return {
     id: normalizedId,
@@ -110,6 +158,8 @@ export function normalizeClaudeCodeSession(
     providerRawId: session.sessionId,
     provider: 'claude-code',
     readOnly: true,
+    capabilities: READONLY_PROVIDER_CONTEXT.capabilities,
+    topology,
     realTimeStatus: session.waitingForUser ? 'idle' : session.isRunning ? 'busy' : 'idle',
     waitingForUser: session.waitingForUser,
     children: [],
@@ -119,7 +169,42 @@ export function normalizeClaudeCodeSession(
 export function normalizeClaudeCodeSessions(
   sessions: ClaudeCodeDiscoveredSession[]
 ): ClaudeCodeNormalizedSession[] {
-  return sessions.map(normalizeClaudeCodeSession);
+  const normalizedSessions = sessions.map(normalizeClaudeCodeSession);
+  const sessionById = new Map(normalizedSessions.map((session) => [session.id, session]));
+  const childrenByParentId = new Map<string, ChildEntry[]>();
+  const nestedChildIds = new Set<string>();
+
+  for (const session of sessions) {
+    if (session.topology?.childSessions !== 'authoritative' || !session.parentSessionId) {
+      continue;
+    }
+
+    const normalizedChildId = normalizeClaudeCodeSessionId(session.sessionId);
+    const normalizedParentId = normalizeClaudeCodeSessionId(session.parentSessionId);
+    const normalizedChild = sessionById.get(normalizedChildId);
+    const normalizedParent = sessionById.get(normalizedParentId);
+
+    if (
+      !normalizedChild
+      || !normalizedParent
+      || normalizedChildId === normalizedParentId
+      || normalizedParent.topology.childSessions !== 'authoritative'
+    ) {
+      continue;
+    }
+
+    const parentChildren = childrenByParentId.get(normalizedParentId) ?? [];
+    parentChildren.push(toClaudeChildEntry(normalizedChild, normalizedParentId));
+    childrenByParentId.set(normalizedParentId, parentChildren);
+    nestedChildIds.add(normalizedChildId);
+  }
+
+  return normalizedSessions
+    .filter((session) => !nestedChildIds.has(session.id))
+    .map((session) => ({
+      ...session,
+      children: childrenByParentId.get(session.id) ?? [],
+    }));
 }
 
 export const claudeCodeLocalSessionProvider: LocalSessionProvider = {

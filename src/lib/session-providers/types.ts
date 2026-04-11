@@ -16,15 +16,24 @@ export type SessionLike = {
 
 export type SessionSource = BuiltInHostSource | (RemoteHostConfig & { hostKind: 'remote' });
 
+export type ChildTopologySupport = 'flat' | 'authoritative';
+
+export type ProviderTopology = {
+  childSessions: ChildTopologySupport;
+};
+
 export type HostAwareFields = {
   hostId?: string;
   hostLabel?: string;
   hostKind?: SessionSource['hostKind'];
   hostBaseUrl?: string;
+  provider?: SessionProvider;
+  providerRawId?: string;
   rawSessionId?: string;
   sourceSessionKey?: string;
   readOnly?: boolean;
   capabilities?: SessionCapabilities;
+  topology?: ProviderTopology;
 };
 
 export type ChildEntry = HostAwareFields & {

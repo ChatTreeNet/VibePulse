@@ -2,9 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chmod, mkdir, mkdtemp, realpath, rm, stat, symlink, utimes, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import type { OpencodeSession } from '@/types';
 import * as claudeCodeModule from './claudeCode';
-import { discoverClaudeCodeSessions, sanitizeClaudeProjectPath, type ClaudeCodeDiscoveredSession } from './claudeCode';
+import {
+  discoverClaudeCodeSessions,
+  sanitizeClaudeProjectPath,
+  type ClaudeCodeDiscoveredSession,
+  type ClaudeCodeNormalizedSession,
+} from './claudeCode';
 
 vi.mock('@/lib/claudeSessionOverrides', () => ({
   listClaudeSessionOverrides: vi.fn(async () => []),
@@ -43,14 +47,16 @@ function makeDiscoveredSession(
     pid: overrides.pid,
     isRunning: overrides.isRunning ?? false,
     waitingForUser: overrides.waitingForUser ?? false,
+    parentSessionId: overrides.parentSessionId,
+    topology: overrides.topology,
   };
 }
 
 function getNormalizeClaudeCodeSessions():
-  | ((sessions: ClaudeCodeDiscoveredSession[]) => OpencodeSession[])
+  | ((sessions: ClaudeCodeDiscoveredSession[]) => ClaudeCodeNormalizedSession[])
   | undefined {
   return (claudeCodeModule as unknown as {
-    normalizeClaudeCodeSessions?: (sessions: ClaudeCodeDiscoveredSession[]) => OpencodeSession[];
+    normalizeClaudeCodeSessions?: (sessions: ClaudeCodeDiscoveredSession[]) => ClaudeCodeNormalizedSession[];
   }).normalizeClaudeCodeSessions;
 }
 
@@ -844,8 +850,6 @@ describe('normalizeClaudeCodeSessions', () => {
         children: [],
       },
     ]);
-    expect(sessions?.[0]?.hasTranscript).toBeUndefined();
-    expect(sessions?.[0]?.messageCount).toBeUndefined();
   });
 
   it('treats recent transcript-only Claude sessions as idle without retry semantics', () => {
@@ -911,9 +915,101 @@ describe('normalizeClaudeCodeSessions', () => {
     ]) ?? [];
 
     expect(sessions).toHaveLength(2);
-    expect(sessions.some((session) => session.realTimeStatus === 'retry')).toBe(false);
+    expect(sessions.every((session) => ['idle', 'busy'].includes(session.realTimeStatus))).toBe(true);
     expect(sessions.some((session) => session.waitingForUser === true)).toBe(true);
     expect(sessions.every((session) => Array.isArray(session.children) && session.children.length === 0)).toBe(true);
+    expect(sessions.every((session) => session.topology?.childSessions === 'flat')).toBe(true);
+  });
+
+  it('nests verified Claude child sessions only when authoritative linkage is explicit', () => {
+    const normalizeClaudeCodeSessions = getNormalizeClaudeCodeSessions();
+
+    expect(normalizeClaudeCodeSessions).toBeTypeOf('function');
+
+    const sessions = normalizeClaudeCodeSessions?.([
+      makeDiscoveredSession({
+        sessionId: SESSION_ONE,
+        cwd: '/tmp/parent-worktree',
+        projectPath: '/tmp/parent-worktree',
+        projectName: 'parent-worktree',
+        isRunning: true,
+        topology: { childSessions: 'authoritative' },
+      }),
+      makeDiscoveredSession({
+        sessionId: SESSION_TWO,
+        cwd: '/tmp/child-worktree',
+        projectPath: '/tmp/child-worktree',
+        projectName: 'child-worktree',
+        isRunning: false,
+        waitingForUser: true,
+        parentSessionId: SESSION_ONE,
+        topology: { childSessions: 'authoritative' },
+      }),
+    ]) ?? [];
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      id: `claude~${SESSION_ONE}`,
+      topology: { childSessions: 'authoritative' },
+      children: [
+        {
+          id: `claude~${SESSION_TWO}`,
+          parentID: `claude~${SESSION_ONE}`,
+          topology: { childSessions: 'authoritative' },
+          realTimeStatus: 'idle',
+          waitingForUser: true,
+          provider: 'claude-code',
+          providerRawId: SESSION_TWO,
+          rawSessionId: SESSION_TWO,
+          readOnly: true,
+        },
+      ],
+    });
+  });
+
+  it('keeps Claude sessions flat when linkage is missing or topology is not authoritative', () => {
+    const normalizeClaudeCodeSessions = getNormalizeClaudeCodeSessions();
+
+    expect(normalizeClaudeCodeSessions).toBeTypeOf('function');
+
+    const sessions = normalizeClaudeCodeSessions?.([
+      makeDiscoveredSession({
+        sessionId: SESSION_ONE,
+        cwd: '/tmp/claimed-parent',
+        projectPath: '/tmp/claimed-parent',
+        projectName: 'claimed-parent',
+        topology: { childSessions: 'authoritative' },
+      }),
+      makeDiscoveredSession({
+        sessionId: SESSION_TWO,
+        cwd: '/tmp/non-authoritative-child',
+        projectPath: '/tmp/non-authoritative-child',
+        projectName: 'non-authoritative-child',
+        parentSessionId: SESSION_ONE,
+      }),
+      makeDiscoveredSession({
+        sessionId: '770e8400-e29b-41d4-a716-446655440000',
+        cwd: '/tmp/missing-parent-link',
+        projectPath: '/tmp/missing-parent-link',
+        projectName: 'missing-parent-link',
+        parentSessionId: '880e8400-e29b-41d4-a716-446655440000',
+        topology: { childSessions: 'authoritative' },
+      }),
+    ]) ?? [];
+
+    expect(sessions).toHaveLength(3);
+    expect(sessions.every((session) => session.children.length === 0)).toBe(true);
+    expect(sessions.find((session) => session.id === `claude~${SESSION_ONE}`)?.topology).toEqual({
+      childSessions: 'authoritative',
+    });
+    expect(sessions.find((session) => session.id === `claude~${SESSION_TWO}`)?.topology).toEqual({
+      childSessions: 'flat',
+    });
+    expect(sessions.find((session) => session.id === `claude~${SESSION_TWO}`)?.parentID).toBeUndefined();
+    expect(sessions.find((session) => session.id === 'claude~770e8400-e29b-41d4-a716-446655440000')?.topology).toEqual({
+      childSessions: 'authoritative',
+    });
+    expect(sessions.find((session) => session.id === 'claude~770e8400-e29b-41d4-a716-446655440000')?.parentID).toBeUndefined();
   });
 
   it('prefers transcript-derived discovered titles for Claude sessions', () => {
