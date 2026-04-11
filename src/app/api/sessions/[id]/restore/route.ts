@@ -3,7 +3,10 @@ import { ActionSessionReference, parseActionSessionReference, resolveLocalAction
 import { listNodeRecords } from '@/lib/nodeRegistry';
 import { createNodeRequestHeaders } from '@/lib/nodeProtocol';
 import { detectProviderFromRawId, extractProviderRawId, getDefaultProviderContext } from '@/lib/session-providers/providerIds';
-import { markSessionForceUnarchived } from '@/lib/sessionArchiveOverrides';
+import {
+  clearSessionStickyStatusBlocked,
+  markSessionForceUnarchived,
+} from '@/lib/sessionArchiveOverrides';
 import { clearClaudeSessionArchived } from '@/lib/claudeSessionOverrides';
 
 const REMOTE_NODE_ACTION_TIMEOUT_MS = 5_000;
@@ -26,6 +29,21 @@ function createUnsupportedCapabilityResponse(sessionId: string) {
       capability: 'archive',
     },
     { status: 403 },
+  );
+}
+
+function createRestoreFailureResponse(
+  status: number,
+  message?: string,
+  reason: 'restore_request_failed' | 'upstream_unreachable' = 'restore_request_failed'
+) {
+  return Response.json(
+    {
+      error: 'Failed to restore session',
+      reason,
+      ...(message ? { message } : {}),
+    },
+    { status },
   );
 }
 
@@ -95,6 +113,11 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
   }
 
   if (provider === 'claude-code') {
+    const localSessionId = resolveLocalActionSessionId(id);
+    if (localSessionId) {
+      markSessionForceUnarchived(localSessionId);
+      clearSessionStickyStatusBlocked(localSessionId);
+    }
     await clearClaudeSessionArchived(extractProviderRawId(actionTarget.sessionId));
     return Response.json({ success: true });
   }
@@ -113,6 +136,11 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
     return Response.json({ error: timedOut ? 'OpenCode discovery timed out' : 'OpenCode server not found' }, { status: 503 });
   }
 
+  let sawNotFound = false;
+  let lastFailureStatus: number | null = null;
+  let lastFailureMessage: string | undefined;
+  let lastFailureReason: 'restore_request_failed' | 'upstream_unreachable' = 'restore_request_failed';
+
   for (const port of ports) {
     try {
       const response = await fetch(`http://localhost:${port}/session/${sessionId}`, {
@@ -122,13 +150,35 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       });
       if (response.ok) {
         markSessionForceUnarchived(sessionId);
+        clearSessionStickyStatusBlocked(sessionId);
         return Response.json({ success: true });
       }
-      if (response.status === 404) continue;
-    } catch {
-      continue;
+
+      if (response.status === 404) {
+        sawNotFound = true;
+        continue;
+      }
+
+      const responseText = await response.text();
+      console.error(`Failed to restore session on port ${port}:`, responseText);
+      lastFailureStatus = response.status;
+      lastFailureMessage = responseText || undefined;
+      lastFailureReason = 'restore_request_failed';
+    } catch (error) {
+      console.error(`Failed to restore session on port ${port}:`, error);
+      lastFailureStatus = 503;
+      lastFailureMessage = error instanceof Error ? error.message : String(error);
+      lastFailureReason = 'upstream_unreachable';
     }
   }
 
-  return createSessionNotFoundResponse();
+  if (lastFailureStatus !== null) {
+    return createRestoreFailureResponse(lastFailureStatus, lastFailureMessage, lastFailureReason);
+  }
+
+  if (sawNotFound) {
+    return createSessionNotFoundResponse();
+  }
+
+  return createRestoreFailureResponse(500);
 }
