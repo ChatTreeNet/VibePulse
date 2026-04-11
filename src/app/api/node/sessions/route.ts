@@ -6,7 +6,12 @@ import {
   discoverOpencodeProcessCwdsWithoutPortWithMeta,
 } from '@/lib/opencodeDiscovery';
 import { readConfig } from '@/lib/opencodeConfig';
-import { composeSourceKey } from '@/lib/hostIdentity';
+import { claudeCodeLocalSessionProvider } from '@/lib/session-providers/claudeCode';
+import {
+  composeProviderSourceKey,
+  detectProviderFromRawId,
+  extractProviderRawId,
+} from '@/lib/session-providers/providerIds';
 import {
   NODE_PROTOCOL_VERSION,
   createNodeFailureResponse,
@@ -73,9 +78,20 @@ type HostAwareFields = {
   hostId?: typeof LOCAL_SOURCE.hostId;
   hostLabel?: typeof LOCAL_SOURCE.hostLabel;
   hostKind?: typeof LOCAL_SOURCE.hostKind;
+  provider?: 'opencode' | 'claude-code';
+  providerRawId?: string;
   rawSessionId?: string;
   sourceSessionKey?: string;
   readOnly?: boolean;
+  capabilities?: {
+    openProject: boolean;
+    openEditor: boolean;
+    archive: boolean;
+    delete: boolean;
+  };
+  topology?: {
+    childSessions: 'flat' | 'authoritative';
+  };
 };
 
 type ChildEntry = HostAwareFields & {
@@ -557,38 +573,112 @@ function sortChildEntries(children: ChildEntry[]): void {
   });
 }
 
-function addLocalHostMetadataToChildEntry(child: ChildEntry): ChildEntry {
-  const rawSessionId = child.rawSessionId ?? child.id;
-  const sourceSessionKey = composeSourceKey(LOCAL_SOURCE.hostId, rawSessionId);
+function readSupplementalProviderPayload(payload: unknown): Pick<LocalSessionsSuccessPayload, 'sessions' | 'processHints'> {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { sessions: [], processHints: [] };
+  }
+
+  const record = payload as Record<string, unknown>;
+
+  return {
+    sessions: Array.isArray(record['sessions']) ? (record['sessions'] as EnrichedSession[]) : [],
+    processHints: Array.isArray(record['processHints']) ? (record['processHints'] as ProcessHint[]) : [],
+  };
+}
+
+async function getSupplementalClaudePayload(stickyBusyDelayMs: number): Promise<
+  Pick<LocalSessionsSuccessPayload, 'sessions' | 'processHints'>
+> {
+  try {
+    const result = await claudeCodeLocalSessionProvider.getSessionsResult({ stickyBusyDelayMs });
+    return readSupplementalProviderPayload(result.payload);
+  } catch {
+    return { sessions: [], processHints: [] };
+  }
+}
+
+function composeLocalProviderSourceKey(
+  rawSessionId: string,
+  fields: Pick<HostAwareFields, 'provider' | 'readOnly' | 'capabilities' | 'topology'>
+) {
+  return composeProviderSourceKey(LOCAL_SOURCE.hostId, rawSessionId, {
+    ...(fields.provider ? { provider: fields.provider } : {}),
+    ...(fields.readOnly !== undefined ? { readOnly: fields.readOnly } : {}),
+    ...(fields.capabilities ? { capabilities: fields.capabilities } : {}),
+    ...(fields.topology ? { topology: fields.topology } : {}),
+  });
+}
+
+function addLocalHostMetadataToChildEntry(
+  child: ChildEntry,
+  parentSourceSessionKey?: string,
+  parentProvider?: HostAwareFields['provider']
+): ChildEntry {
+  const rawSessionId = child.rawSessionId ?? extractProviderRawId(child.id);
+  const inferredProvider = child.provider ?? detectProviderFromRawId(child.id);
+  const provider = inferredProvider === 'claude-code' ? inferredProvider : (parentProvider ?? inferredProvider);
+  const sourceKey = composeLocalProviderSourceKey(rawSessionId, {
+    provider,
+    readOnly: child.readOnly,
+    capabilities: child.capabilities,
+    topology: child.topology,
+  });
+  const rawParentId = child.parentID ? extractProviderRawId(child.parentID) : undefined;
+  const sourceParentKey = parentSourceSessionKey
+    ?? (rawParentId
+      ? composeLocalProviderSourceKey(rawParentId, {
+          provider,
+        }).sourceKey
+      : child.parentID);
 
   return {
     ...child,
-    id: sourceSessionKey,
-    parentID: child.parentID ? composeSourceKey(LOCAL_SOURCE.hostId, child.parentID) : child.parentID,
+    id: sourceKey.sourceKey,
+    parentID: sourceParentKey,
     hostId: LOCAL_SOURCE.hostId,
     hostLabel: LOCAL_SOURCE.hostLabel,
     hostKind: LOCAL_SOURCE.hostKind,
     rawSessionId,
-    sourceSessionKey,
-    readOnly: false,
+    sourceSessionKey: sourceKey.sourceKey,
+    provider,
+    providerRawId: child.providerRawId ?? sourceKey.providerRawId,
+    readOnly: child.readOnly ?? sourceKey.readOnly,
+    capabilities: child.capabilities ?? sourceKey.capabilities,
+    topology: child.topology ?? sourceKey.topology,
   };
 }
 
 function addLocalHostMetadataToSession(session: EnrichedSession): EnrichedSession {
-  const rawSessionId = session.rawSessionId ?? session.id;
-  const sourceSessionKey = composeSourceKey(LOCAL_SOURCE.hostId, rawSessionId);
+  const rawSessionId = session.rawSessionId ?? extractProviderRawId(session.id);
+  const provider = session.provider ?? detectProviderFromRawId(session.id);
+  const sourceKey = composeLocalProviderSourceKey(rawSessionId, {
+    provider,
+    readOnly: session.readOnly,
+    capabilities: session.capabilities,
+    topology: session.topology,
+  });
+  const rawParentId = session.parentID ? extractProviderRawId(session.parentID) : undefined;
+  const sourceParentKey = rawParentId
+    ? composeLocalProviderSourceKey(rawParentId, {
+        provider,
+      }).sourceKey
+    : session.parentID;
 
   return {
     ...session,
-    id: sourceSessionKey,
-    parentID: session.parentID ? composeSourceKey(LOCAL_SOURCE.hostId, session.parentID) : session.parentID,
+    id: sourceKey.sourceKey,
+    parentID: sourceParentKey,
     hostId: LOCAL_SOURCE.hostId,
     hostLabel: LOCAL_SOURCE.hostLabel,
     hostKind: LOCAL_SOURCE.hostKind,
     rawSessionId,
-    sourceSessionKey,
-    readOnly: false,
-    children: session.children.map((child) => addLocalHostMetadataToChildEntry(child)),
+    sourceSessionKey: sourceKey.sourceKey,
+    provider,
+    providerRawId: session.providerRawId ?? sourceKey.providerRawId,
+    readOnly: session.readOnly ?? sourceKey.readOnly,
+    capabilities: session.capabilities ?? sourceKey.capabilities,
+    topology: session.topology ?? sourceKey.topology,
+    children: session.children.map((child) => addLocalHostMetadataToChildEntry(child, sourceKey.sourceKey, provider)),
   };
 }
 
@@ -1069,11 +1159,13 @@ async function getLocalSessionsResult(stickyBusyDelayMs: number): Promise<LocalS
 
     const filteredProcessHints = processHints.filter((hint) => !knownDirectories.has(hint.directory));
 
+    const supplementalClaudePayload = await getSupplementalClaudePayload(stickyBusyDelayMs);
+
     return {
       ok: true,
       payload: {
-        sessions: enrichedSessions,
-        processHints: filteredProcessHints,
+        sessions: [...enrichedSessions, ...supplementalClaudePayload.sessions],
+        processHints: [...filteredProcessHints, ...supplementalClaudePayload.processHints],
         ...(failedPorts.length > 0 ? { failedPorts, degraded: true } : {}),
       },
       meta: {
