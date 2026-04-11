@@ -27,6 +27,8 @@ jobs:
         run: npm run lint
 
       - name: Run tests
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: npm run test:run
 
       - name: Build
