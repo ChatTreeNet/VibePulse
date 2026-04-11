@@ -766,7 +766,6 @@ export function KanbanBoard({
             projectName: string;
             branch?: string;
             hostLabel?: string;
-            readOnly: boolean;
             cards: KanbanCard[];
         }>();
 
@@ -780,14 +779,12 @@ export function KanbanBoard({
                     projectName,
                     branch: card.branch,
                     hostLabel: card.hostLabel,
-                    readOnly: !!card.readOnly,
                     cards: [],
                 });
             }
 
             const group = groups.get(key)!;
             group.cards.push(card);
-            group.readOnly = group.readOnly && !!card.readOnly;
 
             if (!group.branch && card.branch) {
                 group.branch = card.branch;
@@ -845,13 +842,13 @@ export function KanbanBoard({
                                     {Array.from(projectGroups.entries()).map(([groupKey, group]) => (
                                          <ProjectCard
                                             key={groupKey}
-                                            projectName={group.projectName}
-                                            branch={group.branch}
-                                            cards={group.cards}
-                                            readOnly={isShowingStaleData || group.readOnly}
-                                             hostLabel={group.hostLabel}
-                                             multipleHostsEnabled={requestSources.length > 1}
-                                          />
+                                             projectName={group.projectName}
+                                             branch={group.branch}
+                                             cards={group.cards}
+                                            readOnly={isShowingStaleData}
+                                              hostLabel={group.hostLabel}
+                                              multipleHostsEnabled={requestSources.length > 1}
+                                           />
                                       ))}
                                 </div>
                             </div>

@@ -694,7 +694,9 @@ describe('ProjectCard', () => {
         renderWithProviders(
             <ProjectCard projectName="TestProject" cards={[mockCard]} readOnly={true} />
         );
-        expect(screen.getByTitle('Open project')).toBeTruthy();
+        expect(screen.getByTitle('Open project')).toBeDisabled();
+        expect(screen.queryByTitle('Batch actions')).toBeNull();
+        expect(screen.queryByTitle('Actions')).toBeNull();
     });
 
     it('renders Claude-backed cards as read-only but with footer controls', () => {

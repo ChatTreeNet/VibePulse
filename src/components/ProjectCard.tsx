@@ -68,10 +68,14 @@ function StatusDot({ status, waitingForUser, provider }: { status: string; waiti
     }
 }
 
-function HeaderActionMenu({ cards, isActionPending, onActionError, onPendingActionChange }: { cards: KanbanCard[]; isActionPending: boolean; onActionError: (message: string | null) => void; onPendingActionChange: (value: 'open' | 'archive' | 'restore' | 'delete' | null) => void }) {
+function HeaderActionMenu({ cards, isActionPending, onActionError, onPendingActionChange, readOnlyMode }: { cards: KanbanCard[]; isActionPending: boolean; onActionError: (message: string | null) => void; onPendingActionChange: (value: 'open' | 'archive' | 'restore' | 'delete' | null) => void; readOnlyMode: boolean }) {
     const queryClient = useQueryClient();
     const [open, setOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
+
+    if (readOnlyMode) {
+        return null;
+    }
 
     useEffect(() => {
         if (!open) return;
@@ -255,10 +259,14 @@ function HeaderActionMenu({ cards, isActionPending, onActionError, onPendingActi
 }
 
 // Hover-reveal action menu for each session row
-function RowActionMenu({ card, isActionPending, onActionError, onPendingActionChange }: { card: KanbanCard; isActionPending: boolean; onActionError: (message: string | null) => void; onPendingActionChange: (value: 'open' | 'archive' | 'restore' | 'delete' | null) => void }) {
+function RowActionMenu({ card, isActionPending, onActionError, onPendingActionChange, readOnlyMode }: { card: KanbanCard; isActionPending: boolean; onActionError: (message: string | null) => void; onPendingActionChange: (value: 'open' | 'archive' | 'restore' | 'delete' | null) => void; readOnlyMode: boolean }) {
     const queryClient = useQueryClient();
     const [open, setOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
+
+    if (readOnlyMode) {
+        return null;
+    }
 
     useEffect(() => {
         if (!open) return;
@@ -388,7 +396,7 @@ function RowActionMenu({ card, isActionPending, onActionError, onPendingActionCh
 }
 
 // Session row with expandable subagent children
-function SessionRow({ card, isLast, isActionPending, onActionError, onPendingActionChange }: { card: KanbanCard; isLast: boolean; isActionPending: boolean; onActionError: (message: string | null) => void; onPendingActionChange: (value: 'open' | 'archive' | 'restore' | 'delete' | null) => void }) {
+function SessionRow({ card, isLast, isActionPending, onActionError, onPendingActionChange, readOnlyMode }: { card: KanbanCard; isLast: boolean; isActionPending: boolean; onActionError: (message: string | null) => void; onPendingActionChange: (value: 'open' | 'archive' | 'restore' | 'delete' | null) => void; readOnlyMode: boolean }) {
     const [expanded, setExpanded] = useState(true);
     const visibleChildren = (card.children || []).filter(
         (child) => child.realTimeStatus !== 'idle' || child.waitingForUser
@@ -439,7 +447,7 @@ function SessionRow({ card, isLast, isActionPending, onActionError, onPendingAct
                 </span>
                 {/* Action menu: hidden by default, visible on hover */}
                 <div className="hidden group-hover/row:flex flex-shrink-0">
-                    <RowActionMenu card={card} isActionPending={isActionPending} onActionError={onActionError} onPendingActionChange={onPendingActionChange} />
+                    <RowActionMenu card={card} isActionPending={isActionPending} onActionError={onActionError} onPendingActionChange={onPendingActionChange} readOnlyMode={readOnlyMode} />
                 </div>
             </div>
             {/* Subagent children */}
@@ -467,7 +475,7 @@ function SessionRow({ card, isLast, isActionPending, onActionError, onPendingAct
     );
 }
 
-export function ProjectCard({ projectName, branch, cards, hostLabel: _hostLabel, multipleHostsEnabled }: ProjectCardProps) {
+export function ProjectCard({ projectName, branch, cards, readOnly = false, hostLabel: _hostLabel, multipleHostsEnabled }: ProjectCardProps) {
     const firstCard = cards[0];
     const actionableCards = useMemo(
         () => cards,
@@ -522,6 +530,7 @@ export function ProjectCard({ projectName, branch, cards, hostLabel: _hostLabel,
         return '';
     }, [primaryCard?.hostBaseUrl, primaryCard?.hostId]);
     const isActionPending = pendingAction !== null;
+    const isReadOnly = !!readOnly;
     const pendingActionLabel = pendingAction === 'open'
         ? 'Opening…'
         : pendingAction === 'archive'
@@ -536,6 +545,10 @@ export function ProjectCard({ projectName, branch, cards, hostLabel: _hostLabel,
     const isConfigUnavailableForRemoteOpen = isRemoteProjectCard && !config && !isConfigLoading;
 
     const handleOpenProject = () => {
+        if (isReadOnly) {
+            return;
+        }
+
         if (isActionPending) {
             return;
         }
@@ -618,7 +631,7 @@ export function ProjectCard({ projectName, branch, cards, hostLabel: _hostLabel,
                         </span>
                     )}
                     <div className={`${cards.length > 1 ? 'pr-0.5' : 'px-0.5'}`}>
-                        <HeaderActionMenu cards={actionableCards} isActionPending={isActionPending} onActionError={setActionError} onPendingActionChange={setPendingAction} />
+                        <HeaderActionMenu cards={actionableCards} isActionPending={isActionPending} onActionError={setActionError} onPendingActionChange={setPendingAction} readOnlyMode={isReadOnly} />
                     </div>
                 </div>
             </div>
@@ -633,6 +646,7 @@ export function ProjectCard({ projectName, branch, cards, hostLabel: _hostLabel,
                         isActionPending={isActionPending}
                         onActionError={setActionError}
                         onPendingActionChange={setPendingAction}
+                        readOnlyMode={isReadOnly}
                     />
                 ))}
             </div>
@@ -655,7 +669,7 @@ export function ProjectCard({ projectName, branch, cards, hostLabel: _hostLabel,
                                 window.localStorage.setItem('vibepulse:open-tool', e.target.value);
                             }}
                             title="Select open tool"
-                            disabled={isActionPending || isConfigPendingForRemoteOpen || isConfigUnavailableForRemoteOpen}
+                            disabled={isReadOnly || isActionPending || isConfigPendingForRemoteOpen || isConfigUnavailableForRemoteOpen}
                         >
                             <option value="vscode">VSCode</option>
                             <option value="antigravity">Antigravity</option>
@@ -665,7 +679,7 @@ export function ProjectCard({ projectName, branch, cards, hostLabel: _hostLabel,
                             onClick={handleOpenProject}
                             className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-gray-500 hover:text-blue-600 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-400 dark:hover:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
                             title="Open project"
-                            disabled={isActionPending || isConfigPendingForRemoteOpen || isConfigUnavailableForRemoteOpen}
+                            disabled={isReadOnly || isActionPending || isConfigPendingForRemoteOpen || isConfigUnavailableForRemoteOpen}
                         >
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />

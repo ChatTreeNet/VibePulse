@@ -636,6 +636,10 @@ describe('KanbanBoard Fetch Behavior and Error UX', () => {
         });
 
         expect(screen.getByTestId('host-filter')).toBeTruthy();
+        const openButton = screen.getByTitle('Open project') as HTMLButtonElement;
+        expect(openButton.disabled).toBe(true);
+        expect(screen.queryByTitle('Batch actions')).toBeNull();
+        expect(screen.queryAllByTitle('Actions')).toHaveLength(0);
     });
 
     it('dedupes legacy raw Local snapshot sessions against degraded namespaced Local sessions', async () => {
