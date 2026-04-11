@@ -254,6 +254,7 @@ type JsonlSessionHead = {
   title?: string;
   gitBranch?: string;
   timestampMs?: number;
+  explicitParentSessionId?: string;
 };
 
 type CandidateSessionMetadata = {
@@ -432,6 +433,13 @@ async function readJsonlSessionHead(filePath: string, byteLimit: number): Promis
         }
       }
 
+      if (!metadata.explicitParentSessionId) {
+        const parentSessionId = extractExplicitParentSessionId(parsed);
+        if (parentSessionId) {
+          metadata.explicitParentSessionId = parentSessionId;
+        }
+      }
+
       const timestampMs = toFiniteTimestamp(parsed.timestamp);
       if (timestampMs !== undefined && metadata.timestampMs === undefined) {
         metadata.timestampMs = timestampMs;
@@ -440,7 +448,14 @@ async function readJsonlSessionHead(filePath: string, byteLimit: number): Promis
       continue;
     }
 
-    if (metadata.cwd && metadata.sessionId && metadata.gitBranch && metadata.timestampMs !== undefined && metadata.title) {
+    if (
+      metadata.cwd
+      && metadata.sessionId
+      && metadata.gitBranch
+      && metadata.timestampMs !== undefined
+      && metadata.title
+      && metadata.explicitParentSessionId
+    ) {
       break;
     }
   }
@@ -505,6 +520,16 @@ function extractTitleFromSessionEvent(entry: Record<string, unknown>): string | 
   }
 
   return normalizeSessionTitle(text);
+}
+
+function extractExplicitParentSessionId(entry: Record<string, unknown>): string | null {
+  const candidate = entry.parentSessionId ?? entry.parent_session_id ?? entry.parentSessionID;
+  if (typeof candidate !== 'string') {
+    return null;
+  }
+
+  const normalizedCandidate = candidate.trim();
+  return normalizedCandidate || null;
 }
 
 function hasToolUseContent(content: unknown): boolean {
@@ -662,6 +687,7 @@ export async function discoverClaudeCodeSessions(
   }
 
   const discoveredSessions = new Map<string, ClaudeCodeDiscoveredSession>();
+  const explicitParentSessionIds = new Map<string, string>();
   const overrideMap = new Map((await listClaudeSessionOverrides()).map((entry) => [entry.sessionId, entry]));
   const now = Date.now();
 
@@ -762,11 +788,33 @@ export async function discoverClaudeCodeSessions(
         waitingForUser,
         ...(typeof override?.archivedAt === 'number' ? { archivedAt: override.archivedAt } : {}),
       });
+
+      if (headMetadata.explicitParentSessionId) {
+        explicitParentSessionIds.set(sessionId, headMetadata.explicitParentSessionId);
+      }
     }
   }
 
   if (discoveredSessions.size === 0) {
     return [];
+  }
+
+  for (const [sessionId, parentSessionId] of explicitParentSessionIds) {
+    const childSession = discoveredSessions.get(sessionId);
+    const parentSession = discoveredSessions.get(parentSessionId);
+    if (!childSession || !parentSession || sessionId === parentSessionId) {
+      continue;
+    }
+
+    discoveredSessions.set(sessionId, {
+      ...childSession,
+      parentSessionId,
+      topology: { childSessions: 'authoritative' },
+    });
+    discoveredSessions.set(parentSessionId, {
+      ...parentSession,
+      topology: { childSessions: 'authoritative' },
+    });
   }
 
   return Array.from(discoveredSessions.values()).sort((a, b) => b.updatedAt - a.updatedAt);

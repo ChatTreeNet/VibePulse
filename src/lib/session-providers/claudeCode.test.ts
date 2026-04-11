@@ -99,6 +99,7 @@ function createJsonlHead(params: {
   cwd: string;
   gitBranch?: string;
   timestamp?: string;
+  parentSessionId?: string;
 }): string {
   return [
     JSON.stringify({
@@ -110,6 +111,7 @@ function createJsonlHead(params: {
     JSON.stringify({
       cwd: params.cwd,
       sessionId: params.sessionId,
+      ...(typeof params.parentSessionId === 'string' ? { parentSessionId: params.parentSessionId } : {}),
       gitBranch: params.gitBranch ?? 'main',
       timestamp: params.timestamp ?? '2026-04-09T18:21:00.000Z',
       type: 'user',
@@ -771,6 +773,152 @@ describe('discoverClaudeCodeSessions', () => {
       sessionId: SESSION_ONE,
       waitingForUser: false,
     });
+  });
+
+  it('emits authoritative child linkage only when a local artifact declares an explicit parent session id', async () => {
+    const fixture = await createFixture();
+    const normalizeClaudeCodeSessions = getNormalizeClaudeCodeSessions();
+
+    expect(normalizeClaudeCodeSessions).toBeTypeOf('function');
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: createJsonlHead({
+        sessionId: SESSION_ONE,
+        cwd: fixture.repoDir,
+        timestamp: '2026-04-09T18:22:00.000Z',
+      }),
+    });
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_TWO,
+      jsonlContent: createJsonlHead({
+        sessionId: SESSION_TWO,
+        cwd: fixture.repoDir,
+        parentSessionId: SESSION_ONE,
+        timestamp: '2026-04-09T18:23:00.000Z',
+      }),
+    });
+
+    const discovered = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+
+    expect(discovered).toHaveLength(2);
+    expect(discovered.find((session) => session.sessionId === SESSION_ONE)).toMatchObject({
+      topology: { childSessions: 'authoritative' },
+    });
+    expect(discovered.find((session) => session.sessionId === SESSION_TWO)).toMatchObject({
+      parentSessionId: SESSION_ONE,
+      topology: { childSessions: 'authoritative' },
+    });
+
+    const normalized = normalizeClaudeCodeSessions?.(discovered) ?? [];
+
+    expect(normalized).toHaveLength(1);
+    expect(normalized[0]).toMatchObject({
+      id: `claude~${SESSION_ONE}`,
+      topology: { childSessions: 'authoritative' },
+      children: [
+        {
+          id: `claude~${SESSION_TWO}`,
+          parentID: `claude~${SESSION_ONE}`,
+          topology: { childSessions: 'authoritative' },
+        },
+      ],
+    });
+  });
+
+  it('keeps Claude discovery flat when parent linkage is malformed, missing locally, or only nested in non-authoritative transcript data', async () => {
+    const fixture = await createFixture();
+    const normalizeClaudeCodeSessions = getNormalizeClaudeCodeSessions();
+
+    expect(normalizeClaudeCodeSessions).toBeTypeOf('function');
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: createJsonlHead({
+        sessionId: SESSION_ONE,
+        cwd: fixture.repoDir,
+        timestamp: '2026-04-09T18:22:00.000Z',
+      }),
+    });
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_TWO,
+      jsonlContent: [
+        JSON.stringify({
+          cwd: fixture.repoDir,
+          sessionId: SESSION_TWO,
+          gitBranch: 'main',
+          timestamp: '2026-04-09T18:23:00.000Z',
+          type: 'user',
+          message: { role: 'user', content: 'hello' },
+          parentSessionId: 123,
+        }),
+      ].join('\n'),
+    });
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: '770e8400-e29b-41d4-a716-446655440000',
+      jsonlContent: createJsonlHead({
+        sessionId: '770e8400-e29b-41d4-a716-446655440000',
+        cwd: fixture.repoDir,
+        parentSessionId: '880e8400-e29b-41d4-a716-446655440000',
+        timestamp: '2026-04-09T18:24:00.000Z',
+      }),
+    });
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: '990e8400-e29b-41d4-a716-446655440000',
+      jsonlContent: [
+        JSON.stringify({
+          cwd: fixture.repoDir,
+          sessionId: '990e8400-e29b-41d4-a716-446655440000',
+          gitBranch: 'main',
+          timestamp: '2026-04-09T18:25:00.000Z',
+          type: 'user',
+          message: {
+            role: 'user',
+            content: {
+              parentSessionId: SESSION_ONE,
+              note: 'nested tool payload should stay non-authoritative',
+            },
+          },
+        }),
+      ].join('\n'),
+    });
+
+    const discovered = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+
+    expect(discovered).toHaveLength(4);
+    expect(discovered.every((session) => session.topology === undefined)).toBe(true);
+    expect(discovered.every((session) => session.parentSessionId === undefined)).toBe(true);
+
+    const normalized = normalizeClaudeCodeSessions?.(discovered) ?? [];
+
+    expect(normalized).toHaveLength(4);
+    expect(normalized.every((session) => session.children.length === 0)).toBe(true);
+    expect(normalized.every((session) => session.parentID === undefined)).toBe(true);
+    expect(normalized.every((session) => session.topology?.childSessions === 'flat')).toBe(true);
   });
 
   it('applies Claude archived overrides and filters deleted overrides', async () => {
