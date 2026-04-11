@@ -29,7 +29,20 @@ jobs:
       - name: Run tests
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-        run: npm run test:run -- --maxWorkers=2
+        run: |
+          npm run test:run -- --maxWorkers=1 src/lib
+          npm run test:run -- --maxWorkers=1 src/hooks
+          npm run test:run -- --maxWorkers=1 src/app/api
+          npm run test:run -- --maxWorkers=1 src/app/page.test.tsx
+          npm run test:run -- --maxWorkers=1 src/components/KanbanBoard.test.tsx
+          npm run test:run -- --maxWorkers=1 src/components/ProjectCard.test.tsx
+          npm run test:run -- --maxWorkers=1 src/components/SessionCard.test.tsx
+          npm run test:run -- --maxWorkers=1 src/components/host-config/HostManagerDialog.test.tsx
+          npm run test:run -- --maxWorkers=1 src/components/opencode-config/AgentConfigForm.test.tsx
+          npm run test:run -- --maxWorkers=1 src/components/opencode-config/GeneralSettingsForm.test.tsx
+          npm run test:run -- --maxWorkers=1 src/components/opencode-config/categories/CategoriesManager.test.tsx
+          npm run test:run -- --maxWorkers=1 src/components/opencode-config/categories/CategoryConfigForm.test.tsx
+          npm run test:run -- --maxWorkers=1 src/components/opencode-config/profiles/ProfileManager.test.tsx
 
       - name: Build
         run: npm run build

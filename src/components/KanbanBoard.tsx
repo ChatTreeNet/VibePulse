@@ -117,6 +117,23 @@ function areHostStatusesEqual(
     return true;
 }
 
+export function detectStatusTransitionSounds(
+    previous: Record<string, KanbanColumn>,
+    next: Record<string, KanbanColumn>
+): { shouldPlayReview: boolean; shouldPlayComplete: boolean } {
+    const shouldPlayReview = Object.entries(next).some(([id, currentStatus]) => {
+        const previousStatus = previous[id];
+        return !!previousStatus && previousStatus !== 'review' && currentStatus === 'review';
+    });
+
+    const shouldPlayComplete = Object.entries(next).some(([id, currentStatus]) => {
+        const previousStatus = previous[id];
+        return !!previousStatus && previousStatus !== 'idle' && currentStatus === 'idle';
+    });
+
+    return { shouldPlayReview, shouldPlayComplete };
+}
+
 function getLocalWaitingPersistenceKey(
     session: Pick<OpencodeSession, 'id' | 'sourceSessionKey' | 'hostId' | 'hostKind' | 'provider'>
 ): string | null {
@@ -533,15 +550,10 @@ export function KanbanBoard({
             return;
         }
 
-        const shouldPlayReview = Object.entries(nextCardStatus).some(([id, currentStatus]) => {
-            const previousStatus = cardStatusStateRef.current[id];
-            return !!previousStatus && previousStatus !== 'review' && currentStatus === 'review';
-        });
-
-        const shouldPlayComplete = Object.entries(nextCardStatus).some(([id, currentStatus]) => {
-            const previousStatus = cardStatusStateRef.current[id];
-            return !!previousStatus && previousStatus !== 'idle' && currentStatus === 'idle';
-        });
+        const { shouldPlayReview, shouldPlayComplete } = detectStatusTransitionSounds(
+            cardStatusStateRef.current,
+            nextCardStatus
+        );
 
         cardStatusStateRef.current = nextCardStatus;
 
