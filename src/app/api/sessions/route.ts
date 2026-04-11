@@ -23,10 +23,10 @@ import {
 } from '@/lib/sessionArchiveOverrides';
 import { composeSourceKey, parseSourceKey } from '@/lib/hostIdentity';
 import { createNodeRequestHeaders, NODE_PROTOCOL_VERSION } from '@/lib/nodeProtocol';
-import { composeProviderSourceKey } from '@/lib/session-providers/providerIds';
+import { composeProviderSourceKey, detectProviderFromRawId } from '@/lib/session-providers/providerIds';
 import { listNodeRecords, type StoredNodeRecord } from '@/lib/nodeRegistry';
 import { RUNTIME_ROLE_ENV_VAR } from '@/lib/runtimeMode';
-import type { BuiltInHostSource, RemoteHostConfig } from '@/types';
+import type { BuiltInHostSource, RemoteHostConfig, SessionProvider } from '@/types';
 
 const nodeSessionsTimeoutMs = readPositiveTimeoutEnv('VIBEPULSE_NODE_SESSIONS_TIMEOUT_MS', 6000);
 
@@ -380,9 +380,17 @@ function composeSourceKeySafely(hostId: string, sessionId: string): string | und
   }
 }
 
-function composeProviderSourceKeySafely(hostId: string, rawId: string, readOnly?: boolean): string | undefined {
+function composeProviderSourceKeySafely(
+  hostId: string,
+  rawId: string,
+  readOnly?: boolean,
+  provider?: SessionProvider
+): string | undefined {
   try {
-    return composeProviderSourceKey(hostId, rawId, { readOnly }).sourceKey;
+    return composeProviderSourceKey(hostId, rawId, {
+      readOnly,
+      ...(provider ? { provider } : {}),
+    }).sourceKey;
   } catch {
     return undefined;
   }
@@ -395,13 +403,16 @@ function addHostMetadataToChildEntry(
 ): ChildEntry | null {
   const rawSessionId = child.rawSessionId ?? toRawSessionId(child.id);
   const rawParentId = child.parentID ? toRawSessionId(child.parentID) : child.parentID;
-  const sourceSessionKey = composeProviderSourceKeySafely(source.hostId, rawSessionId, child.readOnly);
+  const inferredProvider = detectProviderFromRawId(child.id);
+  const parentProvider = parentSourceSessionKey ? detectProviderFromRawId(parentSourceSessionKey) : undefined;
+  const childProvider = inferredProvider === 'claude-code' ? inferredProvider : (parentProvider ?? inferredProvider);
+  const sourceSessionKey = composeProviderSourceKeySafely(source.hostId, rawSessionId, child.readOnly, childProvider);
   if (!sourceSessionKey) {
     return null;
   }
 
   const sourceParentKey = rawParentId
-    ? (parentSourceSessionKey ?? composeProviderSourceKeySafely(source.hostId, rawParentId) ?? undefined)
+    ? (parentSourceSessionKey ?? composeProviderSourceKeySafely(source.hostId, rawParentId, undefined, childProvider) ?? undefined)
     : undefined;
 
   return {
@@ -421,13 +432,14 @@ function addHostMetadataToChildEntry(
 function addHostMetadataToSession(session: EnrichedSession, source: SessionSource): EnrichedSession | null {
   const rawSessionId = session.rawSessionId ?? toRawSessionId(session.id);
   const rawParentId = session.parentID ? toRawSessionId(session.parentID) : session.parentID;
-  const sourceSessionKey = composeProviderSourceKeySafely(source.hostId, rawSessionId, session.readOnly);
+  const sessionProvider = detectProviderFromRawId(session.id);
+  const sourceSessionKey = composeProviderSourceKeySafely(source.hostId, rawSessionId, session.readOnly, sessionProvider);
   if (!sourceSessionKey) {
     return null;
   }
 
   const sourceParentKey = rawParentId
-    ? (composeSourceKeySafely(source.hostId, rawParentId) ?? undefined)
+    ? (composeProviderSourceKeySafely(source.hostId, rawParentId, undefined, sessionProvider) ?? undefined)
     : undefined;
   const children: ChildEntry[] = [];
   for (const child of session.children) {
