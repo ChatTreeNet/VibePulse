@@ -73,10 +73,6 @@ function HeaderActionMenu({ cards, isActionPending, onActionError, onPendingActi
     const [open, setOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
 
-    if (readOnlyMode) {
-        return null;
-    }
-
     useEffect(() => {
         if (!open) return;
         const handler = (e: MouseEvent) => {
@@ -88,8 +84,8 @@ function HeaderActionMenu({ cards, isActionPending, onActionError, onPendingActi
         return () => document.removeEventListener('mousedown', handler);
     }, [open]);
 
-    const canArchiveAny = cards.some(c => c.capabilities ? c.capabilities.archive : !c.readOnly);
-    const canDeleteAny = cards.some(c => c.capabilities ? c.capabilities.delete : !c.readOnly);
+    const canArchiveAny = !readOnlyMode && cards.some(c => c.capabilities ? c.capabilities.archive : !c.readOnly);
+    const canDeleteAny = !readOnlyMode && cards.some(c => c.capabilities ? c.capabilities.delete : !c.readOnly);
 
     if (!canArchiveAny && !canDeleteAny) return null;
 
@@ -204,8 +200,8 @@ function HeaderActionMenu({ cards, isActionPending, onActionError, onPendingActi
         await queryClient.invalidateQueries({ queryKey: ['sessions'] });
     };
 
-    const hasArchivableInBatch = cards.some(c => (c.status !== 'done') && (c.capabilities ? c.capabilities.archive : !c.readOnly));
-    const hasRestorableInBatch = cards.some(c => c.status === 'done' && (c.capabilities ? c.capabilities.archive : !c.readOnly));
+    const hasArchivableInBatch = !readOnlyMode && cards.some(c => (c.status !== 'done') && (c.capabilities ? c.capabilities.archive : !c.readOnly));
+    const hasRestorableInBatch = !readOnlyMode && cards.some(c => c.status === 'done' && (c.capabilities ? c.capabilities.archive : !c.readOnly));
 
     return (
         <div className="relative" ref={menuRef}>
@@ -264,10 +260,6 @@ function RowActionMenu({ card, isActionPending, onActionError, onPendingActionCh
     const [open, setOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
 
-    if (readOnlyMode) {
-        return null;
-    }
-
     useEffect(() => {
         if (!open) return;
         const handler = (e: MouseEvent) => {
@@ -279,8 +271,8 @@ function RowActionMenu({ card, isActionPending, onActionError, onPendingActionCh
         return () => document.removeEventListener('mousedown', handler);
     }, [open]);
 
-    const canArchive = card.capabilities ? card.capabilities.archive : !card.readOnly;
-    const canDelete = card.capabilities ? card.capabilities.delete : !card.readOnly;
+    const canArchive = !readOnlyMode && (card.capabilities ? card.capabilities.archive : !card.readOnly);
+    const canDelete = !readOnlyMode && (card.capabilities ? card.capabilities.delete : !card.readOnly);
 
     if (!canArchive && !canDelete) return null;
 
