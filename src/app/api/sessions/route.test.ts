@@ -676,6 +676,17 @@ describe('/api/sessions route source handling', () => {
                 readOnly: true,
                 time: { created: 2_100, updated: Date.now() - 900 },
               },
+              {
+                id: '770e8400-e29b-41d4-a716-446655440000',
+                parentID: '660e8400-e29b-41d4-a716-446655440000',
+                rawSessionId: '770e8400-e29b-41d4-a716-446655440000',
+                title: 'Claude Grandchild',
+                directory: '/repo/project-one',
+                realTimeStatus: 'busy',
+                waitingForUser: false,
+                readOnly: true,
+                time: { created: 2_200, updated: Date.now() - 800 },
+              },
             ],
             time: { created: 2_000, updated: Date.now() - 1_000 },
           },
@@ -701,7 +712,7 @@ describe('/api/sessions route source handling', () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
-          children: [
+          children: expect.arrayContaining([
             expect.objectContaining({
               id: 'local:claude~660e8400-e29b-41d4-a716-446655440000',
               rawSessionId: '660e8400-e29b-41d4-a716-446655440000',
@@ -712,7 +723,17 @@ describe('/api/sessions route source handling', () => {
               hostKind: 'local',
               readOnly: true,
             }),
-          ],
+            expect.objectContaining({
+              id: 'local:claude~770e8400-e29b-41d4-a716-446655440000',
+              rawSessionId: '770e8400-e29b-41d4-a716-446655440000',
+              sourceSessionKey: 'local:claude~770e8400-e29b-41d4-a716-446655440000',
+              parentID: 'local:claude~660e8400-e29b-41d4-a716-446655440000',
+              hostId: 'local',
+              hostLabel: 'Local',
+              hostKind: 'local',
+              readOnly: true,
+            }),
+          ]),
         }),
       ])
     );
@@ -802,6 +823,109 @@ describe('/api/sessions route source handling', () => {
     ]);
     expect(
       data.sessions.find((session: any) => session.id === 'local:claude~660e8400-e29b-41d4-a716-446655440000')
+    ).toBeUndefined();
+  });
+
+  it('preserves deep local authoritative Claude descendants without dropping grandchildren', async () => {
+    setupLocalSessionsMocks();
+    mockClaudeLocalProviderGetSessionsResult.mockResolvedValue({
+      payload: {
+        sessions: [
+          {
+            id: 'claude~550e8400-e29b-41d4-a716-446655440000',
+            slug: '550e8400-e29b-41d4-a716-446655440000',
+            title: 'Claude Root Parent',
+            directory: '/repo/project-one',
+            projectName: 'project-one',
+            branch: 'main',
+            provider: 'claude-code',
+            providerRawId: '550e8400-e29b-41d4-a716-446655440000',
+            rawSessionId: '550e8400-e29b-41d4-a716-446655440000',
+            realTimeStatus: 'busy',
+            waitingForUser: false,
+            readOnly: true,
+            topology: { childSessions: 'authoritative' },
+            children: [],
+            time: { created: 2_000, updated: Date.now() - 1_000 },
+          },
+          {
+            id: 'claude~660e8400-e29b-41d4-a716-446655440000',
+            slug: '660e8400-e29b-41d4-a716-446655440000',
+            title: 'Claude Intermediate Child',
+            directory: '/repo/project-one',
+            projectName: 'project-one',
+            branch: 'main',
+            parentID: 'claude~550e8400-e29b-41d4-a716-446655440000',
+            provider: 'claude-code',
+            providerRawId: '660e8400-e29b-41d4-a716-446655440000',
+            rawSessionId: '660e8400-e29b-41d4-a716-446655440000',
+            realTimeStatus: 'busy',
+            waitingForUser: false,
+            readOnly: true,
+            topology: { childSessions: 'authoritative' },
+            children: [],
+            time: { created: 2_100, updated: Date.now() - 900 },
+          },
+          {
+            id: 'claude~770e8400-e29b-41d4-a716-446655440000',
+            slug: '770e8400-e29b-41d4-a716-446655440000',
+            title: 'Claude Grandchild',
+            directory: '/repo/project-one',
+            projectName: 'project-one',
+            branch: 'main',
+            parentID: 'claude~660e8400-e29b-41d4-a716-446655440000',
+            provider: 'claude-code',
+            providerRawId: '770e8400-e29b-41d4-a716-446655440000',
+            rawSessionId: '770e8400-e29b-41d4-a716-446655440000',
+            realTimeStatus: 'idle',
+            waitingForUser: true,
+            readOnly: true,
+            topology: { childSessions: 'authoritative' },
+            children: [],
+            time: { created: 2_200, updated: Date.now() - 800 },
+          },
+        ],
+        processHints: [],
+      },
+      sourceMeta: { online: true },
+    });
+
+    const response = await POST(
+      new Request('http://localhost/api/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sources: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local' }],
+        }),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    const rootParent = data.sessions.find(
+      (session: any) => session.id === 'local:claude~550e8400-e29b-41d4-a716-446655440000'
+    );
+    const intermediateChild = data.sessions.find(
+      (session: any) => session.id === 'local:claude~660e8400-e29b-41d4-a716-446655440000'
+    );
+
+    expect(rootParent).toBeTruthy();
+    expect(intermediateChild).toMatchObject({
+      id: 'local:claude~660e8400-e29b-41d4-a716-446655440000',
+      parentID: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+      topology: { childSessions: 'authoritative' },
+      children: [
+        expect.objectContaining({
+          id: 'local:claude~770e8400-e29b-41d4-a716-446655440000',
+          parentID: 'local:claude~660e8400-e29b-41d4-a716-446655440000',
+          provider: 'claude-code',
+          topology: { childSessions: 'authoritative' },
+        }),
+      ],
+    });
+
+    expect(
+      data.sessions.find((session: any) => session.id === 'local:claude~770e8400-e29b-41d4-a716-446655440000')
     ).toBeUndefined();
   });
 

@@ -451,8 +451,20 @@ function addHostMetadataToChildEntry(
     return null;
   }
 
+  const parentSourceRawId = parentSourceSessionKey
+    ? toProviderRawSessionId(parentSourceSessionKey)
+    : undefined;
+  const shouldReuseParentSourceKey =
+    typeof rawParentId === 'string'
+    && typeof parentSourceSessionKey === 'string'
+    && parentSourceRawId === rawParentId;
+
   const sourceParentKey = rawParentId
-    ? (parentSourceSessionKey ?? composeProviderSourceKeySafely(source.hostId, rawParentId, undefined, childProvider) ?? undefined)
+    ? (
+      shouldReuseParentSourceKey
+        ? parentSourceSessionKey
+        : composeProviderSourceKeySafely(source.hostId, rawParentId, undefined, childProvider) ?? undefined
+    )
     : undefined;
 
   return {
@@ -695,6 +707,10 @@ function rebuildAggregateClaudeTopology(sessions: EnrichedSession[]): EnrichedSe
     }
 
     if (!parentSession) {
+      continue;
+    }
+
+    if (session.children.length > 0) {
       continue;
     }
 
