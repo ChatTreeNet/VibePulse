@@ -594,6 +594,11 @@ export function ProjectCard({ projectName, branch, cards, readOnly = false, host
             return;
         }
 
+        if (isRemoteProject && openEditorTargetMode === 'remote' && !canOpenEditor && openTool === 'antigravity') {
+            setActionError('Antigravity cannot open remote sessions without remote editor support. Use VS Code.');
+            return;
+        }
+
         const useRemoteSshTarget =
             isRemoteProject
             && openTool === 'vscode'

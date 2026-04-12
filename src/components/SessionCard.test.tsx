@@ -279,6 +279,46 @@ describe('SessionCard', () => {
     expect((fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>).filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
   });
 
+  it('shows actionable error when Antigravity is selected for remote fallback without openEditor support', async () => {
+    window.localStorage.setItem('vibepulse:open-tool', 'antigravity');
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+    queryClient.setQueryData(['opencode-config'], { vibepulse: { openEditorTargetMode: 'remote' } });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SessionCard card={createCard({
+          provider: 'claude-code',
+          readOnly: true,
+          capabilities: {
+            openProject: true,
+            openEditor: false,
+            archive: false,
+            delete: false,
+          },
+        })} />
+      </QueryClientProvider>
+    );
+
+    await screen.findByText('Remote Session');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /remote session/i })).not.toBeDisabled();
+    });
+    fireEvent.doubleClick(screen.getByRole('button', { name: /remote session/i }));
+
+    expect(await screen.findByText('Antigravity cannot open remote sessions without remote editor support. Use VS Code.')).toBeTruthy();
+    expect(window.location.assign).not.toHaveBeenCalled();
+    expect((fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>).filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  });
+
   it('shows an explicit loading state while a remote open request is in flight', async () => {
     const queryClient = new QueryClient({
       defaultOptions: {

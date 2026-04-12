@@ -195,6 +195,11 @@ export function SessionCard({ card }: SessionCardProps) {
         }
 
         const canOpenEditor = card.capabilities ? card.capabilities.openEditor : true;
+        if (isRemoteCard && openEditorTargetMode === 'remote' && !canOpenEditor && openTool === 'antigravity') {
+            setActionError('Antigravity cannot open remote sessions without remote editor support. Use VS Code.');
+            return;
+        }
+
         const useRemoteSshTarget =
             isRemoteCard
             && openTool === 'vscode'

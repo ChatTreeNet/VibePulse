@@ -199,6 +199,51 @@ describe('ProjectCard', () => {
         expect((fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>).filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
     });
 
+    it('shows actionable error when Antigravity is selected for remote fallback without openEditor support', async () => {
+        window.localStorage.setItem('vibepulse:open-tool', 'antigravity');
+        const remoteCard: KanbanCard = {
+            ...mockCard,
+            id: 'node-1:123',
+            hostId: 'node-1',
+            hostLabel: 'Node 1',
+            hostKind: 'remote',
+            hostBaseUrl: 'https://node-1.test',
+            provider: 'claude-code',
+            readOnly: true,
+            capabilities: {
+                openProject: true,
+                openEditor: false,
+                archive: false,
+                delete: false,
+            },
+        };
+        const queryClient = createQueryClient();
+        queryClient.setQueryData(['opencode-config'], { vibepulse: { openEditorTargetMode: 'remote' } });
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+            return new Response(JSON.stringify({ success: true }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        });
+        Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+
+        render(
+            <QueryClientProvider client={queryClient}>
+                <ProjectCard projectName="TestProject" cards={[remoteCard]} />
+            </QueryClientProvider>
+        );
+
+        const { fireEvent } = TestingLibraryReact;
+        await TestingLibraryReact.waitFor(() => {
+            expect(screen.getByTitle('Open project')).not.toBeDisabled();
+        });
+        fireEvent.click(screen.getByTitle('Open project'));
+
+        expect(await TestingLibraryReact.screen.findByText('Antigravity cannot open remote sessions without remote editor support. Use VS Code.')).toBeTruthy();
+        expect(window.location.assign).not.toHaveBeenCalled();
+        expect((fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>).filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+    });
+
     it('shows an explicit loading state while a remote project open request is in flight', async () => {
         const remoteCard: KanbanCard = {
             ...mockCard,
