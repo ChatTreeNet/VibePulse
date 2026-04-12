@@ -1105,6 +1105,77 @@ describe('discoverClaudeCodeSessions', () => {
     ).toBeUndefined();
   });
 
+  it('cascades parent deleted overrides to scoped sidechain sessions', async () => {
+    const fixture = await createFixture();
+    const overridesModule = await import('@/lib/claudeSessionOverrides');
+    const mockList = vi.mocked(overridesModule.listClaudeSessionOverrides);
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: createJsonlHead({
+        sessionId: SESSION_ONE,
+        cwd: fixture.repoDir,
+        timestamp: '2026-04-09T18:22:00.000Z',
+      }),
+    });
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_TWO,
+      jsonlContent: createJsonlHead({
+        sessionId: SESSION_TWO,
+        cwd: fixture.repoDir,
+        timestamp: '2026-04-09T18:24:00.000Z',
+      }),
+    });
+
+    await writeSubagentArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      parentSessionId: SESSION_ONE,
+      agentId: 'cascade-a',
+      timestamp: new Date().toISOString(),
+    });
+
+    await writeSubagentArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      parentSessionId: SESSION_TWO,
+      agentId: 'cascade-b',
+      timestamp: new Date().toISOString(),
+    });
+
+    mockList.mockResolvedValueOnce([
+      {
+        sessionId: SESSION_ONE,
+        deletedAt: 123,
+        updatedAt: 123,
+      },
+    ]);
+
+    const discovered = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+
+    expect(discovered.find((session) => session.sessionId === SESSION_ONE)).toBeUndefined();
+    expect(discovered.find((session) => session.sessionId === `${SESSION_ONE}__agent-cascade-a`)).toBeUndefined();
+
+    expect(discovered).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sessionId: SESSION_TWO }),
+        expect.objectContaining({
+          sessionId: `${SESSION_TWO}__agent-cascade-b`,
+          parentSessionId: SESSION_TWO,
+        }),
+      ])
+    );
+  });
+
   it('keeps Claude discovery flat when parent linkage is malformed, missing locally, or only nested in non-authoritative transcript data', async () => {
     const fixture = await createFixture();
     const normalizeClaudeCodeSessions = getNormalizeClaudeCodeSessions();

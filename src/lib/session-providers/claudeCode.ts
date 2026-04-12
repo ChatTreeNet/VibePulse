@@ -843,8 +843,14 @@ export async function discoverClaudeCodeSessions(
         ? toScopedSidechainSessionId(sidechainParentSessionId, artifactSessionId)
         : artifactSessionId;
 
-      const override = overrideMap.get(sessionId);
-      if (typeof override?.deletedAt === 'number') {
+      const directOverride = overrideMap.get(sessionId);
+      const parentDeletedOverride = sidechainParentSessionId
+        ? overrideMap.get(sidechainParentSessionId)
+        : undefined;
+      const deletedOverride = typeof directOverride?.deletedAt === 'number'
+        ? directOverride
+        : parentDeletedOverride;
+      if (typeof deletedOverride?.deletedAt === 'number') {
         continue;
       }
 
@@ -852,7 +858,7 @@ export async function discoverClaudeCodeSessions(
       const updatedAt = Math.max(artifactStat.mtimeMs, headMetadata.timestampMs ?? 0);
       const artifactAgeMs = now - updatedAt;
       const hasVeryRecentArtifactActivity = artifactAgeMs <= DEFAULT_BUSY_ACTIVITY_WINDOW_MS;
-      const waitingSuppressedByRestore = typeof override?.restoredAt === 'number' && override.restoredAt >= updatedAt;
+      const waitingSuppressedByRestore = typeof directOverride?.restoredAt === 'number' && directOverride.restoredAt >= updatedAt;
       const waitingForUser = waitingSuppressedByRestore ? false : await detectWaitingForUserFromTranscript(artifactPath, updatedAt);
       const isRunning =
         !waitingForUser
@@ -876,7 +882,7 @@ export async function discoverClaudeCodeSessions(
         pid: scopedMetadata?.runningPid,
         isRunning,
         waitingForUser,
-        ...(typeof override?.archivedAt === 'number' ? { archivedAt: override.archivedAt } : {}),
+        ...(typeof directOverride?.archivedAt === 'number' ? { archivedAt: directOverride.archivedAt } : {}),
       });
 
       if (headMetadata.explicitParentSessionId) {
