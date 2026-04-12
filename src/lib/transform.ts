@@ -41,12 +41,45 @@ function isRecentlyUpdated(updatedAt: number | undefined, now: number): boolean 
     return typeof updatedAt === 'number' && updatedAt > 0 && now - updatedAt <= RECENT_ACTIVITY_FALLBACK_MS;
 }
 
-function deriveChildDebugReason(child: EnrichedChild | undefined, now: number): SessionDebugReason | undefined {
+function getChildProvider(parent: EnrichedSession, child: EnrichedChild | undefined): SessionProvider {
+    return child?.provider ?? parent.provider ?? DEFAULT_PROVIDER_CONTEXT.provider;
+}
+
+function shouldMarkChildWaitingForUser(parent: EnrichedSession, child: EnrichedChild | undefined): boolean {
+    if (!child) return false;
+
+    const childStatus = child.realTimeStatus || 'idle';
+    const childProvider = getChildProvider(parent, child);
+
+    return (
+        childStatus === 'retry' ||
+        (childProvider === 'claude-code'
+            ? !!child.waitingForUser
+            : childStatus === 'busy' && !!child.waitingForUser)
+    );
+}
+
+function isFreshWaitingChildBlocker(parent: EnrichedSession, child: EnrichedChild | undefined, now: number): boolean {
+    if (!child) return false;
+
+    if (!shouldMarkChildWaitingForUser(parent, child)) {
+        return false;
+    }
+
+    const childUpdated = getChildActivityTimestamp(child);
+    return childUpdated !== undefined && (now - childUpdated) < CHILD_BLOCKER_STALENESS_MS;
+}
+
+function deriveChildDebugReason(
+    parent: EnrichedSession,
+    child: EnrichedChild | undefined,
+    now: number
+): SessionDebugReason | undefined {
     if (!child) return undefined;
     if (child.debugReason) return child.debugReason;
 
     const childStatus = child.realTimeStatus || 'idle';
-    if (child.waitingForUser || childStatus === 'retry') {
+    if (shouldMarkChildWaitingForUser(parent, child)) {
         return 'waiting_for_user';
     }
 
@@ -79,8 +112,8 @@ function deriveSessionDebugReason({
 
     if (waitingForUser) {
         return (
-            deriveChildDebugReason(firstWaitingChild, now) ||
-            deriveChildDebugReason(firstActiveChild, now) ||
+            deriveChildDebugReason(session, firstWaitingChild, now) ||
+            deriveChildDebugReason(session, firstActiveChild, now) ||
             'waiting_for_user'
         );
     }
@@ -111,36 +144,29 @@ export function transformSession(session: EnrichedSession): KanbanCard {
     const now = Date.now();
 
     const realTimeStatus = session.realTimeStatus || 'idle';
-    const hasActiveChildren = rollupChildren.some((child) => {
+    const hasBusyChildren = rollupChildren.some((child) => {
         const childStatus = child.realTimeStatus || 'idle';
         return childStatus === 'busy' || childStatus === 'retry';
     });
+    const hasWaitingChildren = rollupChildren.some((child) => isFreshWaitingChildBlocker(session, child, now));
+    const hasActiveChildren = hasBusyChildren || hasWaitingChildren;
     const effectiveStatus =
         realTimeStatus === 'retry'
             ? 'retry'
             : (realTimeStatus === 'busy' || hasActiveChildren)
                 ? 'busy'
                 : 'idle';
-    const hasWaitingChildren = rollupChildren.some((child) => {
-        const childStatus = child.realTimeStatus || 'idle';
-        const isBlocker = childStatus === 'retry' || (childStatus !== 'idle' && !!child.waitingForUser);
-        if (!isBlocker) return false;
-        // Only consider fresh blockers (within staleness window)
-        const childUpdated = getChildActivityTimestamp(child);
-        return childUpdated !== undefined && (now - childUpdated) < CHILD_BLOCKER_STALENESS_MS;
-    });
     const parentWaiting = !!session.waitingForUser;
     const waitingForUser =
         effectiveStatus === 'retry' ||
         parentWaiting ||
-        (effectiveStatus === 'busy' && hasWaitingChildren);
+        hasWaitingChildren;
     const firstActiveChild = rollupChildren.find((child) => {
         const childStatus = child.realTimeStatus || 'idle';
         return childStatus === 'busy' || childStatus === 'retry';
     });
     const firstWaitingChild = rollupChildren.find((child) => {
-        const childStatus = child.realTimeStatus || 'idle';
-        return childStatus === 'retry' || (childStatus !== 'idle' && !!child.waitingForUser);
+        return isFreshWaitingChildBlocker(session, child, now);
     });
     const debugReason = deriveSessionDebugReason({
         session,
@@ -192,18 +218,21 @@ export function transformSession(session: EnrichedSession): KanbanCard {
           capabilities: session.capabilities ?? providerDefaults.capabilities,
           provider: session.provider ?? providerDefaults.provider,
           providerRawId: session.providerRawId ?? session.rawSessionId,
-         children: children.map(c => ({
-             id: c.id,
-             title: c.title,
-             realTimeStatus: c.realTimeStatus || 'idle',
-             waitingForUser:
-                 (c.realTimeStatus || 'idle') === 'retry' ||
-                 ((c.realTimeStatus || 'idle') === 'busy' && !!c.waitingForUser),
-              debugReason: deriveChildDebugReason(c, now),
-             createdAt: c.time?.created || 0,
-             updatedAt: c.time?.updated || 0,
-         })),
-     };
+         children: children.map((c) => {
+             const childStatus = c.realTimeStatus || 'idle';
+             const childWaitingForUser = shouldMarkChildWaitingForUser(session, c);
+
+             return {
+                 id: c.id,
+                 title: c.title,
+                 realTimeStatus: childStatus,
+                 waitingForUser: childWaitingForUser,
+                 debugReason: deriveChildDebugReason(session, c, now),
+                 createdAt: c.time?.created || 0,
+                 updatedAt: c.time?.updated || 0,
+             };
+         }),
+      };
 }
 
 function extractAgents(slug?: string): string[] {

@@ -234,13 +234,13 @@ describe('transformSession child roll-up semantics', () => {
     expect(card.debugReason).toBe('child_recent_activity');
   });
 
-  it('pulls a Claude parent into review when a verified Claude child is waiting for user', () => {
+  it('pulls a Claude parent into review when a verified Claude child is idle but waiting for user', () => {
     const now = Date.now();
     const child = makeSession({
       id: 'claude-child-2',
       provider: 'claude-code',
       parentID: 'claude-parent-2',
-      realTimeStatus: 'busy',
+      realTimeStatus: 'idle',
       waitingForUser: true,
       time: {
         created: now - 12_000,
@@ -335,5 +335,34 @@ describe('transformSession child roll-up semantics', () => {
     expect(card.status).toBe('busy');
     expect(card.opencodeStatus).toBe('busy');
     expect(card.debugReason).toBe('child_recent_activity');
+  });
+
+  it('does not promote an OpenCode parent when a child is idle but waiting', () => {
+    const now = Date.now();
+    const child = makeSession({
+      id: 'opencode-child-idle-waiting',
+      realTimeStatus: 'idle',
+      waitingForUser: true,
+      time: {
+        created: now - 10_000,
+        updated: now - 2_000,
+      },
+    });
+
+    const parent = makeSession({
+      id: 'opencode-parent-idle-waiting',
+      realTimeStatus: 'idle',
+      children: [child],
+    });
+
+    const card = transformSession(parent);
+    const firstChild = card.children?.[0];
+
+    expect(card.status).toBe('idle');
+    expect(card.opencodeStatus).toBe('idle');
+    expect(card.waitingForUser).toBe(false);
+    expect(card.debugReason).toBeUndefined();
+    expect(firstChild?.waitingForUser).toBe(false);
+    expect(firstChild?.debugReason).toBeUndefined();
   });
 });
