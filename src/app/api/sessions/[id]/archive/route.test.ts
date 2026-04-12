@@ -137,12 +137,52 @@ describe('/api/sessions/[id]/archive', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it('archives scoped Claude sidechain sessions through local override storage', async () => {
+    const scopedSessionId = '550e8400-e29b-41d4-a716-446655440000__agent-a123';
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(new Request(`http://localhost/api/sessions/local:${scopedSessionId}/archive`, { method: 'POST' }), {
+      params: Promise.resolve({ id: `local:${scopedSessionId}` }),
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({ success: true });
+    expect(mockMarkClaudeSessionArchived).toHaveBeenCalledWith(scopedSessionId);
+    expect(mockDiscoverPortsWithMeta).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('rejects remote Claude archive requests before local override or node execution', async () => {
     const mockFetch = vi.fn();
     vi.stubGlobal('fetch', mockFetch);
 
     const response = await POST(new Request('http://localhost/api/sessions/node-1:claude~550e8400-e29b-41d4-a716-446655440000/archive', { method: 'POST' }), {
       params: Promise.resolve({ id: 'node-1:claude~550e8400-e29b-41d4-a716-446655440000' }),
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(data).toEqual({
+      error: 'Session action not supported by provider',
+      reason: 'provider_capability_unsupported',
+      provider: 'claude-code',
+      capability: 'archive',
+    });
+    expect(mockMarkClaudeSessionArchived).not.toHaveBeenCalled();
+    expect(mockListNodeRecords).not.toHaveBeenCalled();
+    expect(mockDiscoverPortsWithMeta).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects remote scoped Claude sidechain archive requests before node execution', async () => {
+    const scopedSessionId = '550e8400-e29b-41d4-a716-446655440000__agent-a123';
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(new Request(`http://localhost/api/sessions/node-1:${scopedSessionId}/archive`, { method: 'POST' }), {
+      params: Promise.resolve({ id: `node-1:${scopedSessionId}` }),
     });
     const data = await response.json();
 

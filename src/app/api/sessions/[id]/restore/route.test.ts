@@ -54,12 +54,51 @@ describe('/api/sessions/[id]/restore', () => {
     expect(mockDiscoverOpencodePortsWithMeta).not.toHaveBeenCalled();
   });
 
+  it('restores scoped Claude sidechain sessions through local override storage', async () => {
+    const scopedSessionId = '550e8400-e29b-41d4-a716-446655440000__agent-a123';
+    const response = await POST(new Request(`http://localhost/api/sessions/local:${scopedSessionId}/restore`, { method: 'POST' }), {
+      params: Promise.resolve({ id: `local:${scopedSessionId}` }),
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({ success: true });
+    expect(mockMarkSessionForceUnarchived).toHaveBeenCalledWith(scopedSessionId);
+    expect(mockClearSessionStickyStatusBlocked).toHaveBeenCalledWith(scopedSessionId);
+    expect(mockClearClaudeSessionArchived).toHaveBeenCalledWith(scopedSessionId);
+    expect(mockListNodeRecords).not.toHaveBeenCalled();
+    expect(mockDiscoverOpencodePortsWithMeta).not.toHaveBeenCalled();
+  });
+
   it('rejects remote Claude restore requests before local override or node execution', async () => {
     const mockFetch = vi.fn();
     vi.stubGlobal('fetch', mockFetch);
 
     const response = await POST(new Request('http://localhost/api/sessions/node-1:claude~550e8400-e29b-41d4-a716-446655440000/restore', { method: 'POST' }), {
       params: Promise.resolve({ id: 'node-1:claude~550e8400-e29b-41d4-a716-446655440000' }),
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(data).toEqual({
+      error: 'Session action not supported by provider',
+      reason: 'provider_capability_unsupported',
+      provider: 'claude-code',
+      capability: 'archive',
+    });
+    expect(mockClearClaudeSessionArchived).not.toHaveBeenCalled();
+    expect(mockListNodeRecords).not.toHaveBeenCalled();
+    expect(mockDiscoverOpencodePortsWithMeta).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects remote scoped Claude sidechain restore requests before node execution', async () => {
+    const scopedSessionId = '550e8400-e29b-41d4-a716-446655440000__agent-a123';
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(new Request(`http://localhost/api/sessions/node-1:${scopedSessionId}/restore`, { method: 'POST' }), {
+      params: Promise.resolve({ id: `node-1:${scopedSessionId}` }),
     });
     const data = await response.json();
 

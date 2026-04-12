@@ -59,6 +59,21 @@ function isReservedClaudeNamespacedUuid(rawId: string): boolean {
   return isClaudeUuid(rawId.slice(CLAUDE_NAMESPACE_PREFIX.length));
 }
 
+function isScopedClaudeSidechainSessionId(rawId: string): boolean {
+  const separatorIndex = rawId.indexOf('__');
+  if (separatorIndex <= 0) {
+    return false;
+  }
+
+  const parentSessionId = rawId.slice(0, separatorIndex);
+  const sidechainSessionId = rawId.slice(separatorIndex + 2);
+  if (!sidechainSessionId.startsWith('agent-')) {
+    return false;
+  }
+
+  return isClaudeUuid(parentSessionId) || isReservedClaudeNamespacedUuid(parentSessionId);
+}
+
 export function isClaudeUuid(rawId: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
 }
@@ -67,7 +82,7 @@ export function detectProviderFromRawId(rawId: string): SessionProvider {
   const sourceSessionId = getSessionIdFromSourceKey(rawId);
   const candidate = sourceSessionId ?? rawId;
 
-  if (isReservedClaudeNamespacedUuid(candidate)) {
+  if (isReservedClaudeNamespacedUuid(candidate) || isScopedClaudeSidechainSessionId(candidate)) {
     return 'claude-code';
   }
 

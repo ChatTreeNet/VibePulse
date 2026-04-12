@@ -65,6 +65,18 @@ describe('detectProviderFromRawId', () => {
     expect(detectProviderFromRawId('local:claude~550E8400-E29B-41D4-A716-446655440000')).toBe('claude-code');
   });
 
+  it('detects scoped Claude sidechain ids as claude-code', () => {
+    expect(detectProviderFromRawId('550e8400-e29b-41d4-a716-446655440000__agent-a123')).toBe('claude-code');
+  });
+
+  it('detects host-prefixed scoped Claude sidechain ids as claude-code', () => {
+    expect(detectProviderFromRawId('local:550e8400-e29b-41d4-a716-446655440000__agent-a123')).toBe('claude-code');
+  });
+
+  it('does not treat non-uuid scoped agent ids as claude-code', () => {
+    expect(detectProviderFromRawId('session123__agent-a123')).toBe('opencode');
+  });
+
   it('defaults to opencode for plain UUID-like ids without claude namespace', () => {
     expect(detectProviderFromRawId('550e8400-e29b-41d4-a716-446655440000')).toBe('opencode');
   });

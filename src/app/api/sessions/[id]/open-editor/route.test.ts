@@ -240,4 +240,53 @@ describe('/api/sessions/[id]/open-editor', () => {
     expect(mockListNodeRecords).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  it('rejects unsupported scoped Claude sidechain open-editor requests before remote node execution', async () => {
+    const scopedSessionId = '550e8400-e29b-41d4-a716-446655440000__agent-a123';
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(
+      new Request(`http://localhost/api/sessions/node-1:${scopedSessionId}/open-editor`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: 'vscode' }),
+      }),
+      { params: Promise.resolve({ id: `node-1:${scopedSessionId}` }) }
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(data).toEqual({
+      error: 'Session action not supported by provider',
+      reason: 'provider_capability_unsupported',
+      provider: 'claude-code',
+      capability: 'openEditor',
+    });
+    expect(mockListNodeRecords).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects local scoped Claude sidechain open-editor requests as unsupported capability', async () => {
+    const scopedSessionId = '550e8400-e29b-41d4-a716-446655440000__agent-a123';
+
+    const response = await POST(
+      new Request(`http://localhost/api/sessions/local:${scopedSessionId}/open-editor`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: 'vscode' }),
+      }),
+      { params: Promise.resolve({ id: `local:${scopedSessionId}` }) }
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(data).toEqual({
+      error: 'Session action not supported by provider',
+      reason: 'provider_capability_unsupported',
+      provider: 'claude-code',
+      capability: 'openEditor',
+    });
+    expect(mockListNodeRecords).not.toHaveBeenCalled();
+  });
 });
