@@ -929,6 +929,108 @@ describe('/api/sessions route source handling', () => {
     ).toBeUndefined();
   });
 
+  it('rebinds descendants to a visible ancestor when explicit parent was already absorbed', async () => {
+    setupLocalSessionsMocks();
+    mockClaudeLocalProviderGetSessionsResult.mockResolvedValue({
+      payload: {
+        sessions: [
+          {
+            id: 'claude~550e8400-e29b-41d4-a716-446655440000',
+            slug: '550e8400-e29b-41d4-a716-446655440000',
+            title: 'Claude Root Parent',
+            directory: '/repo/project-one',
+            projectName: 'project-one',
+            branch: 'main',
+            provider: 'claude-code',
+            providerRawId: '550e8400-e29b-41d4-a716-446655440000',
+            rawSessionId: '550e8400-e29b-41d4-a716-446655440000',
+            realTimeStatus: 'busy',
+            waitingForUser: false,
+            readOnly: true,
+            topology: { childSessions: 'authoritative' },
+            children: [],
+            time: { created: 2_000, updated: Date.now() - 1_000 },
+          },
+          {
+            id: 'claude~660e8400-e29b-41d4-a716-446655440000',
+            slug: '660e8400-e29b-41d4-a716-446655440000',
+            title: 'Claude Intermediate Child',
+            directory: '/repo/project-one',
+            projectName: 'project-one',
+            branch: 'main',
+            parentID: 'claude~550e8400-e29b-41d4-a716-446655440000',
+            provider: 'claude-code',
+            providerRawId: '660e8400-e29b-41d4-a716-446655440000',
+            rawSessionId: '660e8400-e29b-41d4-a716-446655440000',
+            realTimeStatus: 'busy',
+            waitingForUser: false,
+            readOnly: true,
+            topology: { childSessions: 'authoritative' },
+            children: [],
+            time: { created: 3_000, updated: Date.now() - 500 },
+          },
+          {
+            id: 'claude~770e8400-e29b-41d4-a716-446655440000',
+            slug: '770e8400-e29b-41d4-a716-446655440000',
+            title: 'Claude Descendant with Older Timestamp',
+            directory: '/repo/project-one',
+            projectName: 'project-one',
+            branch: 'main',
+            parentID: 'claude~660e8400-e29b-41d4-a716-446655440000',
+            provider: 'claude-code',
+            providerRawId: '770e8400-e29b-41d4-a716-446655440000',
+            rawSessionId: '770e8400-e29b-41d4-a716-446655440000',
+            realTimeStatus: 'idle',
+            waitingForUser: true,
+            readOnly: true,
+            topology: { childSessions: 'authoritative' },
+            children: [],
+            time: { created: 1_000, updated: Date.now() - 2_000 },
+          },
+        ],
+        processHints: [],
+      },
+      sourceMeta: { online: true },
+    });
+
+    const response = await POST(
+      new Request('http://localhost/api/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sources: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local' }],
+        }),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    const rootParent = data.sessions.find(
+      (session: any) => session.id === 'local:claude~550e8400-e29b-41d4-a716-446655440000'
+    );
+
+    expect(rootParent).toMatchObject({
+      id: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+      children: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'local:claude~660e8400-e29b-41d4-a716-446655440000',
+          parentID: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+        }),
+        expect.objectContaining({
+          id: 'local:claude~770e8400-e29b-41d4-a716-446655440000',
+          parentID: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+        }),
+      ]),
+    });
+
+    expect(
+      data.sessions.find((session: any) => session.id === 'local:claude~660e8400-e29b-41d4-a716-446655440000')
+    ).toBeUndefined();
+    expect(
+      data.sessions.find((session: any) => session.id === 'local:claude~770e8400-e29b-41d4-a716-446655440000')
+    ).toBeUndefined();
+  });
+
   it('rebuilds remote Claude child topology without linking unrelated local or cross-provider sessions', async () => {
     setupLocalSessionsMocks();
     mockClaudeLocalProviderGetSessionsResult.mockResolvedValue({

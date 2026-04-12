@@ -667,6 +667,34 @@ function inferClaudeParentSession(
 function rebuildAggregateClaudeTopology(sessions: EnrichedSession[]): EnrichedSession[] {
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
   const absorbedChildIds = new Set<string>();
+  const resolveVisibleClaudeParent = (
+    childSession: EnrichedSession,
+    parentSession: EnrichedSession
+  ): EnrichedSession | undefined => {
+    let cursor: EnrichedSession | undefined = parentSession;
+    const visited = new Set<string>([childSession.id]);
+
+    while (cursor) {
+      if (visited.has(cursor.id)) {
+        return undefined;
+      }
+
+      visited.add(cursor.id);
+
+      if (!absorbedChildIds.has(cursor.id)) {
+        return cursor;
+      }
+
+      if (typeof cursor.parentID !== 'string') {
+        return undefined;
+      }
+
+      cursor = sessionsById.get(cursor.parentID);
+    }
+
+    return undefined;
+  };
+
   const orderedSessions = [...sessions].sort((a, b) => {
     const createdDiff = (getCreatedAt(b) ?? 0) - (getCreatedAt(a) ?? 0);
     if (createdDiff !== 0) {
@@ -688,14 +716,24 @@ function rebuildAggregateClaudeTopology(sessions: EnrichedSession[]): EnrichedSe
       if (explicitParentSession) {
         if (
           explicitParentSession === session
-          || absorbedChildIds.has(explicitParentSession.id)
           || !hasClaudeProvider(explicitParentSession)
           || !hasSameHostIdentity(explicitParentSession, session)
         ) {
           continue;
         }
 
-        parentSession = explicitParentSession;
+        const visibleParentSession = resolveVisibleClaudeParent(session, explicitParentSession);
+        if (!visibleParentSession) {
+          if (absorbedChildIds.has(explicitParentSession.id)) {
+            session.parentID = undefined;
+          }
+          continue;
+        }
+
+        parentSession = visibleParentSession;
+        if (session.parentID !== visibleParentSession.id) {
+          session.parentID = visibleParentSession.id;
+        }
       }
     }
 
