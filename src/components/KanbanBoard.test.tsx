@@ -81,6 +81,21 @@ function renderBoard(filterDays = 7, hostSources = createHostSourcesState(), isN
     return render(<KanbanBoard filterDays={filterDays} hostSources={hostSources} isNodeMode={isNodeMode} />);
 }
 
+function getSessionsQueryOptions(): { refetchInterval?: (query: { state: { fetchStatus: string; data?: unknown } }) => number | false } | undefined {
+    const useQueryMock = useQuery as unknown as {
+        mock: {
+            calls: Array<[Record<string, unknown>]>;
+        };
+    };
+
+    const matchedCall = useQueryMock.mock.calls.find(([options]) => (
+        Array.isArray(options.queryKey)
+        && (options.queryKey as unknown[])[0] === 'sessions'
+    ));
+
+    return matchedCall?.[0] as { refetchInterval?: (query: { state: { fetchStatus: string; data?: unknown } }) => number | false } | undefined;
+}
+
 describe('KanbanBoard Host Filter', () => {
     let hostSourcesState: HostSourcesState;
 
@@ -743,6 +758,179 @@ describe('KanbanBoard Fetch Behavior and Error UX', () => {
             expect(screen.getByText('Intermediate Top-level Session')).toBeTruthy();
             expect(screen.getByText('Grandchild Session')).toBeTruthy();
         });
+    });
+
+    it('uses faster polling while Claude waiting sessions are present', () => {
+        mockUseQuery.mockImplementation((opts: unknown) => {
+            const options = opts as { queryKey: string[] };
+            if (options.queryKey[0] === 'opencode-config') {
+                return {
+                    data: { vibepulse: { sessionsRefreshIntervalMs: 5000 } },
+                    isLoading: false,
+                };
+            }
+
+            if (options.queryKey[0] === 'sessions') {
+                return {
+                    data: {
+                        sessions: [],
+                        processHints: [],
+                        hostStatuses: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+                    },
+                    isLoading: false,
+                    error: null,
+                    dataUpdatedAt: Date.now(),
+                    refetch: vi.fn(),
+                    isFetching: false,
+                    failureCount: 0,
+                };
+            }
+
+            return {
+                data: undefined,
+                isLoading: false,
+            };
+        });
+
+        renderBoard(7, hostSourcesState);
+
+        const queryOptions = getSessionsQueryOptions();
+        const refetchInterval = queryOptions?.refetchInterval;
+
+        expect(refetchInterval).toBeTypeOf('function');
+        expect(refetchInterval?.({
+            state: {
+                fetchStatus: 'idle',
+                data: {
+                    sessions: [{ id: 'local:claude~abc', provider: 'claude-code', waitingForUser: true }],
+                },
+            },
+        })).toBe(1500);
+        expect(refetchInterval?.({
+            state: {
+                fetchStatus: 'idle',
+                data: {
+                    sessions: [{ id: 'local:abc', provider: 'opencode', waitingForUser: true }],
+                },
+            },
+        })).toBe(5000);
+        expect(refetchInterval?.({
+            state: {
+                fetchStatus: 'fetching',
+                data: {
+                    sessions: [{ id: 'local:claude~abc', provider: 'claude-code', waitingForUser: true }],
+                },
+            },
+        })).toBe(false);
+    });
+
+    it('uses faster polling when Claude waiting appears in nested child sessions', () => {
+        mockUseQuery.mockImplementation((opts: unknown) => {
+            const options = opts as { queryKey: string[] };
+            if (options.queryKey[0] === 'opencode-config') {
+                return {
+                    data: { vibepulse: { sessionsRefreshIntervalMs: 5000 } },
+                    isLoading: false,
+                };
+            }
+
+            if (options.queryKey[0] === 'sessions') {
+                return {
+                    data: {
+                        sessions: [],
+                        processHints: [],
+                        hostStatuses: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+                    },
+                    isLoading: false,
+                    error: null,
+                    dataUpdatedAt: Date.now(),
+                    refetch: vi.fn(),
+                    isFetching: false,
+                    failureCount: 0,
+                };
+            }
+
+            return {
+                data: undefined,
+                isLoading: false,
+            };
+        });
+
+        renderBoard(7, hostSourcesState);
+
+        const queryOptions = getSessionsQueryOptions();
+        const refetchInterval = queryOptions?.refetchInterval;
+
+        expect(refetchInterval).toBeTypeOf('function');
+        expect(refetchInterval?.({
+            state: {
+                fetchStatus: 'idle',
+                data: {
+                    sessions: [
+                        {
+                            id: 'local:parent',
+                            provider: 'opencode',
+                            waitingForUser: false,
+                            children: [
+                                {
+                                    id: 'local:claude~child',
+                                    provider: 'claude-code',
+                                    waitingForUser: true,
+                                },
+                            ],
+                        },
+                    ],
+                },
+            },
+        })).toBe(1500);
+    });
+
+    it('keeps configured fast polling when it is already faster than the Claude waiting boost', () => {
+        mockUseQuery.mockImplementation((opts: unknown) => {
+            const options = opts as { queryKey: string[] };
+            if (options.queryKey[0] === 'opencode-config') {
+                return {
+                    data: { vibepulse: { sessionsRefreshIntervalMs: 1000 } },
+                    isLoading: false,
+                };
+            }
+
+            if (options.queryKey[0] === 'sessions') {
+                return {
+                    data: {
+                        sessions: [],
+                        processHints: [],
+                        hostStatuses: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+                    },
+                    isLoading: false,
+                    error: null,
+                    dataUpdatedAt: Date.now(),
+                    refetch: vi.fn(),
+                    isFetching: false,
+                    failureCount: 0,
+                };
+            }
+
+            return {
+                data: undefined,
+                isLoading: false,
+            };
+        });
+
+        renderBoard(7, hostSourcesState);
+
+        const queryOptions = getSessionsQueryOptions();
+        const refetchInterval = queryOptions?.refetchInterval;
+
+        expect(refetchInterval).toBeTypeOf('function');
+        expect(refetchInterval?.({
+            state: {
+                fetchStatus: 'idle',
+                data: {
+                    sessions: [{ id: 'local:claude~abc', provider: 'claude-code', waitingForUser: true }],
+                },
+            },
+        })).toBe(1000);
     });
 
     it('does not repeatedly emit unchanged host statuses but emits when status values change', () => {

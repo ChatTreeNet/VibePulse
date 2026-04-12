@@ -19,6 +19,7 @@ const CARD_ANIMATION_DURATION_MS = 250;
 const SESSIONS_ERROR_DISPLAY_THRESHOLD = 3;
 const DEGRADED_MERGE_MAX_SNAPSHOT_AGE_MS = 10 * 60 * 1000;
 const WAITING_PERSIST_MAX_AGE_MS = 10 * 60 * 1000;
+const CLAUDE_WAITING_FAST_REFRESH_INTERVAL_MS = 1500;
 
 const LOCAL_SOURCE = {
     hostId: 'local',
@@ -171,6 +172,45 @@ function getCanonicalSessionIdentity(
     return session.id;
 }
 
+function hasWaitingClaudeSession(data: unknown): boolean {
+    if (!data || typeof data !== 'object') {
+        return false;
+    }
+
+    const maybeSessions = (data as { sessions?: unknown }).sessions;
+    if (!Array.isArray(maybeSessions) || maybeSessions.length === 0) {
+        return false;
+    }
+
+    const queue: Array<{ provider?: string; waitingForUser?: boolean; children?: unknown[] }> = [];
+    for (const session of maybeSessions) {
+        if (session && typeof session === 'object') {
+            queue.push(session as { provider?: string; waitingForUser?: boolean; children?: unknown[] });
+        }
+    }
+
+    while (queue.length > 0) {
+        const current = queue.shift();
+        if (!current) {
+            continue;
+        }
+
+        if (current.provider === 'claude-code' && current.waitingForUser === true) {
+            return true;
+        }
+
+        if (Array.isArray(current.children) && current.children.length > 0) {
+            for (const child of current.children) {
+                if (child && typeof child === 'object') {
+                    queue.push(child as { provider?: string; waitingForUser?: boolean; children?: unknown[] });
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
 export function KanbanBoard({
     filterDays,
     onProcessHintsChange,
@@ -266,7 +306,17 @@ export function KanbanBoard({
                 throw fetchError;
             }
         },
-        refetchInterval: (query) => query.state.fetchStatus === 'fetching' ? false : refreshIntervalMs,
+        refetchInterval: (query) => {
+            if (query.state.fetchStatus === 'fetching') {
+                return false;
+            }
+
+            if (hasWaitingClaudeSession(query.state.data)) {
+                return Math.min(refreshIntervalMs, CLAUDE_WAITING_FAST_REFRESH_INTERVAL_MS);
+            }
+
+            return refreshIntervalMs;
+        },
         refetchIntervalInBackground: true,
         refetchOnReconnect: true,
         retry: false,
