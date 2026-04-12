@@ -1042,6 +1042,7 @@ describe('ProjectCard Provider Visuals', () => {
         renderWithProviders(<ProjectCard projectName="Prj" cards={[{ ...mockCard, provider: 'claude-code' }]} />);
         const status = screen.getByTitle('Idle');
         expect(status.className).toContain('rotate-45');
+        expect(status.className).toContain('h-[7px]');
         expect(screen.queryByTitle('Provider: Claude Code')).toBeNull();
     });
 

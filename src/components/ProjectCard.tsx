@@ -49,32 +49,34 @@ function buildTooltipTitle(lines: string[], debugReason?: string): string {
 }
 
 function StatusDot({ status, waitingForUser, provider }: { status: string; waitingForUser: boolean; provider?: string }) {
-    const shapeClass = provider === 'claude-code' ? 'rotate-45 rounded-[1px]' : 'rounded-full';
+    const isClaudeProvider = provider === 'claude-code';
+    const shapeClass = isClaudeProvider ? 'rotate-45 rounded-[1px]' : 'rounded-full';
+    const dotSizeClass = isClaudeProvider ? 'h-[7px] w-[7px]' : 'h-2 w-2';
     if (waitingForUser) {
         return (
-            <span className="relative flex h-2 w-2 flex-shrink-0" title="Waiting">
+            <span className={`relative flex ${dotSizeClass} flex-shrink-0`} title="Waiting">
                 <span className={`animate-ping absolute inline-flex h-full w-full ${shapeClass} bg-amber-400 opacity-75`}></span>
-                <span className={`relative inline-flex h-2 w-2 ${shapeClass} bg-amber-500`}></span>
+                <span className={`relative inline-flex ${dotSizeClass} ${shapeClass} bg-amber-500`}></span>
             </span>
         );
     }
     switch (status) {
         case 'busy':
             return (
-                <span className="relative flex h-2 w-2 flex-shrink-0" title="Running">
+                <span className={`relative flex ${dotSizeClass} flex-shrink-0`} title="Running">
                     <span className={`animate-pulse absolute inline-flex h-full w-full ${shapeClass} bg-emerald-400 opacity-75`}></span>
-                    <span className={`relative inline-flex h-2 w-2 ${shapeClass} bg-emerald-500`}></span>
+                    <span className={`relative inline-flex ${dotSizeClass} ${shapeClass} bg-emerald-500`}></span>
                 </span>
             );
         case 'retry':
             return (
-                <span className="relative flex h-2 w-2 flex-shrink-0" title="Retrying">
+                <span className={`relative flex ${dotSizeClass} flex-shrink-0`} title="Retrying">
                     <span className={`animate-ping absolute inline-flex h-full w-full ${shapeClass} bg-red-400 opacity-75`}></span>
-                    <span className={`relative inline-flex h-2 w-2 ${shapeClass} bg-red-500`}></span>
+                    <span className={`relative inline-flex ${dotSizeClass} ${shapeClass} bg-red-500`}></span>
                 </span>
             );
         default:
-            return <span className={`inline-flex h-2 w-2 bg-gray-400 flex-shrink-0 ${shapeClass}`} title="Idle"></span>;
+            return <span className={`inline-flex ${dotSizeClass} bg-gray-400 flex-shrink-0 ${shapeClass}`} title="Idle"></span>;
     }
 }
 
