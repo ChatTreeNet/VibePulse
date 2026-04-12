@@ -442,6 +442,74 @@ describe('/api/node/sessions', () => {
     expect(mockCreateOpencodeClient).not.toHaveBeenCalled();
   });
 
+  it('returns degraded Claude fallback sessions when all discovered OpenCode ports fail', async () => {
+    setupLocalSessionsMocks();
+    mockDiscoverPortsWithMeta.mockReturnValue({
+      ports: [7777, 7778],
+      timedOut: false,
+    });
+    mockSessionList.mockRejectedValue(new Error('ECONNREFUSED'));
+    mockClaudeLocalProviderGetSessionsResult.mockResolvedValue({
+      payload: {
+        sessions: [
+          {
+            id: 'claude~550e8400-e29b-41d4-a716-446655440000',
+            slug: '550e8400-e29b-41d4-a716-446655440000',
+            title: 'Claude Fallback Session',
+            directory: '/repo/claude-fallback',
+            projectName: 'claude-fallback',
+            branch: 'main',
+            provider: 'claude-code',
+            providerRawId: '550e8400-e29b-41d4-a716-446655440000',
+            rawSessionId: '550e8400-e29b-41d4-a716-446655440000',
+            readOnly: true,
+            topology: { childSessions: 'flat' },
+            realTimeStatus: 'busy',
+            waitingForUser: false,
+            children: [],
+            time: { created: 5_000, updated: Date.now() - 1_000 },
+          },
+        ],
+        processHints: [],
+      },
+      sourceMeta: { online: true },
+    });
+
+    const response = await GET(
+      new Request('http://localhost/api/node/sessions', {
+        headers: createNodeRequestHeaders('shared-secret'),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.degraded).toBe(true);
+    expect(data.failedPorts).toEqual([
+      expect.objectContaining({ port: 7777 }),
+      expect.objectContaining({ port: 7778 }),
+    ]);
+    expect(data.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+          provider: 'claude-code',
+          sourceSessionKey: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+        }),
+      ])
+    );
+    expect(data.hostStatuses).toEqual([
+      expect.objectContaining({
+        hostId: 'local',
+        online: true,
+        degraded: true,
+      }),
+    ]);
+    expect(mockCreateOpencodeClient.mock.calls).toEqual([
+      [{ baseUrl: 'http://localhost:7777' }],
+      [{ baseUrl: 'http://localhost:7778' }],
+    ]);
+  });
+
   it('rejects unauthenticated requests before running discovery', async () => {
     const response = await GET(
       new Request('http://localhost/api/node/sessions', {

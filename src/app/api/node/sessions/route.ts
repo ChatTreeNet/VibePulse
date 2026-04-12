@@ -875,6 +875,24 @@ async function getLocalSessionsResult(stickyBusyDelayMs: number): Promise<LocalS
     }
 
     if (results.length > 0 && failedPorts.length === results.length) {
+      const supplementalClaudePayload = await getSupplementalClaudePayload(stickyBusyDelayMs);
+      if (supplementalClaudePayload.sessions.length > 0 || supplementalClaudePayload.processHints.length > 0) {
+        return {
+          ok: true,
+          payload: {
+            sessions: supplementalClaudePayload.sessions,
+            processHints: [...processHints, ...supplementalClaudePayload.processHints],
+            failedPorts,
+            degraded: true,
+          },
+          meta: {
+            online: true,
+            degraded: true,
+            reason: resolveFailureReasonFromMessages(failedPorts.map((entry) => entry.reason)),
+          },
+        };
+      }
+
       pruneStickyState(Date.now(), new Set<string>());
       return createLocalFailureResult(resolveFailureReasonFromMessages(failedPorts.map((entry) => entry.reason)), processHints, {
         failedPorts,
