@@ -376,6 +376,7 @@ export function useOpencodeSync() {
                             case 'session.status': {
                                 const statusType = event.properties?.status?.type as 'idle' | 'busy' | 'retry' | undefined;
                                 if (!statusType) return baseSession;
+                                const statusTimestamp = typeof event.timestamp === 'number' ? event.timestamp : Date.now();
                                 recordSseStatus(s.id, statusType);
                                 const isParentSession = !s.parentID;
                                 const shouldAutoUnarchive = statusType === 'busy' || statusType === 'retry';
@@ -402,7 +403,9 @@ export function useOpencodeSync() {
                                 }
                                 return { 
                                     ...baseSession, 
-                                    time: shouldAutoUnarchive ? { ...(s.time || {}), archived: undefined } : s.time,
+                                    time: shouldAutoUnarchive
+                                        ? { ...(s.time || {}), updated: statusTimestamp, archived: undefined }
+                                        : { ...(s.time || {}), updated: statusTimestamp },
                                     realTimeStatus: statusType, 
                                     waitingForUser:
                                         statusType === 'retry'
@@ -457,15 +460,7 @@ export function useOpencodeSync() {
                         }
                         if (session.children?.some(c => c.id === sourceSessionId)) {
                             found = true;
-                            // If the event is a status update to 'idle', we should filter the child out
-                            // so it disappears from the UI without needing a full refetch, matching backend logic.
-                            if (event.type === 'session.status' && event.properties?.status?.type === 'idle') {
-                                return {
-                                    ...session,
-                                    children: session.children.filter(c => c.id !== sourceSessionId)
-                                };
-                            }
-                            
+
                             return {
                                 ...session,
                                 children: session.children.map(c => c.id === sourceSessionId ? applyEvent(c) : c)

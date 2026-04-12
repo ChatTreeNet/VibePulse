@@ -17,6 +17,16 @@ interface SessionCardProps {
     card: KanbanCard;
 }
 
+const RECENT_IDLE_CHILD_VISIBILITY_WINDOW_MS = 60_000;
+
+function shouldShowChildSession(child: { realTimeStatus: string; waitingForUser: boolean; updatedAt: number }): boolean {
+    if (child.realTimeStatus !== 'idle' || child.waitingForUser) {
+        return true;
+    }
+
+    return Date.now() - child.updatedAt <= RECENT_IDLE_CHILD_VISIBILITY_WINDOW_MS;
+}
+
 function formatRelativeTime(timestamp: number): string {
     const diffMs = Date.now() - timestamp;
     const diffMins = Math.floor(diffMs / (1000 * 60));
@@ -377,7 +387,7 @@ export function SessionCard({ card }: SessionCardProps) {
                 )}
                 {(() => {
                     const visibleChildren = (card.children || []).filter(
-                        (child) => child.realTimeStatus !== 'idle' || child.waitingForUser
+                        shouldShowChildSession
                     );
                     if (visibleChildren.length === 0) return null;
                     return (

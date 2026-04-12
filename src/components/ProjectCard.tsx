@@ -22,6 +22,16 @@ interface ProjectCardProps {
     multipleHostsEnabled?: boolean;
 }
 
+const RECENT_IDLE_CHILD_VISIBILITY_WINDOW_MS = 60_000;
+
+function shouldShowChildSession(child: { realTimeStatus: string; waitingForUser: boolean; updatedAt: number }): boolean {
+    if (child.realTimeStatus !== 'idle' || child.waitingForUser) {
+        return true;
+    }
+
+    return Date.now() - child.updatedAt <= RECENT_IDLE_CHILD_VISIBILITY_WINDOW_MS;
+}
+
 function formatRelativeTime(timestamp: number): string {
     const diffMs = Date.now() - timestamp;
     const diffMins = Math.floor(diffMs / (1000 * 60));
@@ -391,7 +401,7 @@ function RowActionMenu({ card, isActionPending, onActionError, onPendingActionCh
 function SessionRow({ card, isLast, isActionPending, onActionError, onPendingActionChange, readOnlyMode }: { card: KanbanCard; isLast: boolean; isActionPending: boolean; onActionError: (message: string | null) => void; onPendingActionChange: (value: 'open' | 'archive' | 'restore' | 'delete' | null) => void; readOnlyMode: boolean }) {
     const [expanded, setExpanded] = useState(true);
     const visibleChildren = (card.children || []).filter(
-        (child) => child.realTimeStatus !== 'idle' || child.waitingForUser
+        shouldShowChildSession
     );
     const hasChildren = visibleChildren.length > 0;
     const rowTitle = buildTooltipTitle([

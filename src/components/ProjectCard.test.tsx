@@ -9,6 +9,7 @@ type RenderFn = (ui: React.ReactElement) => { rerender: (ui: React.ReactElement)
 type Screen = {
     getByText: (text: string | RegExp) => HTMLElement;
     getAllByText: (text: string | RegExp) => HTMLElement[];
+    queryByText: (text: string | RegExp) => HTMLElement | null;
     getByTitle: (title: string | RegExp) => HTMLElement;
     getAllByTitle: (title: string | RegExp) => HTMLElement[];
     queryByTitle: (title: string | RegExp) => HTMLElement | null;
@@ -1009,5 +1010,47 @@ describe('ProjectCard Provider Visuals', () => {
         expect(screen.queryByText('Standalone Child')).toBeNull();
         expect(screen.getByText('Parent Card')).toBeTruthy();
         expect(screen.getByText('Nested Claude Child')).toBeTruthy();
+    });
+
+    it('shows recently updated idle children to avoid delegated-session disappearance', () => {
+        const now = Date.now();
+        const parentCard: KanbanCard = {
+            ...mockCard,
+            id: 'parent-1',
+            provider: 'claude-code',
+            children: [{
+                id: 'child-recent-idle',
+                title: 'Recent Idle Child',
+                realTimeStatus: 'idle',
+                waitingForUser: false,
+                createdAt: now - 90_000,
+                updatedAt: now - 15_000,
+            }],
+        };
+
+        renderWithProviders(<ProjectCard projectName="Prj" cards={[parentCard]} />);
+
+        expect(screen.getByText('Recent Idle Child')).toBeTruthy();
+    });
+
+    it('hides stale idle children that are older than the recent visibility window', () => {
+        const now = Date.now();
+        const parentCard: KanbanCard = {
+            ...mockCard,
+            id: 'parent-1',
+            provider: 'claude-code',
+            children: [{
+                id: 'child-stale-idle',
+                title: 'Stale Idle Child',
+                realTimeStatus: 'idle',
+                waitingForUser: false,
+                createdAt: now - 180_000,
+                updatedAt: now - 120_000,
+            }],
+        };
+
+        renderWithProviders(<ProjectCard projectName="Prj" cards={[parentCard]} />);
+
+        expect(TestingLibraryReact.screen.queryByText('Stale Idle Child')).toBeNull();
     });
 });

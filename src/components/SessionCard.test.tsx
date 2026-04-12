@@ -648,6 +648,58 @@ describe('SessionCard', () => {
 
     expect(await screen.findByText('Remote node is offline or unreachable.')).toBeTruthy();
   });
+
+  it('shows recently-updated idle children so delegated subagents remain visible', () => {
+    const now = Date.now();
+    renderWithProviders(
+      <SessionCard
+        card={createCard({
+          hostId: 'local',
+          hostLabel: 'Local',
+          hostKind: 'local',
+          hostBaseUrl: undefined,
+          children: [
+            {
+              id: 'child-recent-idle',
+              title: 'Recent Idle Child',
+              realTimeStatus: 'idle',
+              waitingForUser: false,
+              createdAt: now - 120_000,
+              updatedAt: now - 20_000,
+            },
+          ],
+        })}
+      />
+    );
+
+    expect(screen.getByText('Recent Idle Child')).toBeTruthy();
+  });
+
+  it('hides stale idle children once they are older than the recent visibility window', () => {
+    const now = Date.now();
+    renderWithProviders(
+      <SessionCard
+        card={createCard({
+          hostId: 'local',
+          hostLabel: 'Local',
+          hostKind: 'local',
+          hostBaseUrl: undefined,
+          children: [
+            {
+              id: 'child-stale-idle',
+              title: 'Stale Idle Child',
+              realTimeStatus: 'idle',
+              waitingForUser: false,
+              createdAt: now - 180_000,
+              updatedAt: now - 120_000,
+            },
+          ],
+        })}
+      />
+    );
+
+    expect(screen.queryByText('Stale Idle Child')).toBeNull();
+  });
 });
 describe('SessionCard Provider Visuals', () => {
   it('does not show a provider marker for OpenCode sessions', () => {

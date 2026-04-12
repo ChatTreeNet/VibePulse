@@ -388,6 +388,55 @@ describe('useOpencodeSync', () => {
 
         unmount();
     });
+
+    it('keeps recently-idle child sessions nested instead of removing them immediately', () => {
+        const eventTimestamp = 75_000;
+        const parentSession = createSession({
+            id: 'local:parent',
+            rawSessionId: 'parent',
+            hostId: 'local',
+            hostLabel: 'Local',
+            hostKind: 'local',
+            children: [
+                {
+                    id: 'local:child',
+                    slug: 'child',
+                    title: 'Child Session',
+                    directory: '/tmp/project',
+                    projectName: 'Project',
+                    parentID: 'local:parent',
+                    time: { created: 1000, updated: 2000 },
+                    realTimeStatus: 'busy',
+                    waitingForUser: false,
+                },
+            ],
+        });
+
+        const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
+            sessions: [parentSession],
+        });
+
+        act(() => {
+            eventSource.emitMessage({
+                type: 'session.status',
+                properties: {
+                    sessionID: 'child',
+                    status: { type: 'idle' },
+                },
+                timestamp: eventTimestamp,
+            });
+        });
+
+        const data = queryClient.getQueryData<SessionsQueryData>(queryKey);
+        const nextParent = data?.sessions.find((session) => session.id === 'local:parent');
+
+        expect(nextParent?.children).toHaveLength(1);
+        expect(nextParent?.children?.[0]?.id).toBe('local:child');
+        expect(nextParent?.children?.[0]?.realTimeStatus).toBe('idle');
+        expect(nextParent?.children?.[0]?.time.updated).toBe(eventTimestamp);
+
+        unmount();
+    });
 });
 
 describe('useOpencodeSync provider defaults', () => {
