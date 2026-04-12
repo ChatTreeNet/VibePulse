@@ -29,6 +29,8 @@ import { RUNTIME_ROLE_ENV_VAR } from '@/lib/runtimeMode';
 import type { BuiltInHostSource, RemoteHostConfig, SessionProvider } from '@/types';
 
 const nodeSessionsTimeoutMs = readPositiveTimeoutEnv('VIBEPULSE_NODE_SESSIONS_TIMEOUT_MS', 6000);
+const CLAUDE_INFERRED_PARENT_MAX_CREATED_GAP_MS = 60_000;
+const CLAUDE_INFERRED_PARENT_AMBIGUITY_GAP_MS = 5_000;
 
 const LOCAL_SOURCE: BuiltInHostSource = {
   hostId: 'local',
@@ -517,25 +519,161 @@ function toAggregateClaudeChildEntry(session: EnrichedSession): ChildEntry {
   return childEntry as ChildEntry;
 }
 
-function hasAuthoritativeClaudeTopology(entry: HostAwareFields): boolean {
-  return entry.provider === 'claude-code' && entry.topology?.childSessions === 'authoritative';
+function hasClaudeProvider(entry: HostAwareFields): boolean {
+  return entry.provider === 'claude-code';
+}
+
+function toFiniteTimestamp(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function getCreatedAt(session: EnrichedSession): number | undefined {
+  return toFiniteTimestamp(session.time?.created);
+}
+
+function getUpdatedAt(session: EnrichedSession): number | undefined {
+  return toFiniteTimestamp(session.time?.updated);
+}
+
+function hasSameHostIdentity(a: HostAwareFields, b: HostAwareFields): boolean {
+  return a.hostId === b.hostId && a.hostKind === b.hostKind;
+}
+
+type InferredClaudeParentCandidate = {
+  parent: EnrichedSession;
+  createdGapMs: number;
+  updatedGapMs: number;
+};
+
+function inferClaudeParentSession(
+  child: EnrichedSession,
+  sessions: EnrichedSession[],
+  absorbedChildIds: Set<string>
+): EnrichedSession | undefined {
+  if (child.topology?.childSessions === 'authoritative') {
+    return undefined;
+  }
+
+  const childCreatedAt = getCreatedAt(child);
+  if (childCreatedAt === undefined) {
+    return undefined;
+  }
+
+  const childUpdatedAt = getUpdatedAt(child) ?? childCreatedAt;
+  const candidates: InferredClaudeParentCandidate[] = [];
+
+  for (const parent of sessions) {
+    if (parent.id === child.id || absorbedChildIds.has(parent.id)) {
+      continue;
+    }
+
+    if (!hasClaudeProvider(parent) || !hasSameHostIdentity(parent, child)) {
+      continue;
+    }
+
+    if (typeof parent.parentID === 'string') {
+      continue;
+    }
+
+    if (parent.directory !== child.directory || parent.projectName !== child.projectName) {
+      continue;
+    }
+
+    const parentCreatedAt = getCreatedAt(parent);
+    if (parentCreatedAt === undefined || parentCreatedAt > childCreatedAt) {
+      continue;
+    }
+
+    const createdGapMs = childCreatedAt - parentCreatedAt;
+    if (createdGapMs > CLAUDE_INFERRED_PARENT_MAX_CREATED_GAP_MS) {
+      continue;
+    }
+
+    const parentLooksActive =
+      parent.realTimeStatus === 'busy' ||
+      parent.realTimeStatus === 'retry' ||
+      parent.waitingForUser;
+    if (!parentLooksActive) {
+      continue;
+    }
+
+    const parentUpdatedAt = getUpdatedAt(parent) ?? parentCreatedAt;
+    const updatedGapMs = Math.abs(childUpdatedAt - parentUpdatedAt);
+
+    candidates.push({
+      parent,
+      createdGapMs,
+      updatedGapMs,
+    });
+  }
+
+  if (candidates.length === 0) {
+    return undefined;
+  }
+
+  candidates.sort((a, b) => {
+    if (a.createdGapMs !== b.createdGapMs) {
+      return a.createdGapMs - b.createdGapMs;
+    }
+    return a.updatedGapMs - b.updatedGapMs;
+  });
+
+  const bestCandidate = candidates[0];
+  const secondCandidate = candidates[1];
+
+  if (
+    secondCandidate
+    && Math.abs(secondCandidate.createdGapMs - bestCandidate.createdGapMs) <= CLAUDE_INFERRED_PARENT_AMBIGUITY_GAP_MS
+  ) {
+    return undefined;
+  }
+
+  return bestCandidate.parent;
 }
 
 function rebuildAggregateClaudeTopology(sessions: EnrichedSession[]): EnrichedSession[] {
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
   const absorbedChildIds = new Set<string>();
+  const orderedSessions = [...sessions].sort((a, b) => {
+    const createdDiff = (getCreatedAt(b) ?? 0) - (getCreatedAt(a) ?? 0);
+    if (createdDiff !== 0) {
+      return createdDiff;
+    }
 
-  for (const session of sessions) {
-    if (!hasAuthoritativeClaudeTopology(session) || typeof session.parentID !== 'string') {
+    return (getUpdatedAt(b) ?? 0) - (getUpdatedAt(a) ?? 0);
+  });
+
+  for (const session of orderedSessions) {
+    if (!hasClaudeProvider(session) || absorbedChildIds.has(session.id)) {
       continue;
     }
 
-    const parentSession = sessionsById.get(session.parentID);
-    if (!parentSession || parentSession === session || !hasAuthoritativeClaudeTopology(parentSession)) {
-      continue;
+    let parentSession: EnrichedSession | undefined;
+
+    if (typeof session.parentID === 'string') {
+      const explicitParentSession = sessionsById.get(session.parentID);
+      if (explicitParentSession) {
+        if (
+          explicitParentSession === session
+          || absorbedChildIds.has(explicitParentSession.id)
+          || !hasClaudeProvider(explicitParentSession)
+          || !hasSameHostIdentity(explicitParentSession, session)
+        ) {
+          continue;
+        }
+
+        parentSession = explicitParentSession;
+      }
     }
 
-    if (parentSession.hostId !== session.hostId || parentSession.hostKind !== session.hostKind) {
+    if (!parentSession) {
+      parentSession = inferClaudeParentSession(session, sessions, absorbedChildIds);
+      if (parentSession) {
+        session.parentID = parentSession.id;
+      }
+    }
+
+    if (!parentSession) {
       continue;
     }
 
