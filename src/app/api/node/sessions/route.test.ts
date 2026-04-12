@@ -371,6 +371,77 @@ describe('/api/node/sessions', () => {
     );
   });
 
+  it('returns Claude polling sessions when OpenCode ports are absent but Claude provider is available', async () => {
+    mockDiscoverProcessCwdsWithoutPortWithMeta.mockReturnValue({
+      processes: [],
+      timedOut: false,
+    });
+    mockDiscoverPortsWithMeta.mockReturnValue({
+      ports: [],
+      timedOut: false,
+    });
+    mockClaudeLocalProviderGetSessionsResult.mockResolvedValue({
+      payload: {
+        sessions: [
+          {
+            id: 'claude~550e8400-e29b-41d4-a716-446655440000',
+            slug: '550e8400-e29b-41d4-a716-446655440000',
+            title: 'Claude Only Session',
+            directory: '/repo/claude-only-project',
+            projectName: 'claude-only-project',
+            branch: 'main',
+            provider: 'claude-code',
+            providerRawId: '550e8400-e29b-41d4-a716-446655440000',
+            rawSessionId: '550e8400-e29b-41d4-a716-446655440000',
+            readOnly: true,
+            topology: { childSessions: 'flat' },
+            realTimeStatus: 'busy',
+            waitingForUser: false,
+            children: [],
+            time: { created: 4_000, updated: Date.now() - 1_000 },
+          },
+        ],
+        processHints: [],
+      },
+      sourceMeta: { online: true },
+    });
+
+    const response = await GET(
+      new Request('http://localhost/api/node/sessions', {
+        headers: createNodeRequestHeaders('shared-secret'),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toMatchObject({
+      ok: true,
+      role: 'node',
+      protocolVersion: '1',
+      source: { hostId: 'local', hostLabel: 'Local', hostKind: 'local' },
+      upstream: { kind: 'opencode', reachable: true },
+      processHints: [],
+      hosts: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+      hostStatuses: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+    });
+    expect(data.sessions).toEqual([
+      expect.objectContaining({
+        id: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+        rawSessionId: '550e8400-e29b-41d4-a716-446655440000',
+        sourceSessionKey: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+        provider: 'claude-code',
+        providerRawId: '550e8400-e29b-41d4-a716-446655440000',
+        hostId: 'local',
+        hostLabel: 'Local',
+        hostKind: 'local',
+        readOnly: true,
+        topology: { childSessions: 'flat' },
+        children: [],
+      }),
+    ]);
+    expect(mockCreateOpencodeClient).not.toHaveBeenCalled();
+  });
+
   it('rejects unauthenticated requests before running discovery', async () => {
     const response = await GET(
       new Request('http://localhost/api/node/sessions', {

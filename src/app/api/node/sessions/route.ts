@@ -776,6 +776,20 @@ async function getLocalSessionsResult(stickyBusyDelayMs: number): Promise<LocalS
       return createLocalFailureResult('upstream_timeout', processHints);
     }
 
+    const supplementalClaudePayload = await getSupplementalClaudePayload(stickyBusyDelayMs);
+    if (supplementalClaudePayload.sessions.length > 0 || supplementalClaudePayload.processHints.length > 0) {
+      return {
+        ok: true,
+        payload: {
+          sessions: supplementalClaudePayload.sessions,
+          processHints: [...processHints, ...supplementalClaudePayload.processHints],
+        },
+        meta: {
+          online: true,
+        },
+      };
+    }
+
     return createLocalFailureResult('upstream_unreachable', processHints);
   }
 
