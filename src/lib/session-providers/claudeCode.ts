@@ -672,18 +672,33 @@ function textLooksLikeUserQuestion(text: string): boolean {
   return trimmed.endsWith('?') || trimmed.endsWith('？');
 }
 
-async function detectWaitingForUserFromTranscript(filePath: string, updatedAt: number): Promise<boolean> {
+type WaitingDetectionResult = {
+  waitingForUser: boolean;
+  trailingParseErrors: boolean;
+};
+
+async function detectWaitingForUserFromTranscript(
+  filePath: string,
+  updatedAt: number
+): Promise<WaitingDetectionResult> {
   const now = Date.now();
   if (now - updatedAt > DEFAULT_WAITING_FOR_USER_WINDOW_MS) {
-    return false;
+    return {
+      waitingForUser: false,
+      trailingParseErrors: false,
+    };
   }
 
   const tail = await readFileTail(filePath, DEFAULT_JSONL_HEAD_LIMIT_BYTES);
   if (!tail) {
-    return false;
+    return {
+      waitingForUser: false,
+      trailingParseErrors: false,
+    };
   }
 
   const lines = tail.split('\n').map((line) => line.trim()).filter(Boolean);
+  let trailingParseErrors = false;
   for (let i = lines.length - 1; i >= 0; i--) {
     try {
       const parsed = JSON.parse(lines[i]) as Record<string, unknown>;
@@ -692,7 +707,10 @@ async function detectWaitingForUserFromTranscript(filePath: string, updatedAt: n
       const role = message && typeof message === 'object' ? (message as Record<string, unknown>).role : undefined;
 
       if (outerType === 'user' || role === 'user') {
-        return false;
+        return {
+          waitingForUser: false,
+          trailingParseErrors,
+        };
       }
 
       if (outerType === 'assistant' && message && typeof message === 'object') {
@@ -701,19 +719,32 @@ async function detectWaitingForUserFromTranscript(filePath: string, updatedAt: n
         const text = extractTextMessage(msg.content);
         const toolUsePending = stopReason === 'tool_use' || hasToolUseContent(msg.content);
         if (toolUsePending) {
-          return true;
+          return {
+            waitingForUser: true,
+            trailingParseErrors,
+          };
         }
         if (stopReason === 'end_turn' && typeof text === 'string' && textLooksLikeUserQuestion(text)) {
-          return true;
+          return {
+            waitingForUser: true,
+            trailingParseErrors,
+          };
         }
-        return false;
+        return {
+          waitingForUser: false,
+          trailingParseErrors,
+        };
       }
     } catch {
+      trailingParseErrors = true;
       continue;
     }
   }
 
-  return false;
+  return {
+    waitingForUser: false,
+    trailingParseErrors,
+  };
 }
 
 async function defaultIsPidAlive(pid: number): Promise<boolean> {
@@ -900,11 +931,20 @@ export async function discoverClaudeCodeSessions(
       const artifactAgeMs = now - updatedAt;
       const hasVeryRecentArtifactActivity = artifactAgeMs <= DEFAULT_BUSY_ACTIVITY_WINDOW_MS;
       const waitingSuppressedByRestore = typeof directOverride?.restoredAt === 'number' && directOverride.restoredAt >= updatedAt;
-      const waitingForUser = waitingSuppressedByRestore ? false : await detectWaitingForUserFromTranscript(artifactPath, updatedAt);
+      const waitingDetection = waitingSuppressedByRestore
+        ? { waitingForUser: false, trailingParseErrors: false }
+        : await detectWaitingForUserFromTranscript(artifactPath, updatedAt);
+      const hasRunningEvidence = typeof scopedMetadata?.runningPid === 'number' || isSidechainArtifact;
+      const waitingStaleDuringActiveWrite =
+        waitingDetection.waitingForUser
+        && waitingDetection.trailingParseErrors
+        && hasVeryRecentArtifactActivity
+        && hasRunningEvidence;
+      const waitingForUser = waitingStaleDuringActiveWrite ? false : waitingDetection.waitingForUser;
       const isRunning =
         !waitingForUser
         && hasVeryRecentArtifactActivity
-        && (typeof scopedMetadata?.runningPid === 'number' || isSidechainArtifact);
+        && hasRunningEvidence;
       const createdAt = scopedMetadata?.runningPid !== undefined
         ? scopedMetadata.startedAt ?? headMetadata.timestampMs ?? artifactStat.birthtimeMs ?? artifactStat.mtimeMs
         : headMetadata.timestampMs ?? artifactStat.birthtimeMs ?? artifactStat.mtimeMs;

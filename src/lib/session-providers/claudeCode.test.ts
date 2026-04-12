@@ -731,6 +731,60 @@ describe('discoverClaudeCodeSessions', () => {
     });
   });
 
+  it('keeps waiting-for-user when transcript is valid even with live process evidence', async () => {
+    const fixture = await createFixture();
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: [
+        JSON.stringify({
+          type: 'user',
+          message: { role: 'user', content: 'Need a network fetch' },
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          timestamp: new Date(Date.now() - 30_000).toISOString(),
+          gitBranch: 'feature/current',
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            stop_reason: 'tool_use',
+            content: [{ type: 'tool_use', id: 'tool_1', name: 'Fetch', input: { url: 'https://example.com' } }],
+          },
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          timestamp: new Date(Date.now() - 5_000).toISOString(),
+          gitBranch: 'feature/current',
+        }),
+      ].join('\n'),
+    });
+
+    await writeSessionIndexEntry({
+      sessionsDir: fixture.sessionsDir,
+      pid: 77777,
+      sessionId: SESSION_ONE,
+      cwd: fixture.repoDir,
+      startedAt: Date.now() - 100_000,
+    });
+
+    const sessions = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: (pid) => pid === 77777,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: SESSION_ONE,
+      pid: 77777,
+      waitingForUser: true,
+      isRunning: false,
+    });
+  });
+
   it('does not mark Claude sessions as waiting when a tool_use has already completed with a later tool_result', async () => {
     const fixture = await createFixture();
 
@@ -772,6 +826,165 @@ describe('discoverClaudeCodeSessions', () => {
     expect(sessions[0]).toMatchObject({
       sessionId: SESSION_ONE,
       waitingForUser: false,
+    });
+  });
+
+  it('clears stale waiting markers when transcript tail has an in-progress write and live process evidence', async () => {
+    const fixture = await createFixture();
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: [
+        JSON.stringify({
+          type: 'user',
+          message: { role: 'user', content: 'Continue the task' },
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          timestamp: new Date(Date.now() - 40_000).toISOString(),
+          gitBranch: 'feature/current',
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            stop_reason: 'tool_use',
+            content: [{ type: 'tool_use', id: 'tool_1', name: 'Fetch', input: { url: 'https://example.com' } }],
+          },
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          timestamp: new Date(Date.now() - 20_000).toISOString(),
+          gitBranch: 'feature/current',
+        }),
+        '{"type":"assistant","message":',
+      ].join('\n'),
+    });
+
+    await writeSessionIndexEntry({
+      sessionsDir: fixture.sessionsDir,
+      pid: 56789,
+      sessionId: SESSION_ONE,
+      cwd: fixture.repoDir,
+      startedAt: Date.now() - 5_000_000,
+    });
+
+    const sessions = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: (pid) => pid === 56789,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: SESSION_ONE,
+      pid: 56789,
+      waitingForUser: false,
+      isRunning: true,
+    });
+  });
+
+  it('keeps waiting markers when transcript tail is partial but no live process evidence exists', async () => {
+    const fixture = await createFixture();
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: [
+        JSON.stringify({
+          type: 'user',
+          message: { role: 'user', content: 'Continue the task' },
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          timestamp: new Date(Date.now() - 40_000).toISOString(),
+          gitBranch: 'feature/current',
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            stop_reason: 'tool_use',
+            content: [{ type: 'tool_use', id: 'tool_1', name: 'Fetch', input: { url: 'https://example.com' } }],
+          },
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          timestamp: new Date(Date.now() - 20_000).toISOString(),
+          gitBranch: 'feature/current',
+        }),
+        '{"type":"assistant","message":',
+      ].join('\n'),
+    });
+
+    const sessions = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: SESSION_ONE,
+      waitingForUser: true,
+      isRunning: false,
+    });
+  });
+
+  it('keeps waiting markers when transcript tail is partial but artifact activity is no longer recent', async () => {
+    const fixture = await createFixture();
+
+    const artifactPath = await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: [
+        JSON.stringify({
+          type: 'user',
+          message: { role: 'user', content: 'Continue the task' },
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          timestamp: new Date(Date.now() - 40_000).toISOString(),
+          gitBranch: 'feature/current',
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            stop_reason: 'tool_use',
+            content: [{ type: 'tool_use', id: 'tool_1', name: 'Fetch', input: { url: 'https://example.com' } }],
+          },
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          timestamp: new Date(Date.now() - 20_000).toISOString(),
+          gitBranch: 'feature/current',
+        }),
+        '{"type":"assistant","message":',
+      ].join('\n'),
+    });
+
+    await writeSessionIndexEntry({
+      sessionsDir: fixture.sessionsDir,
+      pid: 88888,
+      sessionId: SESSION_ONE,
+      cwd: fixture.repoDir,
+      startedAt: Date.now() - 100_000,
+    });
+
+    const staleDate = new Date(Date.now() - 20_000);
+    await utimes(artifactPath, staleDate, staleDate);
+
+    const sessions = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: (pid) => pid === 88888,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: SESSION_ONE,
+      pid: 88888,
+      waitingForUser: true,
+      isRunning: false,
     });
   });
 
