@@ -255,6 +255,8 @@ type JsonlSessionHead = {
   gitBranch?: string;
   timestampMs?: number;
   explicitParentSessionId?: string;
+  agentId?: string;
+  isSidechain?: boolean;
 };
 
 type CandidateSessionMetadata = {
@@ -422,6 +424,17 @@ async function readJsonlSessionHead(filePath: string, byteLimit: number): Promis
         metadata.sessionId = parsed.sessionId;
       }
 
+      if (typeof parsed.agentId === 'string' && !metadata.agentId) {
+        const normalizedAgentId = parsed.agentId.trim();
+        if (normalizedAgentId) {
+          metadata.agentId = normalizedAgentId;
+        }
+      }
+
+      if (typeof parsed.isSidechain === 'boolean' && metadata.isSidechain === undefined) {
+        metadata.isSidechain = parsed.isSidechain;
+      }
+
       if (typeof parsed.gitBranch === 'string' && !metadata.gitBranch) {
         metadata.gitBranch = parsed.gitBranch;
       }
@@ -461,6 +474,83 @@ async function readJsonlSessionHead(filePath: string, byteLimit: number): Promis
   }
 
   return metadata;
+}
+
+function isAgentSessionArtifactId(value: string): boolean {
+  return value.startsWith('agent-') && value.length > 'agent-'.length;
+}
+
+function extractSidechainParentSessionId(
+  artifactSessionId: string,
+  metadata: JsonlSessionHead
+): string | null {
+  if (!isAgentSessionArtifactId(artifactSessionId)) {
+    return null;
+  }
+
+  const artifactAgentId = artifactSessionId.slice('agent-'.length);
+  const metadataAgentId = typeof metadata.agentId === 'string' ? metadata.agentId.trim() : '';
+  if (metadataAgentId && metadataAgentId !== artifactAgentId) {
+    return null;
+  }
+
+  if (metadata.isSidechain !== true && !metadataAgentId) {
+    return null;
+  }
+
+  const candidateParentSessionId = typeof metadata.sessionId === 'string' ? metadata.sessionId.trim() : '';
+  if (!candidateParentSessionId || candidateParentSessionId === artifactSessionId) {
+    return null;
+  }
+
+  return candidateParentSessionId;
+}
+
+function toScopedSidechainSessionId(parentSessionId: string, artifactSessionId: string): string {
+  return `${parentSessionId}__${artifactSessionId}`;
+}
+
+async function collectProjectArtifactPaths(projectDir: string): Promise<string[]> {
+  let projectArtifacts: Dirent[];
+  try {
+    projectArtifacts = await readdir(projectDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const artifactPaths: string[] = [];
+
+  for (const entry of projectArtifacts) {
+    const entryPath = join(projectDir, entry.name);
+
+    if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+      artifactPaths.push(entryPath);
+      continue;
+    }
+
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    const subagentsDir = join(entryPath, 'subagents');
+
+    let subagentArtifacts: Dirent[];
+    try {
+      subagentArtifacts = await readdir(subagentsDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const subagentArtifact of subagentArtifacts) {
+      if (!subagentArtifact.isFile() || !subagentArtifact.name.endsWith('.jsonl')) {
+        continue;
+      }
+
+      artifactPaths.push(join(subagentsDir, subagentArtifact.name));
+    }
+  }
+
+  return artifactPaths;
 }
 
 async function readFileTail(filePath: string, byteLimit: number): Promise<string | null> {
@@ -699,25 +789,16 @@ export async function discoverClaudeCodeSessions(
     const projectDir = join(projectsDir, projectEntry.name);
     const projectIndexRealpath = await readProjectIndexRealpath(projectDir, smallFileLimitBytes);
 
-    let projectArtifacts: Dirent[];
-    try {
-      projectArtifacts = await readdir(projectDir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
+    const projectArtifactPaths = await collectProjectArtifactPaths(projectDir);
 
-    for (const artifactEntry of projectArtifacts) {
-      if (!artifactEntry.isFile() || !artifactEntry.name.endsWith('.jsonl')) {
+    for (const artifactPath of projectArtifactPaths) {
+      const artifactName = basename(artifactPath);
+      const artifactSessionId = artifactName.slice(0, -'.jsonl'.length);
+      if (!artifactSessionId) {
         continue;
       }
 
-      const sessionId = artifactEntry.name.slice(0, -'.jsonl'.length);
-      if (!sessionId) {
-        continue;
-      }
-
-      const metadata = candidateMetadata.get(sessionId);
-      const artifactPath = join(projectDir, artifactEntry.name);
+      const metadata = candidateMetadata.get(artifactSessionId);
       let artifactStat: Stats;
       try {
         artifactStat = await stat(artifactPath);
@@ -751,10 +832,16 @@ export async function discoverClaudeCodeSessions(
         continue;
       }
 
-      const resolvedSessionId = headMetadata.sessionId ?? sessionId;
-      if (resolvedSessionId !== sessionId) {
+      const sidechainParentSessionId = extractSidechainParentSessionId(artifactSessionId, headMetadata);
+      const isSidechainArtifact = typeof sidechainParentSessionId === 'string';
+      const resolvedSessionId = headMetadata.sessionId ?? artifactSessionId;
+      if (!isSidechainArtifact && resolvedSessionId !== artifactSessionId) {
         continue;
       }
+
+      const sessionId = sidechainParentSessionId
+        ? toScopedSidechainSessionId(sidechainParentSessionId, artifactSessionId)
+        : artifactSessionId;
 
       const override = overrideMap.get(sessionId);
       if (typeof override?.deletedAt === 'number') {
@@ -767,7 +854,10 @@ export async function discoverClaudeCodeSessions(
       const hasVeryRecentArtifactActivity = artifactAgeMs <= DEFAULT_BUSY_ACTIVITY_WINDOW_MS;
       const waitingSuppressedByRestore = typeof override?.restoredAt === 'number' && override.restoredAt >= updatedAt;
       const waitingForUser = waitingSuppressedByRestore ? false : await detectWaitingForUserFromTranscript(artifactPath, updatedAt);
-      const isRunning = !waitingForUser && typeof scopedMetadata?.runningPid === 'number' && hasVeryRecentArtifactActivity;
+      const isRunning =
+        !waitingForUser
+        && hasVeryRecentArtifactActivity
+        && (typeof scopedMetadata?.runningPid === 'number' || isSidechainArtifact);
       const createdAt = scopedMetadata?.runningPid !== undefined
         ? scopedMetadata.startedAt ?? headMetadata.timestampMs ?? artifactStat.birthtimeMs ?? artifactStat.mtimeMs
         : headMetadata.timestampMs ?? artifactStat.birthtimeMs ?? artifactStat.mtimeMs;
@@ -791,6 +881,8 @@ export async function discoverClaudeCodeSessions(
 
       if (headMetadata.explicitParentSessionId) {
         explicitParentSessionIds.set(sessionId, headMetadata.explicitParentSessionId);
+      } else if (sidechainParentSessionId) {
+        explicitParentSessionIds.set(sessionId, sidechainParentSessionId);
       }
     }
   }

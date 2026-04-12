@@ -144,6 +144,49 @@ async function writeProjectArtifact(params: {
   return artifactPath;
 }
 
+async function writeSubagentArtifact(params: {
+  projectsDir: string;
+  repoPath: string;
+  parentSessionId: string;
+  agentId: string;
+  timestamp?: string;
+}): Promise<string> {
+  const projectDir = await buildProjectDir(params.projectsDir, params.repoPath);
+  const subagentsDir = join(projectDir, params.parentSessionId, 'subagents');
+  await mkdir(subagentsDir, { recursive: true });
+
+  const artifactPath = join(subagentsDir, `agent-${params.agentId}.jsonl`);
+  const timestamp = params.timestamp ?? new Date().toISOString();
+
+  await writeFile(
+    artifactPath,
+    [
+      JSON.stringify({
+        type: 'user',
+        isSidechain: true,
+        agentId: params.agentId,
+        cwd: params.repoPath,
+        sessionId: params.parentSessionId,
+        gitBranch: 'main',
+        timestamp,
+        message: { role: 'user', content: 'delegated data analysis' },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        isSidechain: true,
+        agentId: params.agentId,
+        cwd: params.repoPath,
+        sessionId: params.parentSessionId,
+        gitBranch: 'main',
+        timestamp,
+        message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'done' }] },
+      }),
+    ].join('\n')
+  );
+
+  return artifactPath;
+}
+
 async function writeSessionIndexEntry(params: {
   sessionsDir: string;
   pid: number;
@@ -833,6 +876,233 @@ describe('discoverClaudeCodeSessions', () => {
         },
       ],
     });
+  });
+
+  it('discovers nested subagent artifacts and links them to parent sessions', async () => {
+    const fixture = await createFixture();
+    const normalizeClaudeCodeSessions = getNormalizeClaudeCodeSessions();
+
+    expect(normalizeClaudeCodeSessions).toBeTypeOf('function');
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: createJsonlHead({
+        sessionId: SESSION_ONE,
+        cwd: fixture.repoDir,
+        timestamp: '2026-04-09T18:22:00.000Z',
+      }),
+    });
+
+    await writeSubagentArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      parentSessionId: SESSION_ONE,
+      agentId: 'a1234567890',
+      timestamp: new Date().toISOString(),
+    });
+
+    const discovered = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+    const scopedSubagentSessionId = `${SESSION_ONE}__agent-a1234567890`;
+
+    expect(discovered).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: SESSION_ONE,
+          topology: { childSessions: 'authoritative' },
+        }),
+        expect.objectContaining({
+          sessionId: scopedSubagentSessionId,
+          parentSessionId: SESSION_ONE,
+          topology: { childSessions: 'authoritative' },
+        }),
+      ])
+    );
+    expect(discovered.find((session) => session.sessionId === scopedSubagentSessionId)?.isRunning).toBe(true);
+
+    const normalized = normalizeClaudeCodeSessions?.(discovered) ?? [];
+
+    expect(normalized).toHaveLength(1);
+    expect(normalized[0]).toMatchObject({
+      id: `claude~${SESSION_ONE}`,
+      children: [
+        expect.objectContaining({
+          id: scopedSubagentSessionId,
+          parentID: `claude~${SESSION_ONE}`,
+          topology: { childSessions: 'authoritative' },
+        }),
+      ],
+    });
+  });
+
+  it('keeps sidechain child sessions distinct when different parents share the same agent artifact id', async () => {
+    const fixture = await createFixture();
+    const normalizeClaudeCodeSessions = getNormalizeClaudeCodeSessions();
+
+    expect(normalizeClaudeCodeSessions).toBeTypeOf('function');
+
+    const secondParentSessionId = '770e8400-e29b-41d4-a716-446655440000';
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: createJsonlHead({
+        sessionId: SESSION_ONE,
+        cwd: fixture.repoDir,
+        timestamp: '2026-04-09T18:22:00.000Z',
+      }),
+    });
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: secondParentSessionId,
+      jsonlContent: createJsonlHead({
+        sessionId: secondParentSessionId,
+        cwd: fixture.repoDir,
+        timestamp: '2026-04-09T18:24:00.000Z',
+      }),
+    });
+
+    await writeSubagentArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      parentSessionId: SESSION_ONE,
+      agentId: 'shared-agent',
+      timestamp: new Date().toISOString(),
+    });
+
+    await writeSubagentArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      parentSessionId: secondParentSessionId,
+      agentId: 'shared-agent',
+      timestamp: new Date().toISOString(),
+    });
+
+    const discovered = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+
+    const firstScopedSubagentSessionId = `${SESSION_ONE}__agent-shared-agent`;
+    const secondScopedSubagentSessionId = `${secondParentSessionId}__agent-shared-agent`;
+
+    expect(discovered).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: firstScopedSubagentSessionId,
+          parentSessionId: SESSION_ONE,
+          topology: { childSessions: 'authoritative' },
+        }),
+        expect.objectContaining({
+          sessionId: secondScopedSubagentSessionId,
+          parentSessionId: secondParentSessionId,
+          topology: { childSessions: 'authoritative' },
+        }),
+      ])
+    );
+
+    const normalized = normalizeClaudeCodeSessions?.(discovered) ?? [];
+
+    expect(normalized).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: `claude~${SESSION_ONE}`,
+          children: [
+            expect.objectContaining({
+              id: firstScopedSubagentSessionId,
+              parentID: `claude~${SESSION_ONE}`,
+            }),
+          ],
+        }),
+        expect.objectContaining({
+          id: `claude~${secondParentSessionId}`,
+          children: [
+            expect.objectContaining({
+              id: secondScopedSubagentSessionId,
+              parentID: `claude~${secondParentSessionId}`,
+            }),
+          ],
+        }),
+      ])
+    );
+    expect(normalized.find((session) => session.id === firstScopedSubagentSessionId)).toBeUndefined();
+    expect(normalized.find((session) => session.id === secondScopedSubagentSessionId)).toBeUndefined();
+  });
+
+  it('does not apply legacy bare subagent overrides across scoped sidechain children', async () => {
+    const fixture = await createFixture();
+    const overridesModule = await import('@/lib/claudeSessionOverrides');
+    const mockList = vi.mocked(overridesModule.listClaudeSessionOverrides);
+
+    const secondParentSessionId = '880e8400-e29b-41d4-a716-446655440000';
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: createJsonlHead({
+        sessionId: SESSION_ONE,
+        cwd: fixture.repoDir,
+        timestamp: '2026-04-09T18:22:00.000Z',
+      }),
+    });
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: secondParentSessionId,
+      jsonlContent: createJsonlHead({
+        sessionId: secondParentSessionId,
+        cwd: fixture.repoDir,
+        timestamp: '2026-04-09T18:24:00.000Z',
+      }),
+    });
+
+    await writeSubagentArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      parentSessionId: SESSION_ONE,
+      agentId: 'shared-agent',
+      timestamp: new Date().toISOString(),
+    });
+
+    await writeSubagentArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      parentSessionId: secondParentSessionId,
+      agentId: 'shared-agent',
+      timestamp: new Date().toISOString(),
+    });
+
+    mockList.mockResolvedValueOnce([
+      {
+        sessionId: 'agent-shared-agent',
+        archivedAt: 123,
+        updatedAt: 123,
+      },
+    ]);
+
+    const discovered = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+
+    expect(
+      discovered.find((session) => session.sessionId === `${SESSION_ONE}__agent-shared-agent`)?.archivedAt
+    ).toBeUndefined();
+    expect(
+      discovered.find((session) => session.sessionId === `${secondParentSessionId}__agent-shared-agent`)?.archivedAt
+    ).toBeUndefined();
   });
 
   it('keeps Claude discovery flat when parent linkage is malformed, missing locally, or only nested in non-authoritative transcript data', async () => {
