@@ -26,7 +26,7 @@ import { createNodeRequestHeaders, NODE_PROTOCOL_VERSION } from '@/lib/nodeProto
 import { composeProviderSourceKey, detectProviderFromRawId, extractProviderRawId } from '@/lib/session-providers/providerIds';
 import { listNodeRecords, type StoredNodeRecord } from '@/lib/nodeRegistry';
 import { RUNTIME_ROLE_ENV_VAR } from '@/lib/runtimeMode';
-import type { BuiltInHostSource, RemoteHostConfig, SessionProvider } from '@/types';
+import type { BuiltInHostSource, RemoteHostConfig, SessionCapabilities, SessionProvider } from '@/types';
 
 const nodeSessionsTimeoutMs = readPositiveTimeoutEnv('VIBEPULSE_NODE_SESSIONS_TIMEOUT_MS', 6000);
 const CLAUDE_INFERRED_PARENT_MAX_CREATED_GAP_MS = 60_000;
@@ -90,6 +90,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isRemoteSource(source: SessionSource): source is RemoteHostConfig & { hostKind: 'remote' } {
   return source.hostKind === 'remote';
+}
+
+function getRemoteClaudeCapabilities(
+  capabilities: SessionCapabilities | undefined,
+  provider: SessionProvider,
+  source: SessionSource
+): SessionCapabilities | undefined {
+  if (!isRemoteSource(source) || provider !== 'claude-code') {
+    return capabilities;
+  }
+
+  return {
+    openProject: capabilities?.openProject ?? true,
+    openEditor: false,
+    archive: false,
+    delete: false,
+  };
 }
 
 function normalizeNodeBaseUrl(baseUrl: string): string | null {
@@ -428,6 +445,7 @@ function addHostMetadataToChildEntry(
   const inferredProvider = detectProviderFromRawId(child.id);
   const parentProvider = parentSourceSessionKey ? detectProviderFromRawId(parentSourceSessionKey) : undefined;
   const childProvider = inferredProvider === 'claude-code' ? inferredProvider : (parentProvider ?? inferredProvider);
+  const childCapabilities = getRemoteClaudeCapabilities(child.capabilities, childProvider, source);
   const sourceSessionKey = composeProviderSourceKeySafely(source.hostId, rawSessionId, child.readOnly, childProvider);
   if (!sourceSessionKey) {
     return null;
@@ -449,6 +467,7 @@ function addHostMetadataToChildEntry(
     rawSessionId,
     sourceSessionKey,
     readOnly: child.readOnly ?? false,
+    capabilities: childCapabilities,
   };
 }
 
@@ -456,6 +475,7 @@ function addHostMetadataToSession(session: EnrichedSession, source: SessionSourc
   const rawSessionId = session.rawSessionId ?? toProviderRawSessionId(session.id);
   const rawParentId = session.parentID ? toProviderRawSessionId(session.parentID) : session.parentID;
   const sessionProvider = detectProviderFromRawId(session.id);
+  const sessionCapabilities = getRemoteClaudeCapabilities(session.capabilities, sessionProvider, source);
   const sourceSessionKey = composeProviderSourceKeySafely(source.hostId, rawSessionId, session.readOnly, sessionProvider);
   if (!sourceSessionKey) {
     return null;
@@ -484,6 +504,7 @@ function addHostMetadataToSession(session: EnrichedSession, source: SessionSourc
     rawSessionId,
     sourceSessionKey,
     readOnly: session.readOnly ?? false,
+    capabilities: sessionCapabilities,
     children,
   };
 }

@@ -954,6 +954,12 @@ describe('/api/sessions route source handling', () => {
       provider: 'claude-code',
       providerRawId: '550e8400-e29b-41d4-a716-446655440000',
       readOnly: true,
+      capabilities: {
+        openProject: true,
+        openEditor: false,
+        archive: false,
+        delete: false,
+      },
       topology: { childSessions: 'authoritative' },
     });
     expect(remoteParent.children).toEqual([
@@ -968,6 +974,12 @@ describe('/api/sessions route source handling', () => {
         provider: 'claude-code',
         providerRawId: '660e8400-e29b-41d4-a716-446655440000',
         readOnly: true,
+        capabilities: {
+          openProject: true,
+          openEditor: false,
+          archive: false,
+          delete: false,
+        },
         topology: { childSessions: 'authoritative' },
       }),
     ]);
@@ -991,6 +1003,12 @@ describe('/api/sessions route source handling', () => {
           hostLabel: 'Remote Claude',
           hostKind: 'remote',
           readOnly: true,
+          capabilities: {
+            openProject: true,
+            openEditor: false,
+            archive: false,
+            delete: false,
+          },
           topology: { childSessions: 'authoritative' },
           children: [],
         }),
@@ -1102,6 +1120,12 @@ describe('/api/sessions route source handling', () => {
     expect(remoteParent).toMatchObject({
       id: 'remote-claude:claude~550e8400-e29b-41d4-a716-446655440000',
       provider: 'claude-code',
+      capabilities: {
+        openProject: true,
+        openEditor: false,
+        archive: false,
+        delete: false,
+      },
       topology: { childSessions: 'flat' },
       hostId: 'remote-claude',
       hostKind: 'remote',
@@ -1112,6 +1136,12 @@ describe('/api/sessions route source handling', () => {
           id: 'remote-claude:claude~660e8400-e29b-41d4-a716-446655440000',
           parentID: 'remote-claude:claude~550e8400-e29b-41d4-a716-446655440000',
           provider: 'claude-code',
+          capabilities: {
+            openProject: true,
+            openEditor: false,
+            archive: false,
+            delete: false,
+          },
           topology: { childSessions: 'flat' },
           hostId: 'remote-claude',
           hostKind: 'remote',
