@@ -517,17 +517,21 @@ function toAggregateClaudeChildEntry(session: EnrichedSession): ChildEntry {
   return childEntry as ChildEntry;
 }
 
+function hasAuthoritativeClaudeTopology(entry: HostAwareFields): boolean {
+  return entry.provider === 'claude-code' && entry.topology?.childSessions === 'authoritative';
+}
+
 function rebuildAggregateClaudeTopology(sessions: EnrichedSession[]): EnrichedSession[] {
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
   const absorbedChildIds = new Set<string>();
 
   for (const session of sessions) {
-    if (session.provider !== 'claude-code' || typeof session.parentID !== 'string') {
+    if (!hasAuthoritativeClaudeTopology(session) || typeof session.parentID !== 'string') {
       continue;
     }
 
     const parentSession = sessionsById.get(session.parentID);
-    if (!parentSession || parentSession === session || parentSession.provider !== 'claude-code') {
+    if (!parentSession || parentSession === session || !hasAuthoritativeClaudeTopology(parentSession)) {
       continue;
     }
 

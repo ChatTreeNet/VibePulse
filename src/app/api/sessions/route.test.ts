@@ -736,10 +736,7 @@ describe('/api/sessions route source handling', () => {
             realTimeStatus: 'busy',
             waitingForUser: false,
             readOnly: true,
-            topology: {
-              authoritative: true,
-              role: 'parent',
-            },
+            topology: { childSessions: 'authoritative' },
             children: [],
             time: { created: 2_000, updated: Date.now() - 1_000 },
           },
@@ -757,11 +754,7 @@ describe('/api/sessions route source handling', () => {
             realTimeStatus: 'busy',
             waitingForUser: false,
             readOnly: true,
-            topology: {
-              authoritative: true,
-              role: 'child',
-              parentSessionId: '550e8400-e29b-41d4-a716-446655440000',
-            },
+            topology: { childSessions: 'authoritative' },
             children: [],
             time: { created: 2_100, updated: Date.now() - 900 },
           },
@@ -793,10 +786,7 @@ describe('/api/sessions route source handling', () => {
       provider: 'claude-code',
       providerRawId: '550e8400-e29b-41d4-a716-446655440000',
       readOnly: true,
-      topology: {
-        authoritative: true,
-        role: 'parent',
-      },
+      topology: { childSessions: 'authoritative' },
     });
     expect(claudeParent.children).toEqual([
       expect.objectContaining({
@@ -807,11 +797,7 @@ describe('/api/sessions route source handling', () => {
         provider: 'claude-code',
         providerRawId: '660e8400-e29b-41d4-a716-446655440000',
         readOnly: true,
-        topology: {
-          authoritative: true,
-          role: 'child',
-          parentSessionId: '550e8400-e29b-41d4-a716-446655440000',
-        },
+        topology: { childSessions: 'authoritative' },
       }),
     ]);
     expect(
@@ -837,7 +823,7 @@ describe('/api/sessions route source handling', () => {
             realTimeStatus: 'busy',
             waitingForUser: false,
             readOnly: true,
-            topology: { authoritative: true, role: 'parent' },
+            topology: { childSessions: 'authoritative' },
             children: [],
           },
         ],
@@ -881,7 +867,7 @@ describe('/api/sessions route source handling', () => {
                 realTimeStatus: 'busy',
                 waitingForUser: false,
                 readOnly: true,
-                topology: { authoritative: true, role: 'parent' },
+                topology: { childSessions: 'authoritative' },
                 children: [],
                 time: { created: 2_000, updated: Date.now() - 1_000 },
               },
@@ -899,11 +885,7 @@ describe('/api/sessions route source handling', () => {
                 realTimeStatus: 'busy',
                 waitingForUser: false,
                 readOnly: true,
-                topology: {
-                  authoritative: true,
-                  role: 'child',
-                  parentSessionId: '550e8400-e29b-41d4-a716-446655440000',
-                },
+                topology: { childSessions: 'authoritative' },
                 children: [],
                 time: { created: 2_100, updated: Date.now() - 900 },
               },
@@ -921,11 +903,7 @@ describe('/api/sessions route source handling', () => {
                 realTimeStatus: 'idle',
                 waitingForUser: true,
                 readOnly: true,
-                topology: {
-                  authoritative: true,
-                  role: 'child',
-                  parentSessionId: '999e8400-e29b-41d4-a716-446655440000',
-                },
+                topology: { childSessions: 'authoritative' },
                 children: [],
                 time: { created: 2_200, updated: Date.now() - 800 },
               },
@@ -976,7 +954,7 @@ describe('/api/sessions route source handling', () => {
       provider: 'claude-code',
       providerRawId: '550e8400-e29b-41d4-a716-446655440000',
       readOnly: true,
-      topology: { authoritative: true, role: 'parent' },
+      topology: { childSessions: 'authoritative' },
     });
     expect(remoteParent.children).toEqual([
       expect.objectContaining({
@@ -990,11 +968,7 @@ describe('/api/sessions route source handling', () => {
         provider: 'claude-code',
         providerRawId: '660e8400-e29b-41d4-a716-446655440000',
         readOnly: true,
-        topology: {
-          authoritative: true,
-          role: 'child',
-          parentSessionId: '550e8400-e29b-41d4-a716-446655440000',
-        },
+        topology: { childSessions: 'authoritative' },
       }),
     ]);
     const localClaudeParent = data.sessions.find(
@@ -1017,11 +991,7 @@ describe('/api/sessions route source handling', () => {
           hostLabel: 'Remote Claude',
           hostKind: 'remote',
           readOnly: true,
-          topology: {
-            authoritative: true,
-            role: 'child',
-            parentSessionId: '999e8400-e29b-41d4-a716-446655440000',
-          },
+          topology: { childSessions: 'authoritative' },
           children: [],
         }),
       ])
@@ -1047,11 +1017,7 @@ describe('/api/sessions route source handling', () => {
             realTimeStatus: 'idle',
             waitingForUser: true,
             readOnly: true,
-            topology: {
-              authoritative: true,
-              role: 'child',
-              parentSessionId: 'parent-1',
-            },
+            topology: { childSessions: 'authoritative' },
             children: [],
           },
         ],
@@ -1091,15 +1057,90 @@ describe('/api/sessions route source handling', () => {
           rawSessionId: '660e8400-e29b-41d4-a716-446655440000',
           sourceSessionKey: 'local:claude~660e8400-e29b-41d4-a716-446655440000',
           readOnly: true,
-          topology: {
-            authoritative: true,
-            role: 'child',
-            parentSessionId: 'parent-1',
-          },
+          topology: { childSessions: 'authoritative' },
           children: [],
         }),
       ])
     );
+  });
+
+  it('keeps flat Claude rows with parent ids top-level instead of rebuilding non-authoritative topology', async () => {
+    setupLocalSessionsMocks();
+    mockClaudeLocalProviderGetSessionsResult.mockResolvedValue({
+      payload: {
+        sessions: [
+          {
+            id: 'claude~550e8400-e29b-41d4-a716-446655440000',
+            slug: '550e8400-e29b-41d4-a716-446655440000',
+            title: 'Flat Claude Parent',
+            directory: '/repo/project-one',
+            projectName: 'project-one',
+            branch: 'main',
+            provider: 'claude-code',
+            providerRawId: '550e8400-e29b-41d4-a716-446655440000',
+            rawSessionId: '550e8400-e29b-41d4-a716-446655440000',
+            realTimeStatus: 'busy',
+            waitingForUser: false,
+            readOnly: true,
+            topology: { childSessions: 'flat' },
+            children: [],
+            time: { created: 2_000, updated: Date.now() - 1_000 },
+          },
+          {
+            id: 'claude~660e8400-e29b-41d4-a716-446655440000',
+            slug: '660e8400-e29b-41d4-a716-446655440000',
+            title: 'Flat Claude Child',
+            directory: '/repo/project-one',
+            projectName: 'project-one',
+            branch: 'main',
+            parentID: 'claude~550e8400-e29b-41d4-a716-446655440000',
+            provider: 'claude-code',
+            providerRawId: '660e8400-e29b-41d4-a716-446655440000',
+            rawSessionId: '660e8400-e29b-41d4-a716-446655440000',
+            realTimeStatus: 'busy',
+            waitingForUser: false,
+            readOnly: true,
+            topology: { childSessions: 'flat' },
+            children: [],
+            time: { created: 2_100, updated: Date.now() - 900 },
+          },
+        ],
+        processHints: [],
+      },
+      sourceMeta: { online: true },
+    });
+
+    const response = await POST(
+      new Request('http://localhost/api/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sources: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local' }],
+        }),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+          topology: { childSessions: 'flat' },
+          children: [],
+        }),
+        expect.objectContaining({
+          id: 'local:claude~660e8400-e29b-41d4-a716-446655440000',
+          parentID: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+          topology: { childSessions: 'flat' },
+          children: [],
+        }),
+      ])
+    );
+    const flatParent = data.sessions.find(
+      (session: any) => session.id === 'local:claude~550e8400-e29b-41d4-a716-446655440000'
+    );
+    expect(flatParent.children).toEqual([]);
   });
 
   it('keeps OpenCode-only local polling behavior when Claude artifacts are missing or empty', async () => {
