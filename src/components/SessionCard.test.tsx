@@ -659,4 +659,17 @@ describe('SessionCard Provider Visuals', () => {
     renderWithProviders(<SessionCard card={createCard({ provider: 'claude-code' })} />);
     expect(screen.getByTitle('Idle').className).toContain('rotate-45');
   });
+
+  it('does not render transcript affordances for Claude cards even when transcript metadata exists', () => {
+    renderWithProviders(<SessionCard card={createCard({
+      provider: 'claude-code',
+      readOnly: true,
+      hasTranscript: true,
+      rawSessionId: '550e8400-e29b-41d4-a716-446655440000',
+      id: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+    })} />);
+
+    expect(screen.queryByRole('button', { name: /transcript/i })).toBeNull();
+    expect(screen.queryByText(/transcript/i)).toBeNull();
+  });
 });

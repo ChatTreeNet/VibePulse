@@ -604,4 +604,55 @@ describe('useOpencodeSync provider defaults', () => {
 
         unmount();
     });
+
+    it('keeps OpenCode SSE updates scoped to plain local ids when a Claude session shares the same raw uuid', () => {
+        const sharedUuid = '550e8400-e29b-41d4-a716-446655440000';
+        const openCodeSession = createSession({
+            id: `local:${sharedUuid}`,
+            rawSessionId: sharedUuid,
+            hostId: 'local',
+            hostLabel: 'Local',
+            hostKind: 'local',
+            provider: 'opencode',
+            readOnly: false,
+        });
+        const claudeSession = createSession({
+            id: `local:claude~${sharedUuid}`,
+            rawSessionId: sharedUuid,
+            hostId: 'local',
+            hostLabel: 'Local',
+            hostKind: 'local',
+            provider: 'claude-code',
+            providerRawId: sharedUuid,
+            readOnly: true,
+        });
+
+        const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
+            sessions: [openCodeSession, claudeSession],
+        });
+
+        act(() => {
+            eventSource.emitMessage({
+                type: 'session.status',
+                properties: {
+                    sessionID: sharedUuid,
+                    status: { type: 'busy' },
+                },
+                timestamp: Date.now(),
+            });
+        });
+
+        const data = queryClient.getQueryData<SessionsQueryData>(queryKey);
+        const updatedOpenCodeSession = data?.sessions.find((s) => s.id === `local:${sharedUuid}`);
+        const updatedClaudeSession = data?.sessions.find((s) => s.id === `local:claude~${sharedUuid}`);
+
+        expect(updatedOpenCodeSession?.provider).toBe('opencode');
+        expect(updatedOpenCodeSession?.realTimeStatus).toBe('busy');
+        expect(updatedClaudeSession?.provider).toBe('claude-code');
+        expect(updatedClaudeSession?.realTimeStatus).toBe('idle');
+        expect(getSseStatusSnapshot().get(`local:${sharedUuid}`)?.status).toBe('busy');
+        expect(getSseStatusSnapshot().has(`local:claude~${sharedUuid}`)).toBe(false);
+
+        unmount();
+    });
 });
