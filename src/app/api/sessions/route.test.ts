@@ -544,6 +544,72 @@ describe('/api/sessions route source handling', () => {
     );
   });
 
+  it('persists inferred Claude provider fields after local host rebinding when upstream rows omit provider metadata', async () => {
+    setupLocalSessionsMocks();
+    mockClaudeLocalProviderGetSessionsResult.mockResolvedValue({
+      payload: {
+        sessions: [
+          {
+            id: 'claude~550e8400-e29b-41d4-a716-446655440000',
+            slug: 'claude~550e8400-e29b-41d4-a716-446655440000',
+            title: 'Claude Session Inferred Provider',
+            directory: '/repo/project-one',
+            projectName: 'project-one',
+            branch: 'main',
+            rawSessionId: '550e8400-e29b-41d4-a716-446655440000',
+            realTimeStatus: 'busy',
+            waitingForUser: false,
+            readOnly: true,
+            children: [
+              {
+                id: 'claude~660e8400-e29b-41d4-a716-446655440000',
+                title: 'Claude Child Inferred Provider',
+                directory: '/repo/project-one',
+                parentID: 'claude~550e8400-e29b-41d4-a716-446655440000',
+                rawSessionId: '660e8400-e29b-41d4-a716-446655440000',
+                realTimeStatus: 'idle',
+                waitingForUser: true,
+                readOnly: true,
+              },
+            ],
+          },
+        ],
+        processHints: [],
+      },
+      sourceMeta: { online: true },
+    });
+
+    const response = await POST(
+      new Request('http://localhost/api/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sources: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local' }],
+        }),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    const parent = data.sessions.find(
+      (session: any) => session.id === 'local:claude~550e8400-e29b-41d4-a716-446655440000'
+    );
+    expect(parent).toBeDefined();
+    expect(parent).toMatchObject({
+      provider: 'claude-code',
+      providerRawId: '550e8400-e29b-41d4-a716-446655440000',
+      sourceSessionKey: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+    });
+    expect(parent.children).toHaveLength(1);
+    expect(parent.children[0]).toMatchObject({
+      id: 'local:claude~660e8400-e29b-41d4-a716-446655440000',
+      parentID: 'local:claude~550e8400-e29b-41d4-a716-446655440000',
+      provider: 'claude-code',
+      providerRawId: '660e8400-e29b-41d4-a716-446655440000',
+      sourceSessionKey: 'local:claude~660e8400-e29b-41d4-a716-446655440000',
+    });
+  });
+
   it('surfaces merged Claude sessions from both current and external local projects without changing read-only provider semantics', async () => {
     setupLocalSessionsMocks();
     mockClaudeLocalProviderGetSessionsResult.mockResolvedValue({

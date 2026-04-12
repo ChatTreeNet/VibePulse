@@ -466,6 +466,11 @@ function addHostMetadataToChildEntry(
         : composeProviderSourceKeySafely(source.hostId, rawParentId, undefined, childProvider) ?? undefined
     )
     : undefined;
+  const normalizedChildProvider = child.provider ?? (childProvider === 'claude-code' ? childProvider : undefined);
+  const normalizedChildProviderRawId =
+    normalizedChildProvider === 'claude-code'
+      ? (child.providerRawId ?? rawSessionId)
+      : child.providerRawId;
 
   return {
     ...child,
@@ -480,6 +485,8 @@ function addHostMetadataToChildEntry(
     sourceSessionKey,
     readOnly: child.readOnly ?? false,
     capabilities: childCapabilities,
+    ...(normalizedChildProvider ? { provider: normalizedChildProvider } : {}),
+    ...(normalizedChildProviderRawId ? { providerRawId: normalizedChildProviderRawId } : {}),
   };
 }
 
@@ -496,6 +503,11 @@ function addHostMetadataToSession(session: EnrichedSession, source: SessionSourc
   const sourceParentKey = rawParentId
     ? (composeProviderSourceKeySafely(source.hostId, rawParentId, undefined, sessionProvider) ?? undefined)
     : undefined;
+  const normalizedSessionProvider = session.provider ?? (sessionProvider === 'claude-code' ? sessionProvider : undefined);
+  const normalizedSessionProviderRawId =
+    normalizedSessionProvider === 'claude-code'
+      ? (session.providerRawId ?? rawSessionId)
+      : session.providerRawId;
   const children: ChildEntry[] = [];
   for (const child of session.children) {
     const enrichedChild = addHostMetadataToChildEntry(child, source, sourceSessionKey);
@@ -517,6 +529,8 @@ function addHostMetadataToSession(session: EnrichedSession, source: SessionSourc
     sourceSessionKey,
     readOnly: session.readOnly ?? false,
     capabilities: sessionCapabilities,
+    ...(normalizedSessionProvider ? { provider: normalizedSessionProvider } : {}),
+    ...(normalizedSessionProviderRawId ? { providerRawId: normalizedSessionProviderRawId } : {}),
     children,
   };
 }
