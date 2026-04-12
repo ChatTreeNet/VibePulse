@@ -9,7 +9,7 @@ A tiny dashboard that sits in your browser tab — tired of switching IDE tabs j
 ## What It Does
 
 - **Kanban board** — Auto-discovers OpenCode sessions and host-global Claude Code sessions, organizes them into Idle / Busy / Review / Done
-- **Remote Nodes** — Connect multiple VibePulse instances to a single hub for a unified view (OpenCode only)
+- **Remote Nodes** — Connect multiple VibePulse instances to a single hub for a unified view
 - **Audio alerts** — Makes a sound when sessions complete or need attention
 - **Zero setup** — No manual card creation; auto-scans ports and processes
 - **Profile switcher** — Flip between Oh My OpenAgent presets without touching config files
@@ -26,14 +26,14 @@ VibePulse includes experimental, capability-aware support for tracking local [Cl
 ## Quick Start
 
 ### Hub Mode (Default)
-Run VibePulse locally to monitor your local OpenCode sessions and manage remote nodes.
+Run VibePulse locally to monitor your local sessions and manage remote nodes.
 ```bash
 npx vibepulse
 ```
 Open http://localhost:3456
 
 ### Node Mode
-Run VibePulse on a remote server to expose its OpenCode sessions to a hub.
+Run VibePulse on a remote server to expose its local OpenCode and Claude Code sessions to a hub.
 ```bash
 npx vibepulse --serve
 ```
@@ -52,9 +52,9 @@ Node mode requires an access token for security. See [Architecture](#architectur
 
 ## Architecture
 
-VibePulse uses a Hub-and-Node architecture to aggregate OpenCode sessions across different machines.
+VibePulse uses a Hub-and-Node architecture to aggregate OpenCode and Claude Code sessions across different machines.
 
-1. **Node**: A VibePulse instance running with `--serve`. It interacts directly with the local OpenCode SDK and exposes an API.
+1. **Node**: A VibePulse instance running with `--serve`. It interacts directly with the local OpenCode SDK and Claude Code file-system artifacts and exposes an API.
 2. **Hub**: The primary VibePulse instance (default mode). It connects to one or more Nodes to collect session data.
 
 ### Connecting a Remote Node
