@@ -23,7 +23,7 @@ import {
 } from '@/lib/sessionArchiveOverrides';
 import { composeSourceKey, parseSourceKey } from '@/lib/hostIdentity';
 import { createNodeRequestHeaders, NODE_PROTOCOL_VERSION } from '@/lib/nodeProtocol';
-import { composeProviderSourceKey, detectProviderFromRawId } from '@/lib/session-providers/providerIds';
+import { composeProviderSourceKey, detectProviderFromRawId, extractProviderRawId } from '@/lib/session-providers/providerIds';
 import { listNodeRecords, type StoredNodeRecord } from '@/lib/nodeRegistry';
 import { RUNTIME_ROLE_ENV_VAR } from '@/lib/runtimeMode';
 import type { BuiltInHostSource, RemoteHostConfig, SessionProvider } from '@/types';
@@ -388,6 +388,10 @@ function toRawSessionId(value: string): string {
   }
 }
 
+function toProviderRawSessionId(value: string): string {
+  return extractProviderRawId(toRawSessionId(value));
+}
+
 function composeSourceKeySafely(hostId: string, sessionId: string): string | undefined {
   try {
     return composeSourceKey(hostId, sessionId);
@@ -417,8 +421,8 @@ function addHostMetadataToChildEntry(
   source: SessionSource,
   parentSourceSessionKey?: string
 ): ChildEntry | null {
-  const rawSessionId = child.rawSessionId ?? toRawSessionId(child.id);
-  const rawParentId = child.parentID ? toRawSessionId(child.parentID) : child.parentID;
+  const rawSessionId = child.rawSessionId ?? toProviderRawSessionId(child.id);
+  const rawParentId = child.parentID ? toProviderRawSessionId(child.parentID) : child.parentID;
   const inferredProvider = detectProviderFromRawId(child.id);
   const parentProvider = parentSourceSessionKey ? detectProviderFromRawId(parentSourceSessionKey) : undefined;
   const childProvider = inferredProvider === 'claude-code' ? inferredProvider : (parentProvider ?? inferredProvider);
@@ -447,8 +451,8 @@ function addHostMetadataToChildEntry(
 }
 
 function addHostMetadataToSession(session: EnrichedSession, source: SessionSource): EnrichedSession | null {
-  const rawSessionId = session.rawSessionId ?? toRawSessionId(session.id);
-  const rawParentId = session.parentID ? toRawSessionId(session.parentID) : session.parentID;
+  const rawSessionId = session.rawSessionId ?? toProviderRawSessionId(session.id);
+  const rawParentId = session.parentID ? toProviderRawSessionId(session.parentID) : session.parentID;
   const sessionProvider = detectProviderFromRawId(session.id);
   const sourceSessionKey = composeProviderSourceKeySafely(source.hostId, rawSessionId, session.readOnly, sessionProvider);
   if (!sourceSessionKey) {
@@ -503,9 +507,50 @@ function addHostMetadataToPayload(payload: Record<string, unknown>, source: Sess
 
   return {
     ...payload,
-    sessions,
+    sessions: rebuildAggregateClaudeTopology(sessions),
     ...(payloadDegraded || droppedSessions > 0 ? { degraded: true } : {}),
   };
+}
+
+function toAggregateClaudeChildEntry(session: EnrichedSession): ChildEntry {
+  const { children: _children, ...childEntry } = session;
+  return childEntry as ChildEntry;
+}
+
+function rebuildAggregateClaudeTopology(sessions: EnrichedSession[]): EnrichedSession[] {
+  const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+  const absorbedChildIds = new Set<string>();
+
+  for (const session of sessions) {
+    if (session.provider !== 'claude-code' || typeof session.parentID !== 'string') {
+      continue;
+    }
+
+    const parentSession = sessionsById.get(session.parentID);
+    if (!parentSession || parentSession === session || parentSession.provider !== 'claude-code') {
+      continue;
+    }
+
+    if (parentSession.hostId !== session.hostId || parentSession.hostKind !== session.hostKind) {
+      continue;
+    }
+
+    const childEntry = toAggregateClaudeChildEntry(session);
+    const existingChildIndex = parentSession.children.findIndex((child) => child.id === childEntry.id);
+    if (existingChildIndex >= 0) {
+      parentSession.children[existingChildIndex] = {
+        ...parentSession.children[existingChildIndex],
+        ...childEntry,
+      };
+    } else {
+      parentSession.children.push(childEntry);
+    }
+
+    sortChildEntries(parentSession.children);
+    absorbedChildIds.add(session.id);
+  }
+
+  return sessions.filter((session) => !absorbedChildIds.has(session.id));
 }
 
 function sortChildEntries(children: ChildEntry[]): void {
@@ -794,7 +839,7 @@ async function handlePost(request: Request) {
   }
 
   return Response.json({
-    sessions: aggregateSessions,
+    sessions: rebuildAggregateClaudeTopology(aggregateSessions),
     processHints: aggregateProcessHints,
     hosts: hostStatuses,
     hostStatuses,
