@@ -256,12 +256,13 @@ describe('transformSession child roll-up semantics', () => {
     });
 
     const card = transformSession(parent);
+    const firstChild = card.children?.[0];
 
     expect(card.status).toBe('review');
     expect(card.opencodeStatus).toBe('busy');
     expect(card.waitingForUser).toBe(true);
     expect(card.debugReason).toBe('waiting_for_user');
-    expect(card.children[0]?.waitingForUser).toBe(true);
+    expect(firstChild?.waitingForUser).toBe(true);
   });
 
   it('ignores malformed Claude child rows so unrelated parents stay idle', () => {
