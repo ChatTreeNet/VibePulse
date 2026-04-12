@@ -14,14 +14,14 @@ A tiny dashboard that sits in your browser tab — tired of switching IDE tabs j
 - **Zero setup** — No manual card creation; auto-scans ports and processes
 - **Profile switcher** — Flip between Oh My OpenAgent presets without touching config files
 
-## Claude Code Support (Phase 1)
+## Claude Code Support
 VibePulse includes experimental, capability-aware support for tracking local [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview) sessions:
 - **Host-Global Discovery:** Automatically detects all Claude Code sessions running on the machine, aggregating projects seamlessly.
 - **Explicit Capabilities:** Supported actions are explicitly modeled per provider. Claude now supports VibePulse-managed `archive` and `delete`, while `openEditor` remains disabled until a provider-safe execution path is defined.
 - **Visual Differentiation:** Mixed environments feature distinct visual indicators distinguishing OpenCode and Claude groups inside projects.
 - **Robust Liveness Semantics:** Stale busy states and zombie parsing are prevented at the provider boundary using stricter liveness verification.
-- **Polling Integration:** Claude status updates via polling only. Live SSE streams and node-protocol propagation to remote hubs are not supported in Phase 1.
-- **No Transcript Rendering:** Message contents and child sessions are not exposed.
+- **Polling Integration:** Claude status updates via polling only locally and remotely. Live SSE streams and real-time event parity are not supported.
+- **Artifact-Backed Child Topology:** Child sessions are exposed only when verified by authoritative artifact-backed linkage. No transcript rendering is supported.
 
 ## Quick Start
 
@@ -73,18 +73,18 @@ npm install
 npm run dev
 ```
 
-### Phase 1 Verification
-If modifying Claude Code integration, run the targeted regression matrix to ensure discovery order, bounded idle fallback, capability alignment, stronger liveness semantics, and mixed Claude/OpenCode visual behavior all stay intact:
+### Claude Integration Verification
+If modifying Claude Code integration, run the targeted regression matrix to ensure discovery order, bounded idle fallback, capability alignment, artifact-backed child topology, stronger liveness semantics, and mixed Claude/OpenCode visual behavior all stay intact:
 
 | Area | Command |
 |------|---------|
-| Claude discovery + liveness rules | `npm run test:run -- src/lib/session-providers/claudeCode.test.ts` |
+| Claude discovery + topology rules | `npm run test:run -- src/lib/session-providers/claudeCode.test.ts` |
 | Capability alignment + rejection | `npm run test:run -- src/lib/session-providers/providerIds.test.ts src/app/api/sessions/route.test.ts` |
 | Mixed project-group visual behavior | `npm run test:run -- src/components/ProjectCard.test.tsx src/components/SessionCard.test.tsx` |
-| Local provider aggregation and route wiring | `npm run test:run -- src/lib/transform.test.ts src/hooks/useOpencodeSync.test.ts` |
+| Local provider aggregation and route wiring | `npm run test:run -- src/lib/transform.test.ts src/hooks/useOpencodeSync.test.ts src/app/api/node/sessions/route.test.ts` |
 
 ```bash
-npm run test:run -- src/lib/session-providers/providerIds.test.ts src/lib/session-providers/claudeCode.test.ts src/components/ProjectCard.test.tsx src/components/SessionCard.test.tsx src/app/api/sessions/route.test.ts src/lib/transform.test.ts src/hooks/useOpencodeSync.test.ts
+npm run test:run -- src/lib/session-providers/providerIds.test.ts src/lib/session-providers/claudeCode.test.ts src/components/ProjectCard.test.tsx src/components/SessionCard.test.tsx src/app/api/sessions/route.test.ts src/app/api/node/sessions/route.test.ts src/lib/transform.test.ts src/hooks/useOpencodeSync.test.ts
 npm run lint && npm run build
 ```
 

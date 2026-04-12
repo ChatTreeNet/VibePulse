@@ -158,12 +158,13 @@ sequenceDiagram
 
 ---
 
-## Claude Code Detection (Phase 1)
+## Claude Code Support Boundary
 
-VibePulse includes experimental host-global discovery for Claude Code sessions (`provider = 'claude-code'`). The detection mechanisms used for OpenCode differ for Claude Code due to the nature of Phase-1 integration:
+VibePulse includes experimental host-global discovery for Claude Code sessions (`provider = 'claude-code'`). The detection mechanisms used for OpenCode differ for Claude Code due to its specific provider boundaries:
 
 - **Host-Global Discovery:** Uses file-system artifacts (`~/.claude/projects/`, `~/.claude/sessions/`) across the entire host to automatically detect active projects without requiring current-repo constraints.
-- **Polling Isolation:** Claude Code sessions are discovered entirely via local polling without live SSE stream propagation or node-protocol support.
+- **Artifact-Backed Child Topology:** Nested child sessions are fully supported via local polling and remote node-payload propagation. They roll up naturally into parent card logic. This topology relies entirely on explicit artifact-backed relationships—preventing "guessed" relationships.
+- **Polling Isolation & No SSE Parity:** Claude status updates, including child topology, work via polling only. There is no Claude SSE stream, and therefore no event-level parity with OpenCode's real-time channels.
 - **Robust Stale-Busy Mitigation:**
   - Status inference uses explicit liveness checks (pid polling/verification) at the provider boundary to ensure zombie processes do not stall the UI in a "busy" state.
   - Active pid mapping yields `realTimeStatus = 'busy'`.
