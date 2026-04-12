@@ -511,7 +511,16 @@ export function KanbanBoard({
 
     const cards: KanbanCard[] = useMemo(() => {
         const allCards = transformSessions(enrichedSessions);
-        let filtered = allCards;
+        
+        const childSessionIds = new Set<string>();
+        for (const card of allCards) {
+            for (const child of card.children || []) {
+                childSessionIds.add(child.id);
+            }
+        }
+        
+        let filtered = allCards.filter(card => !childSessionIds.has(card.id));
+        
         if (filteredHostIds) {
             filtered = filtered.filter(card => {
                 const cardHostId = card.hostId || 'local';

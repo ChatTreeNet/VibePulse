@@ -455,7 +455,7 @@ function SessionRow({ card, isLast, isActionPending, onActionError, onPendingAct
                             <span className="text-gray-300 dark:text-zinc-600 text-xs flex-shrink-0 font-mono leading-none">
                                 {i === visibleChildren.length - 1 ? '└' : '├'}
                             </span>
-                            <StatusDot status={child.realTimeStatus} waitingForUser={child.waitingForUser} />
+                            <StatusDot status={child.realTimeStatus} waitingForUser={child.waitingForUser} provider={card.provider} />
                             <span className="text-xs text-gray-500 dark:text-gray-400 truncate flex-1 min-w-0">
                                 {child.title || 'Subagent'}
                             </span>
@@ -468,11 +468,22 @@ function SessionRow({ card, isLast, isActionPending, onActionError, onPendingAct
 }
 
 export function ProjectCard({ projectName, branch, cards, readOnly = false, hostLabel: _hostLabel, multipleHostsEnabled }: ProjectCardProps) {
-    const firstCard = cards[0];
-    const actionableCards = useMemo(
-        () => cards,
-        [cards]
-    );
+    const childSessionIds = useMemo(() => {
+        const ids = new Set<string>();
+        for (const card of cards) {
+            for (const child of card.children || []) {
+                ids.add(child.id);
+            }
+        }
+        return ids;
+    }, [cards]);
+
+    const deduplicatedCards = useMemo(() => {
+        return cards.filter(card => !childSessionIds.has(card.id));
+    }, [cards, childSessionIds]);
+
+    const firstCard = deduplicatedCards[0] ?? cards[0];
+    const actionableCards = deduplicatedCards;
     const primaryCard = actionableCards[0] ?? firstCard;
     const hostLabel = _hostLabel ?? firstCard?.hostLabel;
     const hostId = primaryCard?.hostId ?? firstCard?.hostId;
@@ -617,12 +628,12 @@ export function ProjectCard({ projectName, branch, cards, readOnly = false, host
                     </span>
                 </div>
                 <div className="flex items-center flex-shrink-0 bg-gray-100 dark:bg-zinc-700/50 rounded-full h-6 border border-gray-200/50 dark:border-zinc-700">
-                    {cards.length > 1 && (
+                    {deduplicatedCards.length > 1 && (
                         <span className="text-[11px] font-medium text-gray-500 dark:text-gray-400 pl-2.5 pr-1">
-                            {cards.length}
+                            {deduplicatedCards.length}
                         </span>
                     )}
-                    <div className={`${cards.length > 1 ? 'pr-0.5' : 'px-0.5'}`}>
+                    <div className={`${deduplicatedCards.length > 1 ? 'pr-0.5' : 'px-0.5'}`}>
                         <HeaderActionMenu cards={actionableCards} isActionPending={isActionPending} onActionError={setActionError} onPendingActionChange={setPendingAction} readOnlyMode={isReadOnly} />
                     </div>
                 </div>
@@ -630,11 +641,11 @@ export function ProjectCard({ projectName, branch, cards, readOnly = false, host
 
             {/* Session rows */}
             <div className="border-t border-gray-100 dark:border-zinc-700/50">
-                {cards.map((card, index) => (
+                {deduplicatedCards.map((card, index) => (
                     <SessionRow
                         key={card.id}
                         card={card}
-                        isLast={index === cards.length - 1}
+                        isLast={index === deduplicatedCards.length - 1}
                         isActionPending={isActionPending}
                         onActionError={setActionError}
                         onPendingActionChange={setPendingAction}

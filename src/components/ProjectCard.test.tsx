@@ -958,4 +958,56 @@ describe('ProjectCard Provider Visuals', () => {
         expect(screen.queryByTitle('Provider: Mixed (OpenCode & Claude)')).toBeNull();
         expect(screen.getAllByTitle('Idle').some((node) => node.className.includes('rotate-45'))).toBe(true);
     });
+
+    it('renders verified Claude child rows nested under parent card', () => {
+        const parentCard: KanbanCard = {
+            ...mockCard,
+            id: 'parent-1',
+            provider: 'claude-code',
+            children: [{
+                id: 'child-1',
+                title: 'Nested Claude Child',
+                realTimeStatus: 'busy',
+                waitingForUser: false,
+                createdAt: 1000,
+                updatedAt: 2000
+            }]
+        };
+        renderWithProviders(<ProjectCard projectName="Prj" cards={[parentCard]} />);
+        
+        expect(screen.getByText('Nested Claude Child')).toBeTruthy();
+        
+        // Find the wrapper with Running title, and check its inner child for the shape class
+        const statusNode = screen.getByTitle('Running');
+        expect(statusNode.innerHTML).toContain('rotate-45');
+    });
+
+    it('suppresses duplicate standalone Claude child cards if they are also passed as top-level cards', () => {
+        const childCard: KanbanCard = {
+            ...mockCard,
+            id: 'child-1',
+            title: 'Standalone Child',
+            provider: 'claude-code'
+        };
+        const parentCard: KanbanCard = {
+            ...mockCard,
+            id: 'parent-1',
+            title: 'Parent Card',
+            provider: 'claude-code',
+            children: [{
+                id: 'child-1',
+                title: 'Nested Claude Child',
+                realTimeStatus: 'busy',
+                waitingForUser: false,
+                createdAt: 1000,
+                updatedAt: 2000
+            }]
+        };
+        
+        renderWithProviders(<ProjectCard projectName="Prj" cards={[parentCard, childCard]} />);
+        
+        expect(screen.queryByText('Standalone Child')).toBeNull();
+        expect(screen.getByText('Parent Card')).toBeTruthy();
+        expect(screen.getByText('Nested Claude Child')).toBeTruthy();
+    });
 });

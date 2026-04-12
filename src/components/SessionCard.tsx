@@ -375,7 +375,33 @@ export function SessionCard({ card }: SessionCardProps) {
                         </div>
                     </div>
                 )}
+                {(() => {
+                    const visibleChildren = (card.children || []).filter(
+                        (child) => child.realTimeStatus !== 'idle' || child.waitingForUser
+                    );
+                    if (visibleChildren.length === 0) return null;
+                    return (
+                        <div className="mt-3 bg-gray-50/50 dark:bg-zinc-900/30 -mx-4 px-4 py-2 border-y border-gray-100 dark:border-zinc-700/50">
+                            {visibleChildren.map((child, i) => (
+                                <div
+                                    key={child.id}
+                                    className="flex items-center gap-2 pl-2 pr-3 py-1.5"
+                                    title={child.debugReason ? `Reason: ${child.debugReason}` : 'Subagent'}
+                                >
+                                    <span className="text-gray-300 dark:text-zinc-600 text-xs flex-shrink-0 font-mono leading-none">
+                                        {i === visibleChildren.length - 1 ? '└' : '├'}
+                                    </span>
+                                    <StatusIndicator status={child.realTimeStatus} waitingForUser={child.waitingForUser} provider={card.provider} />
+                                    <span className="text-xs text-gray-500 dark:text-gray-400 truncate flex-1 min-w-0">
+                                        {child.title || 'Subagent'}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    );
+                })()}
                 {isConfigPendingForRemoteOpen ? (
+
                     <div className="mt-3 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-700 dark:border-blue-900/40 dark:bg-blue-900/20 dark:text-blue-300">
                         Loading open settings…
                     </div>
