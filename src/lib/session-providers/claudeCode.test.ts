@@ -1456,6 +1456,63 @@ describe('normalizeClaudeCodeSessions', () => {
     });
   });
 
+  it('preserves deeper authoritative descendants by flattening them under the root parent session', () => {
+    const normalizeClaudeCodeSessions = getNormalizeClaudeCodeSessions();
+
+    expect(normalizeClaudeCodeSessions).toBeTypeOf('function');
+
+    const grandchildSessionId = '770e8400-e29b-41d4-a716-446655440000';
+    const sessions = normalizeClaudeCodeSessions?.([
+      makeDiscoveredSession({
+        sessionId: SESSION_ONE,
+        cwd: '/tmp/root-parent',
+        projectPath: '/tmp/root-parent',
+        projectName: 'root-parent',
+        isRunning: true,
+        topology: { childSessions: 'authoritative' },
+      }),
+      makeDiscoveredSession({
+        sessionId: SESSION_TWO,
+        cwd: '/tmp/root-parent',
+        projectPath: '/tmp/root-parent',
+        projectName: 'root-parent',
+        parentSessionId: SESSION_ONE,
+        isRunning: false,
+        waitingForUser: true,
+        topology: { childSessions: 'authoritative' },
+      }),
+      makeDiscoveredSession({
+        sessionId: grandchildSessionId,
+        cwd: '/tmp/root-parent',
+        projectPath: '/tmp/root-parent',
+        projectName: 'root-parent',
+        parentSessionId: SESSION_TWO,
+        isRunning: false,
+        waitingForUser: false,
+        topology: { childSessions: 'authoritative' },
+      }),
+    ]) ?? [];
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      id: `claude~${SESSION_ONE}`,
+      topology: { childSessions: 'authoritative' },
+      children: expect.arrayContaining([
+        expect.objectContaining({
+          id: `claude~${SESSION_TWO}`,
+          parentID: `claude~${SESSION_ONE}`,
+          providerRawId: SESSION_TWO,
+        }),
+        expect.objectContaining({
+          id: `claude~${grandchildSessionId}`,
+          parentID: `claude~${SESSION_ONE}`,
+          providerRawId: grandchildSessionId,
+        }),
+      ]),
+    });
+    expect(sessions[0].children).toHaveLength(2);
+  });
+
   it('keeps Claude sessions flat when linkage is missing or topology is not authoritative', () => {
     const normalizeClaudeCodeSessions = getNormalizeClaudeCodeSessions();
 

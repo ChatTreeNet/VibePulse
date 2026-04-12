@@ -171,8 +171,30 @@ export function normalizeClaudeCodeSessions(
 ): ClaudeCodeNormalizedSession[] {
   const normalizedSessions = sessions.map(normalizeClaudeCodeSession);
   const sessionById = new Map(normalizedSessions.map((session) => [session.id, session]));
+  const parentByChildId = new Map<string, string>();
   const childrenByParentId = new Map<string, ChildEntry[]>();
   const nestedChildIds = new Set<string>();
+
+  const resolveRootParentId = (childId: string): string | undefined => {
+    const visited = new Set<string>([childId]);
+    let currentParentId = parentByChildId.get(childId);
+
+    while (currentParentId) {
+      if (visited.has(currentParentId)) {
+        return undefined;
+      }
+
+      visited.add(currentParentId);
+      const nextParentId = parentByChildId.get(currentParentId);
+      if (!nextParentId) {
+        return currentParentId;
+      }
+
+      currentParentId = nextParentId;
+    }
+
+    return undefined;
+  };
 
   for (const session of sessions) {
     if (session.topology?.childSessions !== 'authoritative' || !session.parentSessionId) {
@@ -193,9 +215,28 @@ export function normalizeClaudeCodeSessions(
       continue;
     }
 
-    const parentChildren = childrenByParentId.get(normalizedParentId) ?? [];
-    parentChildren.push(toClaudeChildEntry(normalizedChild, normalizedParentId));
-    childrenByParentId.set(normalizedParentId, parentChildren);
+    parentByChildId.set(normalizedChildId, normalizedParentId);
+  }
+
+  for (const [normalizedChildId] of parentByChildId) {
+    const normalizedChild = sessionById.get(normalizedChildId);
+    if (!normalizedChild) {
+      continue;
+    }
+
+    const normalizedRootParentId = resolveRootParentId(normalizedChildId);
+    if (!normalizedRootParentId || normalizedRootParentId === normalizedChildId) {
+      continue;
+    }
+
+    const normalizedRootParent = sessionById.get(normalizedRootParentId);
+    if (!normalizedRootParent || normalizedRootParent.topology.childSessions !== 'authoritative') {
+      continue;
+    }
+
+    const rootChildren = childrenByParentId.get(normalizedRootParentId) ?? [];
+    rootChildren.push(toClaudeChildEntry(normalizedChild, normalizedRootParentId));
+    childrenByParentId.set(normalizedRootParentId, rootChildren);
     nestedChildIds.add(normalizedChildId);
   }
 
