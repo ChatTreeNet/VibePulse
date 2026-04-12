@@ -11,6 +11,31 @@ interface EnrichedSession extends OpencodeSession {
 type EnrichedChild = NonNullable<EnrichedSession['children']>[number];
 
 const RECENT_ACTIVITY_FALLBACK_MS = 5 * 60 * 1000;
+const CHILD_BLOCKER_STALENESS_MS = 10 * 60 * 1000;
+
+function getChildActivityTimestamp(child: EnrichedChild | undefined): number | undefined {
+    const childUpdatedAt = child?.time?.updated || child?.time?.created;
+    return typeof childUpdatedAt === 'number' && childUpdatedAt > 0 ? childUpdatedAt : undefined;
+}
+
+function isVerifiedClaudeChild(parent: EnrichedSession, child: EnrichedChild | undefined): boolean {
+    if (!child || child.provider !== 'claude-code') {
+        return true;
+    }
+
+    const parentProvider = parent.provider ?? DEFAULT_PROVIDER_CONTEXT.provider;
+    if (parentProvider !== 'claude-code') {
+        return false;
+    }
+
+    return (
+        typeof child.id === 'string' &&
+        child.id.length > 0 &&
+        child.id !== parent.id &&
+        child.parentID === parent.id &&
+        getChildActivityTimestamp(child) !== undefined
+    );
+}
 
 function isRecentlyUpdated(updatedAt: number | undefined, now: number): boolean {
     return typeof updatedAt === 'number' && updatedAt > 0 && now - updatedAt <= RECENT_ACTIVITY_FALLBACK_MS;
@@ -26,7 +51,7 @@ function deriveChildDebugReason(child: EnrichedChild | undefined, now: number): 
     }
 
     if (childStatus === 'busy') {
-        const childUpdatedAt = child.time?.updated || child.time?.created;
+        const childUpdatedAt = getChildActivityTimestamp(child);
         return isRecentlyUpdated(childUpdatedAt, now) ? 'child_recent_activity' : 'child_unknown_fallback';
     }
 
@@ -80,14 +105,13 @@ function deriveSessionDebugReason({
 export function transformSession(session: EnrichedSession): KanbanCard {
     let status: KanbanColumn;
     const children = session.children || [];
+    const rollupChildren = children.filter((child) => isVerifiedClaudeChild(session, child));
     const sessionSlug = typeof session.slug === 'string' ? session.slug : '';
 
-    // Staleness window: child blockers older than this don't keep parent in review
-    const CHILD_BLOCKER_STALENESS_MS = 10 * 60 * 1000; // 10 minutes
     const now = Date.now();
 
     const realTimeStatus = session.realTimeStatus || 'idle';
-    const hasActiveChildren = children.some((child) => {
+    const hasActiveChildren = rollupChildren.some((child) => {
         const childStatus = child.realTimeStatus || 'idle';
         return childStatus === 'busy' || childStatus === 'retry';
     });
@@ -97,24 +121,24 @@ export function transformSession(session: EnrichedSession): KanbanCard {
             : (realTimeStatus === 'busy' || hasActiveChildren)
                 ? 'busy'
                 : 'idle';
-    const hasWaitingChildren = children.some((child) => {
+    const hasWaitingChildren = rollupChildren.some((child) => {
         const childStatus = child.realTimeStatus || 'idle';
         const isBlocker = childStatus === 'retry' || (childStatus !== 'idle' && !!child.waitingForUser);
         if (!isBlocker) return false;
         // Only consider fresh blockers (within staleness window)
-        const childUpdated = child.time?.updated || now;
-        return (now - childUpdated) < CHILD_BLOCKER_STALENESS_MS;
+        const childUpdated = getChildActivityTimestamp(child);
+        return childUpdated !== undefined && (now - childUpdated) < CHILD_BLOCKER_STALENESS_MS;
     });
     const parentWaiting = !!session.waitingForUser;
     const waitingForUser =
         effectiveStatus === 'retry' ||
         parentWaiting ||
         (effectiveStatus === 'busy' && hasWaitingChildren);
-    const firstActiveChild = children.find((child) => {
+    const firstActiveChild = rollupChildren.find((child) => {
         const childStatus = child.realTimeStatus || 'idle';
         return childStatus === 'busy' || childStatus === 'retry';
     });
-    const firstWaitingChild = children.find((child) => {
+    const firstWaitingChild = rollupChildren.find((child) => {
         const childStatus = child.realTimeStatus || 'idle';
         return childStatus === 'retry' || (childStatus !== 'idle' && !!child.waitingForUser);
     });
