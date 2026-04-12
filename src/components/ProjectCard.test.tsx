@@ -120,6 +120,12 @@ describe('ProjectCard', () => {
             hostLabel: 'Node 1',
             hostKind: 'remote',
             hostBaseUrl: 'https://node-1.test',
+            capabilities: {
+                openProject: true,
+                openEditor: true,
+                archive: true,
+                delete: true,
+            },
         };
         const queryClient = createQueryClient();
         queryClient.setQueryData(['opencode-config'], { vibepulse: { openEditorTargetMode: 'remote' } });
@@ -148,6 +154,49 @@ describe('ProjectCard', () => {
                 method: 'POST',
             }));
         });
+    });
+
+    it('falls back to file-based open for remote projects when openEditor capability is unsupported', async () => {
+        const remoteCard: KanbanCard = {
+            ...mockCard,
+            id: 'node-1:123',
+            hostId: 'node-1',
+            hostLabel: 'Node 1',
+            hostKind: 'remote',
+            hostBaseUrl: 'https://node-1.test',
+            provider: 'claude-code',
+            readOnly: true,
+            capabilities: {
+                openProject: true,
+                openEditor: false,
+                archive: false,
+                delete: false,
+            },
+        };
+        const queryClient = createQueryClient();
+        queryClient.setQueryData(['opencode-config'], { vibepulse: { openEditorTargetMode: 'remote' } });
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+            return new Response(JSON.stringify({ success: true }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        });
+        Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+
+        render(
+            <QueryClientProvider client={queryClient}>
+                <ProjectCard projectName="TestProject" cards={[remoteCard]} />
+            </QueryClientProvider>
+        );
+
+        const { fireEvent } = TestingLibraryReact;
+        await TestingLibraryReact.waitFor(() => {
+            expect(screen.getByTitle('Open project')).not.toBeDisabled();
+        });
+        fireEvent.click(screen.getByTitle('Open project'));
+
+        expect(window.location.assign).toHaveBeenCalledWith('vscode://file/path/to/project');
+        expect((fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>).filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
     });
 
     it('shows an explicit loading state while a remote project open request is in flight', async () => {
@@ -1010,6 +1059,42 @@ describe('ProjectCard Provider Visuals', () => {
         expect(screen.queryByText('Standalone Child')).toBeNull();
         expect(screen.getByText('Parent Card')).toBeTruthy();
         expect(screen.getByText('Nested Claude Child')).toBeTruthy();
+    });
+
+    it('keeps duplicate top-level cards when they carry their own descendants', () => {
+        const intermediateCard: KanbanCard = {
+            ...mockCard,
+            id: 'child-1',
+            title: 'Intermediate Top-level Card',
+            provider: 'claude-code',
+            children: [{
+                id: 'grandchild-1',
+                title: 'Nested Claude Grandchild',
+                realTimeStatus: 'busy',
+                waitingForUser: false,
+                createdAt: 1200,
+                updatedAt: 2200,
+            }],
+        };
+        const parentCard: KanbanCard = {
+            ...mockCard,
+            id: 'parent-1',
+            title: 'Parent Card',
+            provider: 'claude-code',
+            children: [{
+                id: 'child-1',
+                title: 'Nested Claude Child',
+                realTimeStatus: 'busy',
+                waitingForUser: false,
+                createdAt: 1000,
+                updatedAt: 2000,
+            }],
+        };
+
+        renderWithProviders(<ProjectCard projectName="Prj" cards={[parentCard, intermediateCard]} />);
+
+        expect(screen.getByText('Intermediate Top-level Card')).toBeTruthy();
+        expect(screen.getByText('Nested Claude Grandchild')).toBeTruthy();
     });
 
     it('shows recently updated idle children to avoid delegated-session disappearance', () => {

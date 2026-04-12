@@ -519,7 +519,13 @@ export function KanbanBoard({
             }
         }
         
-        let filtered = allCards.filter(card => !childSessionIds.has(card.id));
+        let filtered = allCards.filter((card) => {
+            if (!childSessionIds.has(card.id)) {
+                return true;
+            }
+
+            return (card.children?.length ?? 0) > 0;
+        });
         
         if (filteredHostIds) {
             filtered = filtered.filter(card => {

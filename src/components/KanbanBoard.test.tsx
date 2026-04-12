@@ -661,6 +661,90 @@ describe('KanbanBoard Fetch Behavior and Error UX', () => {
         });
     });
 
+    it('keeps descendant-carrying intermediate cards when child-id deduplicating board cards', async () => {
+        const now = Date.now();
+        mockUseQuery.mockReturnValue({
+            data: {
+                sessions: [
+                    {
+                        id: 'local:root-session',
+                        sourceSessionKey: 'local:root-session',
+                        rawSessionId: 'root-session',
+                        slug: 'session_root_agent',
+                        title: 'Root Session',
+                        directory: '/tmp/local',
+                        projectName: 'Shared Project',
+                        hostId: 'local',
+                        hostLabel: 'Local',
+                        hostKind: 'local',
+                        readOnly: false,
+                        time: { created: now - 3_000, updated: now - 2_000 },
+                        realTimeStatus: 'busy',
+                        waitingForUser: false,
+                        children: [
+                            {
+                                id: 'local:intermediate-session',
+                                parentID: 'local:root-session',
+                                rawSessionId: 'intermediate-session',
+                                sourceSessionKey: 'local:intermediate-session',
+                                title: 'Intermediate Child Row',
+                                realTimeStatus: 'busy',
+                                waitingForUser: false,
+                                time: { created: now - 2_000, updated: now - 1_500 },
+                            },
+                        ],
+                    },
+                    {
+                        id: 'local:intermediate-session',
+                        sourceSessionKey: 'local:intermediate-session',
+                        rawSessionId: 'intermediate-session',
+                        slug: 'session_intermediate_agent',
+                        title: 'Intermediate Top-level Session',
+                        directory: '/tmp/local',
+                        projectName: 'Shared Project',
+                        hostId: 'local',
+                        hostLabel: 'Local',
+                        hostKind: 'local',
+                        readOnly: false,
+                        time: { created: now - 2_000, updated: now - 1_000 },
+                        realTimeStatus: 'busy',
+                        waitingForUser: false,
+                        children: [
+                            {
+                                id: 'local:grandchild-session',
+                                parentID: 'local:intermediate-session',
+                                rawSessionId: 'grandchild-session',
+                                sourceSessionKey: 'local:grandchild-session',
+                                title: 'Grandchild Session',
+                                realTimeStatus: 'busy',
+                                waitingForUser: false,
+                                time: { created: now - 1_000, updated: now - 500 },
+                            },
+                        ],
+                    },
+                ],
+                processHints: [],
+                hostStatuses: [
+                    { hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true },
+                ],
+            },
+            isLoading: false,
+            error: null,
+            isFetching: false,
+            failureCount: 0,
+            dataUpdatedAt: now,
+            refetch: vi.fn(),
+        });
+
+        renderBoard(7, hostSourcesState);
+
+        await waitFor(() => {
+            expect(screen.getByText('Root Session')).toBeTruthy();
+            expect(screen.getByText('Intermediate Top-level Session')).toBeTruthy();
+            expect(screen.getByText('Grandchild Session')).toBeTruthy();
+        });
+    });
+
     it('does not repeatedly emit unchanged host statuses but emits when status values change', () => {
         const onHostStatusesChange = vi.fn() as unknown as (statuses: import('./KanbanBoard').SessionHostStatus[]) => void;
 

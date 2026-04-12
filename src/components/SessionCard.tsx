@@ -198,8 +198,9 @@ export function SessionCard({ card }: SessionCardProps) {
         const target = buildEditorUri(openTool === 'antigravity' ? 'antigravity' : 'vscode', card.directory, {
             remoteSshHost: useRemoteSshTarget ? remoteSshHost : null,
         });
+        const canOpenEditor = card.capabilities ? card.capabilities.openEditor : true;
 
-        if (isRemoteCard && openEditorTargetMode === 'remote') {
+        if (isRemoteCard && openEditorTargetMode === 'remote' && canOpenEditor) {
             setPendingAction('open');
             try {
                 const response = await fetch(`/api/sessions/${card.id}/open-editor`, {

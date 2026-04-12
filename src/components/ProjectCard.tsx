@@ -489,7 +489,13 @@ export function ProjectCard({ projectName, branch, cards, readOnly = false, host
     }, [cards]);
 
     const deduplicatedCards = useMemo(() => {
-        return cards.filter(card => !childSessionIds.has(card.id));
+        return cards.filter((card) => {
+            if (!childSessionIds.has(card.id)) {
+                return true;
+            }
+
+            return (card.children?.length ?? 0) > 0;
+        });
     }, [cards, childSessionIds]);
 
     const firstCard = deduplicatedCards[0] ?? cards[0];
@@ -581,6 +587,7 @@ export function ProjectCard({ projectName, branch, cards, readOnly = false, host
         const firstProjectCard = primaryCard;
         const openEditorTargetMode = config?.vibepulse?.openEditorTargetMode === 'hub' ? 'hub' : 'remote';
         const isRemoteProject = firstProjectCard?.hostId !== undefined && firstProjectCard.hostId !== 'local';
+        const canOpenEditor = firstProjectCard?.capabilities ? firstProjectCard.capabilities.openEditor : true;
 
         if (isRemoteProject && openEditorTargetMode === 'hub' && openTool === 'antigravity') {
             setActionError('Antigravity does not support hub-mode remote opens. Use VS Code or switch target mode to Remote node.');
@@ -592,7 +599,7 @@ export function ProjectCard({ projectName, branch, cards, readOnly = false, host
             remoteSshHost: useRemoteSshTarget ? remoteSshHost : null,
         });
 
-        if (isRemoteProject && openEditorTargetMode === 'remote') {
+        if (isRemoteProject && openEditorTargetMode === 'remote' && canOpenEditor) {
             void (async () => {
                 setPendingAction('open');
                 try {

@@ -196,7 +196,7 @@ describe('SessionCard', () => {
     expect((fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>).filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
   });
 
-  it('calls the hub open-editor route for remote mode remote sessions', async () => {
+  it('calls the hub open-editor route for remote mode sessions that support openEditor', async () => {
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -213,7 +213,14 @@ describe('SessionCard', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <SessionCard card={createCard()} />
+        <SessionCard card={createCard({
+          capabilities: {
+            openProject: true,
+            openEditor: true,
+            archive: true,
+            delete: true,
+          },
+        })} />
       </QueryClientProvider>
     );
 
@@ -232,6 +239,44 @@ describe('SessionCard', () => {
     const postCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST');
     expect(JSON.parse(String(postCall?.[1]?.body))).toEqual({ tool: 'vscode' });
     expect(window.location.assign).not.toHaveBeenCalled();
+  });
+
+  it('falls back to file open when remote mode is selected but openEditor capability is unsupported', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+    queryClient.setQueryData(['opencode-config'], { vibepulse: { openEditorTargetMode: 'remote' } });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SessionCard card={createCard({
+          provider: 'claude-code',
+          readOnly: true,
+          capabilities: {
+            openProject: true,
+            openEditor: false,
+            archive: false,
+            delete: false,
+          },
+        })} />
+      </QueryClientProvider>
+    );
+
+    await screen.findByText('Remote Session');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /remote session/i })).not.toBeDisabled();
+    });
+    fireEvent.doubleClick(screen.getByRole('button', { name: /remote session/i }));
+
+    expect(window.location.assign).toHaveBeenCalledWith('vscode://file/tmp/demo');
+    expect((fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>).filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
   });
 
   it('shows an explicit loading state while a remote open request is in flight', async () => {
