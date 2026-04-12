@@ -194,11 +194,17 @@ export function SessionCard({ card }: SessionCardProps) {
             return;
         }
 
-        const useRemoteSshTarget = isRemoteCard && openEditorTargetMode === 'hub' && openTool === 'vscode';
+        const canOpenEditor = card.capabilities ? card.capabilities.openEditor : true;
+        const useRemoteSshTarget =
+            isRemoteCard
+            && openTool === 'vscode'
+            && (
+                openEditorTargetMode === 'hub'
+                || (openEditorTargetMode === 'remote' && !canOpenEditor)
+            );
         const target = buildEditorUri(openTool === 'antigravity' ? 'antigravity' : 'vscode', card.directory, {
             remoteSshHost: useRemoteSshTarget ? remoteSshHost : null,
         });
-        const canOpenEditor = card.capabilities ? card.capabilities.openEditor : true;
 
         if (isRemoteCard && openEditorTargetMode === 'remote' && canOpenEditor) {
             setPendingAction('open');

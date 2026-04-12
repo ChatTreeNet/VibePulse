@@ -594,7 +594,13 @@ export function ProjectCard({ projectName, branch, cards, readOnly = false, host
             return;
         }
 
-        const useRemoteSshTarget = isRemoteProject && openEditorTargetMode === 'hub' && openTool === 'vscode';
+        const useRemoteSshTarget =
+            isRemoteProject
+            && openTool === 'vscode'
+            && (
+                openEditorTargetMode === 'hub'
+                || (openEditorTargetMode === 'remote' && !canOpenEditor)
+            );
         const target = buildEditorUri(openTool === 'antigravity' ? 'antigravity' : 'vscode', directory, {
             remoteSshHost: useRemoteSshTarget ? remoteSshHost : null,
         });

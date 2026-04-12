@@ -275,7 +275,7 @@ describe('SessionCard', () => {
     });
     fireEvent.doubleClick(screen.getByRole('button', { name: /remote session/i }));
 
-    expect(window.location.assign).toHaveBeenCalledWith('vscode://file/tmp/demo');
+    expect(window.location.assign).toHaveBeenCalledWith('vscode://vscode-remote/ssh-remote+node-1.test/tmp/demo');
     expect((fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>).filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
   });
 

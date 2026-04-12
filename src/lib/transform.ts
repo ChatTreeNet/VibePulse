@@ -218,9 +218,9 @@ export function transformSession(session: EnrichedSession): KanbanCard {
           capabilities: session.capabilities ?? providerDefaults.capabilities,
           provider: session.provider ?? providerDefaults.provider,
           providerRawId: session.providerRawId ?? session.rawSessionId,
-         children: children.map((c) => {
-             const childStatus = c.realTimeStatus || 'idle';
-             const childWaitingForUser = shouldMarkChildWaitingForUser(session, c);
+          children: rollupChildren.map((c) => {
+              const childStatus = c.realTimeStatus || 'idle';
+              const childWaitingForUser = shouldMarkChildWaitingForUser(session, c);
 
              return {
                  id: c.id,

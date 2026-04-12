@@ -311,6 +311,7 @@ describe('transformSession child roll-up semantics', () => {
     expect(card.opencodeStatus).toBe('idle');
     expect(card.waitingForUser).toBe(false);
     expect(card.debugReason).toBeUndefined();
+    expect(card.children).toEqual([]);
   });
 
   it('keeps existing OpenCode child roll-up behavior intact', () => {
@@ -335,6 +336,11 @@ describe('transformSession child roll-up semantics', () => {
     expect(card.status).toBe('busy');
     expect(card.opencodeStatus).toBe('busy');
     expect(card.debugReason).toBe('child_recent_activity');
+    expect(card.children).toEqual([
+      expect.objectContaining({
+        id: 'opencode-child-1',
+      }),
+    ]);
   });
 
   it('does not promote an OpenCode parent when a child is idle but waiting', () => {

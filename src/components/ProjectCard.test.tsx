@@ -195,7 +195,7 @@ describe('ProjectCard', () => {
         });
         fireEvent.click(screen.getByTitle('Open project'));
 
-        expect(window.location.assign).toHaveBeenCalledWith('vscode://file/path/to/project');
+        expect(window.location.assign).toHaveBeenCalledWith('vscode://vscode-remote/ssh-remote+node-1.test/path/to/project');
         expect((fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>).filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
     });
 
