@@ -41,13 +41,15 @@ function formatRelativeTime(timestamp: number): string {
 
 // Status indicator component
 function StatusIndicator({ status, waitingForUser, provider }: { status: string; waitingForUser: boolean; provider?: string }) {
-    const shapeClass = provider === 'claude-code' ? 'rotate-45 rounded-[1px]' : 'rounded-full';
+    const isClaudeProvider = provider === 'claude-code';
+    const shapeClass = isClaudeProvider ? 'rotate-45 rounded-[1px]' : 'rounded-full';
+    const dotSizeClass = isClaudeProvider ? 'h-[9px] w-[9px]' : 'h-2.5 w-2.5';
     if (waitingForUser) {
         return (
             <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
-                <span className="relative flex h-2.5 w-2.5">
+                <span className={`relative flex ${dotSizeClass}`}>
                     <span className={`animate-ping absolute inline-flex h-full w-full ${shapeClass} bg-amber-400 opacity-75`} title="Waiting"></span>
-                    <span className={`relative inline-flex h-2.5 w-2.5 ${shapeClass} bg-amber-500`}></span>
+                    <span className={`relative inline-flex ${dotSizeClass} ${shapeClass} bg-amber-500`}></span>
                 </span>
                 <span className="text-xs font-medium">Waiting</span>
             </div>
@@ -57,9 +59,9 @@ function StatusIndicator({ status, waitingForUser, provider }: { status: string;
         case 'busy':
             return (
                 <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
-                    <span className="relative flex h-2.5 w-2.5">
+                    <span className={`relative flex ${dotSizeClass}`}>
                         <span className={`animate-pulse absolute inline-flex h-full w-full ${shapeClass} bg-emerald-400 opacity-75`} title="Running"></span>
-                        <span className={`relative inline-flex h-2.5 w-2.5 ${shapeClass} bg-emerald-500`}></span>
+                        <span className={`relative inline-flex ${dotSizeClass} ${shapeClass} bg-emerald-500`}></span>
                     </span>
                     <span className="text-xs font-medium">Running</span>
                 </div>
@@ -67,9 +69,9 @@ function StatusIndicator({ status, waitingForUser, provider }: { status: string;
         case 'retry':
             return (
                 <div className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
-                    <span className="relative flex h-2.5 w-2.5">
+                    <span className={`relative flex ${dotSizeClass}`}>
                         <span className={`animate-ping absolute inline-flex h-full w-full ${shapeClass} bg-red-400 opacity-75`} title="Retrying"></span>
-                        <span className={`relative inline-flex h-2.5 w-2.5 ${shapeClass} bg-red-500`}></span>
+                        <span className={`relative inline-flex ${dotSizeClass} ${shapeClass} bg-red-500`}></span>
                     </span>
                     <span className="text-xs font-medium">Retrying</span>
                 </div>
@@ -78,7 +80,7 @@ function StatusIndicator({ status, waitingForUser, provider }: { status: string;
         default:
             return (
                 <div className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
-                    <span className={`inline-flex h-2.5 w-2.5 bg-gray-400 ${shapeClass}`} title="Idle"></span>
+                    <span className={`inline-flex ${dotSizeClass} bg-gray-400 ${shapeClass}`} title="Idle"></span>
                     <span className="text-xs font-medium">Idle</span>
                 </div>
             );

@@ -795,6 +795,7 @@ describe('SessionCard Provider Visuals', () => {
   it('renders Claude status as a diamond instead of showing a separate provider marker', () => {
     renderWithProviders(<SessionCard card={createCard({ provider: 'claude-code' })} />);
     expect(screen.getByTitle('Idle').className).toContain('rotate-45');
+    expect(screen.getByTitle('Idle').className).toContain('h-[9px]');
   });
 
   it('does not render transcript affordances for Claude cards even when transcript metadata exists', () => {
