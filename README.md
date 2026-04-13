@@ -32,11 +32,31 @@ npx vibepulse
 ```
 Open http://localhost:3456
 
+### Use Beta/Prerelease Builds
+If you want to try prerelease features before `latest`, run VibePulse from the beta dist-tag:
+
+```bash
+npx vibepulse@beta
+```
+
+You can also pin an exact prerelease version:
+
+```bash
+npx vibepulse@<x.y.z-beta.n>
+```
+
 ### Node Mode
 Run VibePulse on a remote server to expose its local OpenCode and Claude Code sessions to a hub.
 ```bash
 npx vibepulse --serve
 ```
+
+For prerelease node mode:
+
+```bash
+npx vibepulse@beta --serve
+```
+
 Node mode requires an access token for security. See [Architecture](#architecture) for details.
 
 ## Features
