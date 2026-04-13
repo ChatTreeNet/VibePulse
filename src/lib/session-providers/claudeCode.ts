@@ -1021,7 +1021,9 @@ export async function discoverClaudeCodeSessions(
         && waitingDetection.trailingParseErrors
         && hasVeryRecentArtifactActivity
         && hasRunningEvidence;
-      const waitingForUser = waitingStaleDuringActiveWrite ? false : waitingDetection.waitingForUser;
+      const waitingForUser = hasRunningEvidence
+        ? (waitingStaleDuringActiveWrite ? false : waitingDetection.waitingForUser)
+        : false;
       const isRunning =
         !waitingForUser
         && hasVeryRecentArtifactActivity

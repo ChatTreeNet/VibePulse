@@ -1048,7 +1048,7 @@ describe('discoverClaudeCodeSessions', () => {
     });
   });
 
-  it('marks Claude sessions as waiting for user when the latest assistant turn is a fresh question', async () => {
+  it('does not keep waiting-for-user when the latest assistant turn is a question but no live process evidence exists', async () => {
     const fixture = await createFixture();
 
     await writeProjectArtifact({
@@ -1088,12 +1088,12 @@ describe('discoverClaudeCodeSessions', () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({
       sessionId: SESSION_ONE,
-      waitingForUser: true,
+      waitingForUser: false,
       isRunning: false,
     });
   });
 
-  it('marks Claude sessions as waiting for user when the latest assistant turn is a pending tool_use approval', async () => {
+  it('does not keep waiting-for-user for pending tool_use approval when no live process evidence exists', async () => {
     const fixture = await createFixture();
 
     await writeProjectArtifact({
@@ -1134,7 +1134,7 @@ describe('discoverClaudeCodeSessions', () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({
       sessionId: SESSION_ONE,
-      waitingForUser: true,
+      waitingForUser: false,
       isRunning: false,
     });
   });
@@ -1292,7 +1292,7 @@ describe('discoverClaudeCodeSessions', () => {
     });
   });
 
-  it('keeps waiting markers when transcript tail is partial but no live process evidence exists', async () => {
+  it('clears waiting markers when transcript tail is partial but no live process evidence exists', async () => {
     const fixture = await createFixture();
 
     await writeProjectArtifact({
@@ -1333,7 +1333,7 @@ describe('discoverClaudeCodeSessions', () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({
       sessionId: SESSION_ONE,
-      waitingForUser: true,
+      waitingForUser: false,
       isRunning: false,
     });
   });
