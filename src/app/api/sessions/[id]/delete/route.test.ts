@@ -17,15 +17,21 @@ vi.mock('@/lib/sessionArchiveOverrides', () => ({
   clearSessionStickyStatusBlocked: vi.fn(),
 }));
 
+vi.mock('@/lib/claudeSessionOverrides', () => ({
+  markClaudeSessionDeleted: vi.fn(),
+}));
+
 import { createOpencodeClient } from '@opencode-ai/sdk';
 import { discoverOpencodePortsWithMeta } from '@/lib/opencodeDiscovery';
 import { listNodeRecords } from '@/lib/nodeRegistry';
+import { markClaudeSessionDeleted } from '@/lib/claudeSessionOverrides';
 
 import { POST } from './route';
 
 const mockCreateOpencodeClient: any = createOpencodeClient;
 const mockDiscoverPortsWithMeta: any = discoverOpencodePortsWithMeta;
 const mockListNodeRecords: any = listNodeRecords;
+const mockMarkClaudeSessionDeleted: any = markClaudeSessionDeleted;
 const mockSessionDelete = vi.fn();
 
 describe('/api/sessions/[id]/delete', () => {
@@ -109,5 +115,91 @@ describe('/api/sessions/[id]/delete', () => {
       reason: 'session_not_found',
       message: '404 not found',
     });
+  });
+
+  it('deletes Claude sessions through local override storage before any OpenCode execution', async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(new Request('http://localhost/api/sessions/local:claude~550e8400-e29b-41d4-a716-446655440000/delete', { method: 'POST' }), {
+      params: Promise.resolve({ id: 'local:claude~550e8400-e29b-41d4-a716-446655440000' }),
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({ success: true });
+    expect(mockMarkClaudeSessionDeleted).toHaveBeenCalledWith('550e8400-e29b-41d4-a716-446655440000');
+    expect(mockDiscoverPortsWithMeta).not.toHaveBeenCalled();
+    expect(mockCreateOpencodeClient).not.toHaveBeenCalled();
+    expect(mockSessionDelete).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('deletes scoped Claude sidechain sessions through local override storage', async () => {
+    const scopedSessionId = '550e8400-e29b-41d4-a716-446655440000__agent-a123';
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(new Request(`http://localhost/api/sessions/local:${scopedSessionId}/delete`, { method: 'POST' }), {
+      params: Promise.resolve({ id: `local:${scopedSessionId}` }),
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({ success: true });
+    expect(mockMarkClaudeSessionDeleted).toHaveBeenCalledWith(scopedSessionId);
+    expect(mockDiscoverPortsWithMeta).not.toHaveBeenCalled();
+    expect(mockCreateOpencodeClient).not.toHaveBeenCalled();
+    expect(mockSessionDelete).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects remote Claude delete requests before local override or node execution', async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(new Request('http://localhost/api/sessions/node-1:claude~550e8400-e29b-41d4-a716-446655440000/delete', { method: 'POST' }), {
+      params: Promise.resolve({ id: 'node-1:claude~550e8400-e29b-41d4-a716-446655440000' }),
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(data).toEqual({
+      error: 'Session action not supported by provider',
+      reason: 'provider_capability_unsupported',
+      provider: 'claude-code',
+      capability: 'delete',
+    });
+    expect(mockMarkClaudeSessionDeleted).not.toHaveBeenCalled();
+    expect(mockListNodeRecords).not.toHaveBeenCalled();
+    expect(mockDiscoverPortsWithMeta).not.toHaveBeenCalled();
+    expect(mockCreateOpencodeClient).not.toHaveBeenCalled();
+    expect(mockSessionDelete).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects remote scoped Claude sidechain deletes before node execution', async () => {
+    const scopedSessionId = '550e8400-e29b-41d4-a716-446655440000__agent-a123';
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const response = await POST(new Request(`http://localhost/api/sessions/node-1:${scopedSessionId}/delete`, { method: 'POST' }), {
+      params: Promise.resolve({ id: `node-1:${scopedSessionId}` }),
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(data).toEqual({
+      error: 'Session action not supported by provider',
+      reason: 'provider_capability_unsupported',
+      provider: 'claude-code',
+      capability: 'delete',
+    });
+    expect(mockMarkClaudeSessionDeleted).not.toHaveBeenCalled();
+    expect(mockListNodeRecords).not.toHaveBeenCalled();
+    expect(mockDiscoverPortsWithMeta).not.toHaveBeenCalled();
+    expect(mockCreateOpencodeClient).not.toHaveBeenCalled();
+    expect(mockSessionDelete).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

@@ -117,6 +117,8 @@ function createSession(overrides: Partial<OpencodeSession> & Pick<OpencodeSessio
         rawSessionId: overrides.rawSessionId,
         sourceSessionKey: overrides.sourceSessionKey ?? overrides.id,
         readOnly: overrides.readOnly,
+        provider: overrides.provider,
+        providerRawId: overrides.providerRawId,
     };
 }
 
@@ -164,7 +166,9 @@ describe('useOpencodeSync', () => {
                 delete mockLocalStorage[key];
             },
             clear: () => {
-                Object.keys(mockLocalStorage).forEach((key) => delete mockLocalStorage[key]);
+                for (const key of Object.keys(mockLocalStorage)) {
+                    delete mockLocalStorage[key];
+                }
             },
         });
         (getSseStatusSnapshot() as Map<string, unknown>).clear();
@@ -381,6 +385,322 @@ describe('useOpencodeSync', () => {
 
         expect(persistedAfterDelay).toEqual({});
         expect(delayedRemoteSession?.waitingForUser).toBe(true);
+
+        unmount();
+    });
+
+    it('keeps recently-idle child sessions nested instead of removing them immediately', () => {
+        const eventTimestamp = 75_000;
+        const parentSession = createSession({
+            id: 'local:parent',
+            rawSessionId: 'parent',
+            hostId: 'local',
+            hostLabel: 'Local',
+            hostKind: 'local',
+            children: [
+                {
+                    id: 'local:child',
+                    slug: 'child',
+                    title: 'Child Session',
+                    directory: '/tmp/project',
+                    projectName: 'Project',
+                    parentID: 'local:parent',
+                    time: { created: 1000, updated: 2000 },
+                    realTimeStatus: 'busy',
+                    waitingForUser: false,
+                },
+            ],
+        });
+
+        const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
+            sessions: [parentSession],
+        });
+
+        act(() => {
+            eventSource.emitMessage({
+                type: 'session.status',
+                properties: {
+                    sessionID: 'child',
+                    status: { type: 'idle' },
+                },
+                timestamp: eventTimestamp,
+            });
+        });
+
+        const data = queryClient.getQueryData<SessionsQueryData>(queryKey);
+        const nextParent = data?.sessions.find((session) => session.id === 'local:parent');
+
+        expect(nextParent?.children).toHaveLength(1);
+        expect(nextParent?.children?.[0]?.id).toBe('local:child');
+        expect(nextParent?.children?.[0]?.realTimeStatus).toBe('idle');
+        expect(nextParent?.children?.[0]?.time.updated).toBe(eventTimestamp);
+
+        unmount();
+    });
+});
+
+describe('useOpencodeSync provider defaults', () => {
+    let mockLocalStorage: Record<string, string>;
+
+    beforeEach(() => {
+        mockLocalStorage = {};
+        MockEventSource.reset();
+        vi.useFakeTimers();
+        vi.stubGlobal('EventSource', MockEventSource as unknown as typeof EventSource);
+        vi.stubGlobal('localStorage', {
+            getItem: (key: string) => mockLocalStorage[key] || null,
+            setItem: (key: string, value: string) => {
+                mockLocalStorage[key] = value;
+            },
+            removeItem: (key: string) => {
+                delete mockLocalStorage[key];
+            },
+            clear: () => {
+                for (const key of Object.keys(mockLocalStorage)) {
+                    delete mockLocalStorage[key];
+                }
+            },
+        });
+        (getSseStatusSnapshot() as Map<string, unknown>).clear();
+    });
+
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+        MockEventSource.reset();
+        (getSseStatusSnapshot() as Map<string, unknown>).clear();
+    });
+
+    it('applies default provider opencode to new sessions from session.created event', () => {
+        const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
+            sessions: [],
+        });
+
+        act(() => {
+            eventSource.emitMessage({
+                type: 'session.created',
+                properties: {
+                    info: {
+                        id: 'ses_1744181234567_build',
+                        slug: 'session_1744181234567_build',
+                        title: 'New Session',
+                        directory: '/tmp/project',
+                        time: { created: Date.now(), updated: Date.now() },
+                    },
+                },
+                timestamp: Date.now(),
+            });
+        });
+
+        const data = queryClient.getQueryData<SessionsQueryData>(queryKey);
+        const newSession = data?.sessions.find((s) => s.id === 'local:ses_1744181234567_build');
+
+        expect(newSession?.provider).toBe('opencode');
+        expect(newSession?.readOnly).toBe(false);
+        expect(newSession?.capabilities).toEqual({
+            openProject: true,
+            openEditor: true,
+            archive: true,
+            delete: true,
+        });
+
+        unmount();
+    });
+
+    it('applies default provider opencode to existing sessions on update', () => {
+        const existingSession = createSession({
+            id: 'local:ses_123',
+            rawSessionId: 'ses_123',
+            hostId: 'local',
+            hostLabel: 'Local',
+            hostKind: 'local',
+        });
+
+        const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
+            sessions: [existingSession],
+        });
+
+        act(() => {
+            eventSource.emitMessage({
+                type: 'session.updated',
+                properties: {
+                    info: {
+                        id: 'ses_123',
+                        slug: 'session_123',
+                        title: 'Updated Session',
+                        directory: '/tmp/project',
+                        time: { created: 1000, updated: Date.now() },
+                    },
+                },
+                timestamp: Date.now(),
+            });
+        });
+
+        const data = queryClient.getQueryData<SessionsQueryData>(queryKey);
+        const updatedSession = data?.sessions.find((s) => s.id === 'local:ses_123');
+
+        expect(updatedSession?.provider).toBe('opencode');
+        expect(updatedSession?.readOnly).toBe(false);
+        expect(updatedSession?.capabilities).toEqual({
+            openProject: true,
+            openEditor: true,
+            archive: true,
+            delete: true,
+        });
+
+        unmount();
+    });
+
+    it('preserves explicit claude-code provider from event info', () => {
+        const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
+            sessions: [],
+        });
+
+        act(() => {
+            eventSource.emitMessage({
+                type: 'session.created',
+                properties: {
+                    info: {
+                        id: 'claude~550e8400-e29b-41d4-a716-446655440000',
+                        slug: 'claude_session',
+                        title: 'Claude Session',
+                        directory: '/tmp/claude-project',
+                        time: { created: Date.now(), updated: Date.now() },
+                        provider: 'claude-code',
+                        providerRawId: '550e8400-e29b-41d4-a716-446655440000',
+                    },
+                },
+                timestamp: Date.now(),
+            });
+        });
+
+        const data = queryClient.getQueryData<SessionsQueryData>(queryKey);
+        const newSession = data?.sessions.find((s) => s.id === 'local:claude~550e8400-e29b-41d4-a716-446655440000');
+
+        expect(newSession?.provider).toBe('claude-code');
+        expect(newSession?.providerRawId).toBe('550e8400-e29b-41d4-a716-446655440000');
+        expect(newSession?.capabilities).toEqual({
+            openProject: true,
+            openEditor: false,
+            archive: true,
+            delete: true,
+        });
+
+        unmount();
+    });
+
+    it('preserves explicit readOnly true when specified', () => {
+        const existingSession = createSession({
+            id: 'local:ses_123',
+            rawSessionId: 'ses_123',
+            hostId: 'local',
+            readOnly: true,
+        });
+
+        const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
+            sessions: [existingSession],
+        });
+
+        act(() => {
+            eventSource.emitMessage({
+                type: 'session.status',
+                properties: {
+                    sessionID: 'ses_123',
+                    status: { type: 'busy' },
+                },
+                timestamp: Date.now(),
+            });
+        });
+
+        const data = queryClient.getQueryData<SessionsQueryData>(queryKey);
+        const updatedSession = data?.sessions.find((s) => s.id === 'local:ses_123');
+
+        expect(updatedSession?.readOnly).toBe(true);
+
+        unmount();
+    });
+
+    it('propagates provider and readOnly on session.status events for existing sessions', () => {
+        const localSession = createSession({
+            id: 'local:abc',
+            rawSessionId: 'abc',
+            hostId: 'local',
+            provider: 'claude-code',
+            readOnly: true,
+        });
+
+        const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
+            sessions: [localSession],
+        });
+
+        act(() => {
+            eventSource.emitMessage({
+                type: 'session.status',
+                properties: {
+                    sessionID: 'abc',
+                    status: { type: 'busy' },
+                },
+                timestamp: Date.now(),
+            });
+        });
+
+        const data = queryClient.getQueryData<SessionsQueryData>(queryKey);
+        const updatedSession = data?.sessions.find((s) => s.id === 'local:abc');
+
+        expect(updatedSession?.provider).toBe('claude-code');
+        expect(updatedSession?.readOnly).toBe(true);
+
+        unmount();
+    });
+
+    it('keeps OpenCode SSE updates scoped to plain local ids when a Claude session shares the same raw uuid', () => {
+        const sharedUuid = '550e8400-e29b-41d4-a716-446655440000';
+        const openCodeSession = createSession({
+            id: `local:${sharedUuid}`,
+            rawSessionId: sharedUuid,
+            hostId: 'local',
+            hostLabel: 'Local',
+            hostKind: 'local',
+            provider: 'opencode',
+            readOnly: false,
+        });
+        const claudeSession = createSession({
+            id: `local:claude~${sharedUuid}`,
+            rawSessionId: sharedUuid,
+            hostId: 'local',
+            hostLabel: 'Local',
+            hostKind: 'local',
+            provider: 'claude-code',
+            providerRawId: sharedUuid,
+            readOnly: true,
+        });
+
+        const { eventSource, queryClient, queryKey, unmount } = renderUseOpencodeSync({
+            sessions: [openCodeSession, claudeSession],
+        });
+
+        act(() => {
+            eventSource.emitMessage({
+                type: 'session.status',
+                properties: {
+                    sessionID: sharedUuid,
+                    status: { type: 'busy' },
+                },
+                timestamp: Date.now(),
+            });
+        });
+
+        const data = queryClient.getQueryData<SessionsQueryData>(queryKey);
+        const updatedOpenCodeSession = data?.sessions.find((s) => s.id === `local:${sharedUuid}`);
+        const updatedClaudeSession = data?.sessions.find((s) => s.id === `local:claude~${sharedUuid}`);
+
+        expect(updatedOpenCodeSession?.provider).toBe('opencode');
+        expect(updatedOpenCodeSession?.realTimeStatus).toBe('busy');
+        expect(updatedClaudeSession?.provider).toBe('claude-code');
+        expect(updatedClaudeSession?.realTimeStatus).toBe('idle');
+        expect(getSseStatusSnapshot().get(`local:${sharedUuid}`)?.status).toBe('busy');
+        expect(getSseStatusSnapshot().has(`local:claude~${sharedUuid}`)).toBe(false);
 
         unmount();
     });

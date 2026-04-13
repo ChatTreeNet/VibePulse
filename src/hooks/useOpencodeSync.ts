@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { OpencodeEvent, OpencodeSession } from '@/types';
 import { playAlertSound, playAttentionSound } from '@/lib/notificationSound';
 import { composeSourceKey, getSessionIdFromSourceKey } from '@/lib/hostIdentity';
+import { DEFAULT_PROVIDER_CONTEXT, getDefaultProviderContext } from '@/lib/session-providers/providerIds';
 
 const WAITING_STORAGE_KEY = 'vibepulse:waiting-sessions:v2';
 const WAITING_ENTER_DELAY_MS = 1500;
@@ -104,6 +105,7 @@ function toSourceKey(hostId: string, sessionId: string): string {
 }
 
 function normalizeSessionForSource(info: OpencodeSession, source: EventSourceContext): OpencodeSession {
+    const providerDefaults = getDefaultProviderContext(info.provider ?? DEFAULT_PROVIDER_CONTEXT.provider);
     const rawSessionId = getSessionIdFromSourceKey(info.rawSessionId ?? info.id) ?? info.rawSessionId ?? info.id;
     const sourceSessionKey = composeSourceKey(source.hostId, rawSessionId);
     const rawParentId = info.parentID ? getSessionIdFromSourceKey(info.parentID) ?? info.parentID : info.parentID;
@@ -118,7 +120,10 @@ function normalizeSessionForSource(info: OpencodeSession, source: EventSourceCon
         hostBaseUrl: source.hostBaseUrl,
         rawSessionId,
         sourceSessionKey,
-        readOnly: false,
+        readOnly: info.readOnly ?? providerDefaults.readOnly,
+        capabilities: info.capabilities ?? providerDefaults.capabilities,
+        provider: info.provider ?? providerDefaults.provider,
+        providerRawId: info.providerRawId ?? rawSessionId,
         children: info.children?.map((child) =>
             normalizeSessionForSource({
                 ...child,
@@ -354,19 +359,24 @@ export function useOpencodeSync() {
                     }
 
                     const applyEvent = (s: OpencodeSession): OpencodeSession => {
+                        const providerDefaults = getDefaultProviderContext(s.provider ?? DEFAULT_PROVIDER_CONTEXT.provider);
                         const baseSession: OpencodeSession = {
                             ...s,
                             hostId: source.hostId,
                             hostLabel: source.hostLabel,
                             hostKind: source.hostKind,
                             hostBaseUrl: source.hostBaseUrl ?? s.hostBaseUrl,
-                            readOnly: false,
+                            readOnly: s.readOnly ?? providerDefaults.readOnly,
+                            capabilities: s.capabilities ?? providerDefaults.capabilities,
+                            provider: s.provider ?? providerDefaults.provider,
+                            providerRawId: s.providerRawId ?? s.rawSessionId,
                         };
 
                         switch (event.type) {
                             case 'session.status': {
                                 const statusType = event.properties?.status?.type as 'idle' | 'busy' | 'retry' | undefined;
                                 if (!statusType) return baseSession;
+                                const statusTimestamp = typeof event.timestamp === 'number' ? event.timestamp : Date.now();
                                 recordSseStatus(s.id, statusType);
                                 const isParentSession = !s.parentID;
                                 const shouldAutoUnarchive = statusType === 'busy' || statusType === 'retry';
@@ -393,7 +403,9 @@ export function useOpencodeSync() {
                                 }
                                 return { 
                                     ...baseSession, 
-                                    time: shouldAutoUnarchive ? { ...(s.time || {}), archived: undefined } : s.time,
+                                    time: shouldAutoUnarchive
+                                        ? { ...(s.time || {}), updated: statusTimestamp, archived: undefined }
+                                        : { ...(s.time || {}), updated: statusTimestamp },
                                     realTimeStatus: statusType, 
                                     waitingForUser:
                                         statusType === 'retry'
@@ -448,15 +460,7 @@ export function useOpencodeSync() {
                         }
                         if (session.children?.some(c => c.id === sourceSessionId)) {
                             found = true;
-                            // If the event is a status update to 'idle', we should filter the child out
-                            // so it disappears from the UI without needing a full refetch, matching backend logic.
-                            if (event.type === 'session.status' && event.properties?.status?.type === 'idle') {
-                                return {
-                                    ...session,
-                                    children: session.children.filter(c => c.id !== sourceSessionId)
-                                };
-                            }
-                            
+
                             return {
                                 ...session,
                                 children: session.children.map(c => c.id === sourceSessionId ? applyEvent(c) : c)

@@ -1,152 +1,36 @@
-import { createOpencodeClient } from '@opencode-ai/sdk';
-import { execSync } from 'child_process';
-import path from 'path';
-import {
-  discoverOpencodePortsWithMeta,
-  discoverOpencodeProcessCwdsWithoutPortWithMeta,
-} from '@/lib/opencodeDiscovery';
 import { readConfig } from '@/lib/opencodeConfig';
+import { claudeCodeLocalSessionProvider } from '@/lib/session-providers/claudeCode';
+import {
+  applyStickyBusyStatus,
+  applyStickyStatusStabilization,
+  getLocalSessionsResult,
+  shouldSkipSessionStatusStabilization,
+} from '@/lib/session-providers/localAggregator';
+import { opencodeLocalSessionProvider } from '@/lib/session-providers/opencodeProvider';
+import type {
+  ChildEntry,
+  EnrichedSession,
+  HostAwareFields,
+  ProcessHint,
+  SessionHostStatus,
+  SessionsRouteResult,
+  SessionsSuccessPayload,
+  SessionSource,
+  SourceResultMeta,
+} from '@/lib/session-providers/types';
 import {
   clearSessionForceUnarchived,
-  markSessionForceUnarchived,
-  pruneSessionStickyStatusBlocked,
-  pruneSessionForceUnarchived,
-  shouldForceSessionUnarchived,
-  takeSessionStickyStatusBlocked,
 } from '@/lib/sessionArchiveOverrides';
 import { composeSourceKey, parseSourceKey } from '@/lib/hostIdentity';
 import { createNodeRequestHeaders, NODE_PROTOCOL_VERSION } from '@/lib/nodeProtocol';
+import { composeProviderSourceKey, detectProviderFromRawId, extractProviderRawId } from '@/lib/session-providers/providerIds';
 import { listNodeRecords, type StoredNodeRecord } from '@/lib/nodeRegistry';
 import { RUNTIME_ROLE_ENV_VAR } from '@/lib/runtimeMode';
-import type { BuiltInHostSource, RemoteHostConfig } from '@/types';
+import type { BuiltInHostSource, RemoteHostConfig, SessionCapabilities, SessionProvider } from '@/types';
 
-type SessionLike = {
-  id: string;
-  slug?: string;
-  title?: string;
-  directory: string;
-  debugReason?: string;
-  parentID?: string;
-  time?: {
-    created: number;
-    updated: number;
-    archived?: number;
-  };
-};
-
-const CHILD_ACTIVE_WINDOW_MS = 30 * 60 * 1000;
-const CHILD_UNKNOWN_STATE_BUSY_WINDOW_MS = 2 * 60 * 1000;
-const CHILD_STATUS_MESSAGE_CHECK_LIMIT = 50;
-const STALL_DETECTION_WINDOW_MS = 30 * 1000;
-const STATUS_STICKY_RETENTION_MS = 24 * 60 * 60 * 1000;
-const STATUS_STICKY_ABSENT_RETENTION_MS = 30 * 60 * 1000;
-const DEFAULT_STATUS_STICKY_MAX_ENTRIES = 5000;
-const GIT_COMMAND_TIMEOUT_MS = 1200;
-const sessionListTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_LIST_TIMEOUT_MS', 6000);
-const sessionStatusTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_STATUS_TIMEOUT_MS', 4000);
-const sessionMessagesTimeoutMs = readPositiveTimeoutEnv('OPENCODE_SESSIONS_MESSAGES_TIMEOUT_MS', 2500);
 const nodeSessionsTimeoutMs = readPositiveTimeoutEnv('VIBEPULSE_NODE_SESSIONS_TIMEOUT_MS', 6000);
-
-type StableRealtimeStatus = 'idle' | 'busy' | 'retry';
-
-type StatusStickyState = {
-  lastBusyAt: number;
-  lastSeenAt: number;
-};
-
-const statusStickyState = new Map<string, StatusStickyState>();
-
-function clearStickyStatusState(sessionId: string): void {
-  statusStickyState.delete(sessionId);
-  statusStickyState.delete(`child:${sessionId}`);
-}
-
-type ChildEntry = HostAwareFields & {
-  id: string;
-  slug?: string;
-  title?: string;
-  directory?: string;
-  debugReason?: string;
-  parentID?: string;
-  time?: { created: number; updated: number; archived?: number };
-  realTimeStatus: string;
-  waitingForUser: boolean;
-};
-
-type EnrichedSession = SessionLike & HostAwareFields & {
-  projectName: string;
-  branch: string | null;
-  realTimeStatus: 'idle' | 'busy' | 'retry';
-  waitingForUser: boolean;
-  children: ChildEntry[];
-};
-
-type SessionStatusStabilizationTarget = {
-  id: string;
-  time?: {
-    archived?: number;
-  };
-  realTimeStatus: string;
-  waitingForUser: boolean;
-  children: Array<{
-    id: string;
-    time?: {
-      archived?: number;
-    };
-    realTimeStatus: string;
-    waitingForUser: boolean;
-  }>;
-};
-
-type ProcessHint = {
-  pid: number;
-  directory: string;
-  projectName: string;
-  reason: 'process_without_api_port';
-};
-
-type SessionSource = BuiltInHostSource | (RemoteHostConfig & { hostKind: 'remote' });
-
-type HostAwareFields = {
-  hostId?: string;
-  hostLabel?: string;
-  hostKind?: SessionSource['hostKind'];
-  hostBaseUrl?: string;
-  rawSessionId?: string;
-  sourceSessionKey?: string;
-  readOnly?: boolean;
-};
-
-type SessionHostStatus = {
-  hostId: string;
-  hostLabel: string;
-  hostKind: SessionSource['hostKind'];
-  online: boolean;
-  degraded?: boolean;
-  reason?: string;
-  baseUrl?: string;
-};
-
-type SourceResultMeta = {
-  online: boolean;
-  degraded?: boolean;
-  reason?: string;
-};
-
-type SessionsSuccessPayload = {
-  sessions: EnrichedSession[];
-  processHints: ProcessHint[];
-  failedPorts?: Array<{ port: number; reason: string }>;
-  degraded?: boolean;
-  hosts?: SessionHostStatus[];
-  hostStatuses?: SessionHostStatus[];
-};
-
-type SessionsRouteResult = {
-  payload: SessionsSuccessPayload | Record<string, unknown>;
-  status?: number;
-  sourceMeta?: SourceResultMeta;
-};
+const CLAUDE_INFERRED_PARENT_MAX_CREATED_GAP_MS = 60_000;
+const CLAUDE_INFERRED_PARENT_AMBIGUITY_GAP_MS = 5_000;
 
 const LOCAL_SOURCE: BuiltInHostSource = {
   hostId: 'local',
@@ -154,7 +38,15 @@ const LOCAL_SOURCE: BuiltInHostSource = {
   hostKind: 'local',
 };
 
+const LOCAL_POLLING_PROVIDERS = [opencodeLocalSessionProvider, claudeCodeLocalSessionProvider] as const;
+
 export const dynamic = 'force-dynamic';
+
+export {
+  applyStickyBusyStatus,
+  applyStickyStatusStabilization,
+  shouldSkipSessionStatusStabilization,
+};
 
 export async function GET() {
   return handleGet();
@@ -164,14 +56,6 @@ export async function POST(request: Request) {
   return handlePost(request);
 }
 
-type MessageStateStatus = string;
-
-type MessagePart = {
-  state?: {
-    status?: unknown;
-  };
-};
-
 function readPositiveTimeoutEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   const parsed = Number(raw);
@@ -179,300 +63,6 @@ function readPositiveTimeoutEnv(name: string, fallback: number): number {
     return Math.floor(parsed);
   }
   return fallback;
-}
-
-function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  const timeoutError = new Error(`${label} timed out after ${timeoutMs}ms`);
-  const timeoutController = new AbortController();
-  let timeoutHandle: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => {
-      timeoutController.abort();
-      reject(timeoutError);
-    }, timeoutMs);
-  });
-
-  const operationPromise = operation(timeoutController.signal).catch((error) => {
-    if (timeoutController.signal.aborted) {
-      throw timeoutError;
-    }
-
-    throw error;
-  });
-
-  return Promise.race([operationPromise, timeoutPromise]).finally(() => {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-    }
-  });
-}
-
-const WAITING_PART_STATUSES = new Set<string>([
-  'awaiting-input',
-  'awaiting_input',
-  'input-required',
-  'input_required',
-  'requires-input',
-  'requires_input',
-  'blocked',
-  'paused',
-]);
-
-function normalizePartStatus(status: string): string {
-  return status.trim().toLowerCase();
-}
-
-function isWaitingPartStatus(status: string): boolean {
-  return WAITING_PART_STATUSES.has(normalizePartStatus(status));
-}
-
-function collectPartStatuses(messages: Array<{ parts?: MessagePart[] }>): MessageStateStatus[] {
-  const partStatuses: MessageStateStatus[] = [];
-
-  for (const message of messages) {
-    for (const part of message.parts || []) {
-      const status = part?.state?.status;
-      if (typeof status === 'string') {
-        const normalized = normalizePartStatus(status);
-        if (normalized) {
-          partStatuses.push(normalized);
-        }
-      }
-    }
-  }
-
-  return partStatuses;
-}
-
-async function fetchPartStatuses(
-  client: ReturnType<typeof createOpencodeClient>,
-  sessionId: string,
-  timeoutMs: number
-): Promise<MessageStateStatus[]> {
-  const messagesResult = await withTimeout(
-    (signal) =>
-      client.session.messages({
-        path: { id: sessionId },
-        query: { limit: 8 },
-        signal,
-      }),
-    timeoutMs,
-    `session.messages(${sessionId})`
-  );
-  const messages = (messagesResult.data || []) as Array<{ parts?: MessagePart[] }>;
-  return collectPartStatuses(messages);
-}
-
-function getUpdatedAt(session: { time?: { updated?: number; created?: number } }): number {
-  return session.time?.updated || session.time?.created || 0;
-}
-
-function normalizeRealtimeStatus(value: string | undefined): StableRealtimeStatus {
-  if (value === 'busy' || value === 'retry') return value;
-  return 'idle';
-}
-
-export function applyStickyBusyStatus(id: string, status: StableRealtimeStatus, now: number, stickyBusyWindowMs: number): StableRealtimeStatus {
-  const existing = statusStickyState.get(id) ?? { lastBusyAt: 0, lastSeenAt: now };
-
-  if (status === 'busy') {
-    existing.lastBusyAt = now;
-    existing.lastSeenAt = now;
-    statusStickyState.set(id, existing);
-    return status;
-  }
-
-  if (status === 'retry') {
-    existing.lastSeenAt = now;
-    statusStickyState.set(id, existing);
-    return status;
-  }
-
-  const shouldKeepBusy = existing.lastBusyAt > 0 && now - existing.lastBusyAt <= stickyBusyWindowMs;
-  existing.lastSeenAt = now;
-  statusStickyState.set(id, existing);
-  return shouldKeepBusy ? 'busy' : 'idle';
-}
-
-function getStickyStateMaxEntries(): number {
-  const raw = Number(process.env.OPENCODE_STATUS_STICKY_MAX_ENTRIES);
-  if (Number.isFinite(raw) && raw > 0) {
-    return Math.floor(raw);
-  }
-  return DEFAULT_STATUS_STICKY_MAX_ENTRIES;
-}
-
-function pruneStickyState(now: number, activeIds: Set<string>): void {
-  for (const [id, state] of statusStickyState) {
-    const ageMs = now - state.lastSeenAt;
-    const isActive = activeIds.has(id);
-    if (ageMs > STATUS_STICKY_RETENTION_MS || (!isActive && ageMs > STATUS_STICKY_ABSENT_RETENTION_MS)) {
-      statusStickyState.delete(id);
-    }
-  }
-
-  const maxEntries = getStickyStateMaxEntries();
-  if (statusStickyState.size <= maxEntries) {
-    return;
-  }
-
-  const overflow = statusStickyState.size - maxEntries;
-  const sortedByLastSeen = Array.from(statusStickyState.entries()).sort((a, b) => a[1].lastSeenAt - b[1].lastSeenAt);
-
-  let removed = 0;
-  for (const [id] of sortedByLastSeen) {
-    if (removed >= overflow) break;
-    if (activeIds.has(id)) continue;
-    statusStickyState.delete(id);
-    removed++;
-  }
-
-  if (removed >= overflow) {
-    return;
-  }
-
-  for (const [id] of sortedByLastSeen) {
-    if (removed >= overflow) break;
-    if (!statusStickyState.has(id)) continue;
-    statusStickyState.delete(id);
-    removed++;
-  }
-}
-
-function hasRecentActivity(session: { time?: { updated?: number } }, now: number): boolean {
-  const updatedAt = session.time?.updated;
-  if (!updatedAt) return false;
-  return now - updatedAt <= STALL_DETECTION_WINDOW_MS;
-}
-
-function toChildEntry(
-  child: SessionLike,
-  status: 'idle' | 'busy' | 'retry',
-  waitingForUser = false
-): ChildEntry {
-  return {
-    id: child.id,
-    slug: child.slug,
-    title: child.title,
-    directory: child.directory,
-    debugReason: child.debugReason,
-    parentID: child.parentID,
-    time: child.time,
-    realTimeStatus: status,
-    waitingForUser,
-  };
-}
-
-function clearSessionStabilizationState(session: SessionStatusStabilizationTarget): void {
-  clearStickyStatusState(session.id);
-  clearSessionForceUnarchived(session.id);
-  for (const child of session.children) {
-    clearStickyStatusState(`child:${child.id}`);
-    clearSessionForceUnarchived(child.id);
-  }
-}
-
-export function shouldSkipSessionStatusStabilization(
-  session: SessionStatusStabilizationTarget,
-  now: number
-): boolean {
-  if (takeSessionStickyStatusBlocked(session.id, now)) {
-    clearSessionStabilizationState(session);
-    return true;
-  }
-
-  if (session.time?.archived) {
-    clearSessionStabilizationState(session);
-    return true;
-  }
-
-  return false;
-}
-
-export function applyStickyStatusStabilization(
-  session: SessionStatusStabilizationTarget,
-  stickyNow: number,
-  stickyBusyDelayMs: number
-): void {
-  for (const child of session.children) {
-    if (child.time?.archived) {
-      clearStickyStatusState(`child:${child.id}`);
-      clearSessionForceUnarchived(child.id);
-      continue;
-    }
-
-    const normalizedChildStatus = normalizeRealtimeStatus(child.realTimeStatus);
-    const childStatusForStabilization =
-      child.waitingForUser && normalizedChildStatus === 'idle' ? 'retry' : normalizedChildStatus;
-    child.realTimeStatus = applyStickyBusyStatus(
-      `child:${child.id}`,
-      childStatusForStabilization,
-      stickyNow,
-      stickyBusyDelayMs
-    );
-
-    if (child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry' || child.waitingForUser) {
-      markSessionForceUnarchived(child.id, stickyNow);
-    }
-  }
-
-  const normalizedSessionStatus = normalizeRealtimeStatus(session.realTimeStatus);
-  const sessionStatusForStabilization =
-    session.waitingForUser && normalizedSessionStatus === 'idle' ? 'retry' : normalizedSessionStatus;
-  session.realTimeStatus = applyStickyBusyStatus(
-    session.id,
-    sessionStatusForStabilization,
-    stickyNow,
-    stickyBusyDelayMs
-  );
-
-  const hasActiveChildren = session.children.some(
-    (child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry' || child.waitingForUser
-  );
-  const shouldAutoUnarchive =
-    session.realTimeStatus === 'busy' ||
-    session.realTimeStatus === 'retry' ||
-    session.waitingForUser ||
-    hasActiveChildren;
-
-  if (shouldAutoUnarchive) {
-    markSessionForceUnarchived(session.id, stickyNow);
-  }
-}
-// Get project name from directory path
-function getProjectName(directory: string): string {
-  return path.basename(directory);
-}
-
-// Check if directory is a git repository
-function isGitRepo(directory: string): boolean {
-  try {
-    const result = execSync('git rev-parse --is-inside-work-tree', {
-      cwd: directory,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: GIT_COMMAND_TIMEOUT_MS,
-    });
-    return result.trim() === 'true';
-  } catch {
-    return false;
-  }
-}
-
-// Get git branch name
-function getGitBranch(directory: string): string | null {
-  if (!isGitRepo(directory)) return null;
-  try {
-    const branch = execSync('git branch --show-current', {
-      cwd: directory,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: GIT_COMMAND_TIMEOUT_MS,
-    });
-    return branch.trim() || null;
-  } catch {
-    return null;
-  }
 }
 
 async function readStickyBusyDelayMs(): Promise<number> {
@@ -500,6 +90,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isRemoteSource(source: SessionSource): source is RemoteHostConfig & { hostKind: 'remote' } {
   return source.hostKind === 'remote';
+}
+
+function getRemoteClaudeCapabilities(
+  capabilities: SessionCapabilities | undefined,
+  provider: SessionProvider,
+  source: SessionSource
+): SessionCapabilities | undefined {
+  if (!isRemoteSource(source) || provider !== 'claude-code') {
+    return capabilities;
+  }
+
+  return {
+    openProject: capabilities?.openProject ?? true,
+    openEditor: false,
+    archive: false,
+    delete: false,
+  };
 }
 
 function normalizeNodeBaseUrl(baseUrl: string): string | null {
@@ -551,8 +158,24 @@ function isTimeValue(value: unknown): boolean {
   return (
     typeof created === 'number' &&
     typeof updated === 'number' &&
-    (archived === undefined || typeof archived === 'number')
+    (archived === undefined || archived === null || typeof archived === 'number')
   );
+}
+
+function normalizeSessionTimeValue<T extends { created: number; updated: number; archived?: number } | undefined>(time: T): T {
+  if (!time) {
+    return time;
+  }
+
+  const archived = (time as { archived?: number | null }).archived;
+  if (archived === null) {
+    return {
+      created: time.created,
+      updated: time.updated,
+    } as T;
+  }
+
+  return time;
 }
 
 function isChildEntryValue(value: unknown): value is ChildEntry {
@@ -784,6 +407,10 @@ function toRawSessionId(value: string): string {
   }
 }
 
+function toProviderRawSessionId(value: string): string {
+  return extractProviderRawId(toRawSessionId(value));
+}
+
 function composeSourceKeySafely(hostId: string, sessionId: string): string | undefined {
   try {
     return composeSourceKey(hostId, sessionId);
@@ -792,17 +419,58 @@ function composeSourceKeySafely(hostId: string, sessionId: string): string | und
   }
 }
 
-function addHostMetadataToChildEntry(child: ChildEntry, source: SessionSource): ChildEntry | null {
-  const rawSessionId = child.rawSessionId ?? toRawSessionId(child.id);
-  const rawParentId = child.parentID ? toRawSessionId(child.parentID) : child.parentID;
-  const sourceSessionKey = composeSourceKeySafely(source.hostId, rawSessionId);
+function composeProviderSourceKeySafely(
+  hostId: string,
+  rawId: string,
+  readOnly?: boolean,
+  provider?: SessionProvider
+): string | undefined {
+  try {
+    return composeProviderSourceKey(hostId, rawId, {
+      readOnly,
+      ...(provider ? { provider } : {}),
+    }).sourceKey;
+  } catch {
+    return undefined;
+  }
+}
+
+function addHostMetadataToChildEntry(
+  child: ChildEntry,
+  source: SessionSource,
+  parentSourceSessionKey?: string
+): ChildEntry | null {
+  const rawSessionId = child.rawSessionId ?? toProviderRawSessionId(child.id);
+  const rawParentId = child.parentID ? toProviderRawSessionId(child.parentID) : child.parentID;
+  const inferredProvider = detectProviderFromRawId(child.id);
+  const parentProvider = parentSourceSessionKey ? detectProviderFromRawId(parentSourceSessionKey) : undefined;
+  const childProvider = inferredProvider === 'claude-code' ? inferredProvider : (parentProvider ?? inferredProvider);
+  const childCapabilities = getRemoteClaudeCapabilities(child.capabilities, childProvider, source);
+  const sourceSessionKey = composeProviderSourceKeySafely(source.hostId, rawSessionId, child.readOnly, childProvider);
   if (!sourceSessionKey) {
     return null;
   }
 
-  const sourceParentKey = rawParentId
-    ? (composeSourceKeySafely(source.hostId, rawParentId) ?? undefined)
+  const parentSourceRawId = parentSourceSessionKey
+    ? toProviderRawSessionId(parentSourceSessionKey)
     : undefined;
+  const shouldReuseParentSourceKey =
+    typeof rawParentId === 'string'
+    && typeof parentSourceSessionKey === 'string'
+    && parentSourceRawId === rawParentId;
+
+  const sourceParentKey = rawParentId
+    ? (
+      shouldReuseParentSourceKey
+        ? parentSourceSessionKey
+        : composeProviderSourceKeySafely(source.hostId, rawParentId, undefined, childProvider) ?? undefined
+    )
+    : undefined;
+  const normalizedChildProvider = child.provider ?? (childProvider === 'claude-code' ? childProvider : undefined);
+  const normalizedChildProviderRawId =
+    normalizedChildProvider === 'claude-code'
+      ? (child.providerRawId ?? rawSessionId)
+      : child.providerRawId;
 
   return {
     ...child,
@@ -812,26 +480,37 @@ function addHostMetadataToChildEntry(child: ChildEntry, source: SessionSource): 
     hostLabel: source.hostLabel,
     hostKind: source.hostKind,
     ...(isRemoteSource(source) ? { hostBaseUrl: source.baseUrl } : {}),
+    time: normalizeSessionTimeValue(child.time),
     rawSessionId,
     sourceSessionKey,
-    readOnly: false,
+    readOnly: child.readOnly ?? false,
+    capabilities: childCapabilities,
+    ...(normalizedChildProvider ? { provider: normalizedChildProvider } : {}),
+    ...(normalizedChildProviderRawId ? { providerRawId: normalizedChildProviderRawId } : {}),
   };
 }
 
 function addHostMetadataToSession(session: EnrichedSession, source: SessionSource): EnrichedSession | null {
-  const rawSessionId = session.rawSessionId ?? toRawSessionId(session.id);
-  const rawParentId = session.parentID ? toRawSessionId(session.parentID) : session.parentID;
-  const sourceSessionKey = composeSourceKeySafely(source.hostId, rawSessionId);
+  const rawSessionId = session.rawSessionId ?? toProviderRawSessionId(session.id);
+  const rawParentId = session.parentID ? toProviderRawSessionId(session.parentID) : session.parentID;
+  const sessionProvider = detectProviderFromRawId(session.id);
+  const sessionCapabilities = getRemoteClaudeCapabilities(session.capabilities, sessionProvider, source);
+  const sourceSessionKey = composeProviderSourceKeySafely(source.hostId, rawSessionId, session.readOnly, sessionProvider);
   if (!sourceSessionKey) {
     return null;
   }
 
   const sourceParentKey = rawParentId
-    ? (composeSourceKeySafely(source.hostId, rawParentId) ?? undefined)
+    ? (composeProviderSourceKeySafely(source.hostId, rawParentId, undefined, sessionProvider) ?? undefined)
     : undefined;
+  const normalizedSessionProvider = session.provider ?? (sessionProvider === 'claude-code' ? sessionProvider : undefined);
+  const normalizedSessionProviderRawId =
+    normalizedSessionProvider === 'claude-code'
+      ? (session.providerRawId ?? rawSessionId)
+      : session.providerRawId;
   const children: ChildEntry[] = [];
   for (const child of session.children) {
-    const enrichedChild = addHostMetadataToChildEntry(child, source);
+    const enrichedChild = addHostMetadataToChildEntry(child, source, sourceSessionKey);
     if (enrichedChild) {
       children.push(enrichedChild);
     }
@@ -845,9 +524,13 @@ function addHostMetadataToSession(session: EnrichedSession, source: SessionSourc
     hostLabel: source.hostLabel,
     hostKind: source.hostKind,
     ...(isRemoteSource(source) ? { hostBaseUrl: source.baseUrl } : {}),
+    time: normalizeSessionTimeValue(session.time),
     rawSessionId,
     sourceSessionKey,
-    readOnly: false,
+    readOnly: session.readOnly ?? false,
+    capabilities: sessionCapabilities,
+    ...(normalizedSessionProvider ? { provider: normalizedSessionProvider } : {}),
+    ...(normalizedSessionProviderRawId ? { providerRawId: normalizedSessionProviderRawId } : {}),
     children,
   };
 }
@@ -873,9 +556,232 @@ function addHostMetadataToPayload(payload: Record<string, unknown>, source: Sess
 
   return {
     ...payload,
-    sessions,
+    sessions: rebuildAggregateClaudeTopology(sessions),
     ...(payloadDegraded || droppedSessions > 0 ? { degraded: true } : {}),
   };
+}
+
+function toAggregateClaudeChildEntry(session: EnrichedSession): ChildEntry {
+  const { children: _children, ...childEntry } = session;
+  return childEntry as ChildEntry;
+}
+
+function hasClaudeProvider(entry: HostAwareFields): boolean {
+  return entry.provider === 'claude-code';
+}
+
+function toFiniteTimestamp(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function getCreatedAt(session: EnrichedSession): number | undefined {
+  return toFiniteTimestamp(session.time?.created);
+}
+
+function getUpdatedAt(session: EnrichedSession): number | undefined {
+  return toFiniteTimestamp(session.time?.updated);
+}
+
+function hasSameHostIdentity(a: HostAwareFields, b: HostAwareFields): boolean {
+  return a.hostId === b.hostId && a.hostKind === b.hostKind;
+}
+
+type InferredClaudeParentCandidate = {
+  parent: EnrichedSession;
+  createdGapMs: number;
+  updatedGapMs: number;
+};
+
+function inferClaudeParentSession(
+  child: EnrichedSession,
+  sessions: EnrichedSession[],
+  absorbedChildIds: Set<string>
+): EnrichedSession | undefined {
+  if (child.topology?.childSessions === 'authoritative') {
+    return undefined;
+  }
+
+  const childCreatedAt = getCreatedAt(child);
+  if (childCreatedAt === undefined) {
+    return undefined;
+  }
+
+  const childUpdatedAt = getUpdatedAt(child) ?? childCreatedAt;
+  const candidates: InferredClaudeParentCandidate[] = [];
+
+  for (const parent of sessions) {
+    if (parent.id === child.id || absorbedChildIds.has(parent.id)) {
+      continue;
+    }
+
+    if (!hasClaudeProvider(parent) || !hasSameHostIdentity(parent, child)) {
+      continue;
+    }
+
+    if (typeof parent.parentID === 'string') {
+      continue;
+    }
+
+    if (parent.directory !== child.directory || parent.projectName !== child.projectName) {
+      continue;
+    }
+
+    const parentCreatedAt = getCreatedAt(parent);
+    if (parentCreatedAt === undefined || parentCreatedAt > childCreatedAt) {
+      continue;
+    }
+
+    const createdGapMs = childCreatedAt - parentCreatedAt;
+    if (createdGapMs > CLAUDE_INFERRED_PARENT_MAX_CREATED_GAP_MS) {
+      continue;
+    }
+
+    const parentLooksActive =
+      parent.realTimeStatus === 'busy' ||
+      parent.realTimeStatus === 'retry' ||
+      parent.waitingForUser;
+    if (!parentLooksActive) {
+      continue;
+    }
+
+    const parentUpdatedAt = getUpdatedAt(parent) ?? parentCreatedAt;
+    const updatedGapMs = Math.abs(childUpdatedAt - parentUpdatedAt);
+
+    candidates.push({
+      parent,
+      createdGapMs,
+      updatedGapMs,
+    });
+  }
+
+  if (candidates.length === 0) {
+    return undefined;
+  }
+
+  candidates.sort((a, b) => {
+    if (a.createdGapMs !== b.createdGapMs) {
+      return a.createdGapMs - b.createdGapMs;
+    }
+    return a.updatedGapMs - b.updatedGapMs;
+  });
+
+  const bestCandidate = candidates[0];
+  const secondCandidate = candidates[1];
+
+  if (
+    secondCandidate
+    && Math.abs(secondCandidate.createdGapMs - bestCandidate.createdGapMs) <= CLAUDE_INFERRED_PARENT_AMBIGUITY_GAP_MS
+  ) {
+    return undefined;
+  }
+
+  return bestCandidate.parent;
+}
+
+function rebuildAggregateClaudeTopology(sessions: EnrichedSession[]): EnrichedSession[] {
+  const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+  const absorbedChildIds = new Set<string>();
+  const resolveVisibleClaudeParent = (
+    childSession: EnrichedSession,
+    parentSession: EnrichedSession
+  ): EnrichedSession | undefined => {
+    let cursor: EnrichedSession | undefined = parentSession;
+    const visited = new Set<string>([childSession.id]);
+
+    while (cursor) {
+      if (visited.has(cursor.id)) {
+        return undefined;
+      }
+
+      visited.add(cursor.id);
+
+      if (!absorbedChildIds.has(cursor.id)) {
+        return cursor;
+      }
+
+      if (typeof cursor.parentID !== 'string') {
+        return undefined;
+      }
+
+      cursor = sessionsById.get(cursor.parentID);
+    }
+
+    return undefined;
+  };
+
+  const orderedSessions = [...sessions].sort((a, b) => {
+    const createdDiff = (getCreatedAt(b) ?? 0) - (getCreatedAt(a) ?? 0);
+    if (createdDiff !== 0) {
+      return createdDiff;
+    }
+
+    return (getUpdatedAt(b) ?? 0) - (getUpdatedAt(a) ?? 0);
+  });
+
+  for (const session of orderedSessions) {
+    if (!hasClaudeProvider(session) || absorbedChildIds.has(session.id)) {
+      continue;
+    }
+
+    let parentSession: EnrichedSession | undefined;
+
+    if (typeof session.parentID === 'string') {
+      const explicitParentSession = sessionsById.get(session.parentID);
+      if (explicitParentSession) {
+        if (
+          explicitParentSession === session
+          || !hasClaudeProvider(explicitParentSession)
+          || !hasSameHostIdentity(explicitParentSession, session)
+        ) {
+          continue;
+        }
+
+        const visibleParentSession = resolveVisibleClaudeParent(session, explicitParentSession);
+        if (!visibleParentSession) {
+          if (absorbedChildIds.has(explicitParentSession.id)) {
+            session.parentID = undefined;
+          }
+          continue;
+        }
+
+        parentSession = visibleParentSession;
+        if (session.parentID !== visibleParentSession.id) {
+          session.parentID = visibleParentSession.id;
+        }
+      }
+    }
+
+    if (!parentSession) {
+      parentSession = inferClaudeParentSession(session, sessions, absorbedChildIds);
+      if (parentSession) {
+        session.parentID = parentSession.id;
+      }
+    }
+
+    if (!parentSession) {
+      continue;
+    }
+
+    if (session.children.length > 0) {
+      continue;
+    }
+
+    const childEntry = toAggregateClaudeChildEntry(session);
+    const existingChildIndex = parentSession.children.findIndex((child) => child.id === childEntry.id);
+    if (existingChildIndex >= 0) {
+      parentSession.children[existingChildIndex] = {
+        ...parentSession.children[existingChildIndex],
+        ...childEntry,
+      };
+    } else {
+      parentSession.children.push(childEntry);
+    }
+
+    sortChildEntries(parentSession.children);
+    absorbedChildIds.add(session.id);
+  }
+
+  return sessions.filter((session) => !absorbedChildIds.has(session.id));
 }
 
 function sortChildEntries(children: ChildEntry[]): void {
@@ -1014,531 +920,9 @@ async function getRemoteNodeSessionsResult(
   }
 }
 
-async function getLocalSessionsResult(stickyBusyDelayMs: number): Promise<SessionsRouteResult> {
-  
-  const { processes: rawProcessHints, timedOut: processDiscoveryTimedOut } =
-    discoverOpencodeProcessCwdsWithoutPortWithMeta();
-  const processHintsByDirectory = new Map<string, ProcessHint>();
-  for (const process of rawProcessHints) {
-    if (!process.cwd || process.cwd.startsWith('/private/tmp/opencode')) {
-      continue;
-    }
-    if (processHintsByDirectory.has(process.cwd)) {
-      continue;
-    }
-    processHintsByDirectory.set(process.cwd, {
-      pid: process.pid,
-      directory: process.cwd,
-      projectName: getProjectName(process.cwd),
-      reason: 'process_without_api_port',
-    });
-  }
-
-  const { ports, timedOut: portDiscoveryTimedOut } = discoverOpencodePortsWithMeta();
-
-  if (!ports.length) {
-    const processHints = Array.from(processHintsByDirectory.values());
-
-    if (portDiscoveryTimedOut || processDiscoveryTimedOut) {
-      return {
-        payload: {
-          error: 'OpenCode discovery timed out',
-          hint: 'Host process discovery exceeded timeout. Retry shortly, or increase OPENCODE_DISCOVERY_TIMEOUT_MS.',
-          ...(processHints.length > 0 ? { processHints } : {}),
-        },
-        status: 503,
-        sourceMeta: {
-          online: false,
-          degraded: true,
-          reason: 'OpenCode discovery timed out',
-        },
-      };
-    }
-
-    if (processHints.length > 0) {
-      return {
-        payload: { sessions: [], processHints },
-        sourceMeta: {
-          online: false,
-          reason: 'OpenCode server not found',
-        },
-      };
-    }
-
-    return {
-      payload: {
-        error: 'OpenCode server not found',
-        hint: 'Make sure OpenCode is running with an exposed API port. Example: opencode --port <PORT> (VibePulse auto-detects active ports).'
-      },
-      status: 503,
-      sourceMeta: {
-        online: false,
-        reason: 'OpenCode server not found',
-      },
-    };
-  }
-
-  try {
-    const results = await Promise.allSettled(ports.map(async (port) => {
-      const client = createOpencodeClient({ baseUrl: `http://localhost:${port}` });
-      const sessionsResult = await withTimeout(
-        (signal) => client.session.list({ signal }),
-        sessionListTimeoutMs,
-        `session.list(${port})`
-      );
-      const statusResult = await withTimeout(
-        (signal) => client.session.status({ signal }),
-        sessionStatusTimeoutMs,
-        `session.status(${port})`
-      ).catch(() => ({ data: {} }));
-      return { port, client, sessions: sessionsResult.data || [], status: statusResult.data || {} };
-    }));
-
-    const allSessions: SessionLike[] = [];
-    const statusMap: Record<string, { type: 'idle' | 'busy' | 'retry' }> = {};
-    const clientByPort: Record<number, ReturnType<typeof createOpencodeClient>> = {};
-    const sessionPortMap: Record<string, number> = {};
-    const failedPorts: Array<{ port: number; reason: string }> = [];
-
-    for (let i = 0; i < results.length; i++) {
-      const r = results[i];
-      const port = ports[i];
-      if (r.status !== 'fulfilled') {
-        failedPorts.push({
-          port,
-          reason: r.reason instanceof Error ? r.reason.message : String(r.reason),
-        });
-        continue;
-      }
-      allSessions.push(...r.value.sessions);
-      Object.assign(statusMap, r.value.status);
-      clientByPort[r.value.port] = r.value.client;
-      for (const session of r.value.sessions as SessionLike[]) {
-        if (!(session.id in sessionPortMap)) {
-          sessionPortMap[session.id] = r.value.port;
-        }
-      }
-    }
-
-    // Deduplicate by session.id
-    const seen = new Set<string>();
-    const sessions = allSessions.filter((session) => {
-      if (seen.has(session.id)) return false;
-      seen.add(session.id);
-      return true;
-    });
-
-    const parentSessions = sessions.filter((s) => !s.parentID);
-    const childSessions = sessions.filter((s) => !!s.parentID);
-
-    const lifecycleNow = Date.now();
-    pruneSessionForceUnarchived(lifecycleNow);
-    pruneSessionStickyStatusBlocked(lifecycleNow);
-
-    for (const session of parentSessions) {
-      if (session.time?.archived !== undefined && shouldForceSessionUnarchived(session.id, lifecycleNow)) {
-        session.time = {
-          ...session.time,
-          archived: undefined,
-        };
-      }
-    }
-
-    for (const child of childSessions) {
-      if (child.time?.archived !== undefined && shouldForceSessionUnarchived(child.id, lifecycleNow)) {
-        child.time = {
-          ...child.time,
-          archived: undefined,
-        };
-      }
-    }
-
-    if (results.length > 0 && failedPorts.length === results.length) {
-      pruneStickyState(Date.now(), new Set<string>());
-      return {
-        payload: {
-          error: 'Failed to fetch sessions from OpenCode ports',
-          hint: 'All discovered OpenCode API ports timed out or failed. Retry shortly or increase OPENCODE_SESSIONS_LIST_TIMEOUT_MS.',
-          failedPorts,
-        },
-        status: 503,
-        sourceMeta: {
-          online: false,
-          degraded: true,
-          reason: 'Failed to fetch sessions from OpenCode ports',
-        },
-      };
-    }
-
-    if (failedPorts.length > 0 && parentSessions.length === 0 && childSessions.length === 0) {
-      pruneStickyState(Date.now(), new Set<string>());
-      const processHints = Array.from(processHintsByDirectory.values());
-        return {
-          payload: {
-            sessions: [],
-            processHints,
-            failedPorts,
-            degraded: true,
-          },
-          sourceMeta: {
-            online: true,
-            degraded: true,
-          },
-        };
-      }
-
-    // Enrich parent sessions
-    const enrichedSessions: EnrichedSession[] = parentSessions.map((session) => {
-      const projectName = getProjectName(session.directory);
-      const branch = getGitBranch(session.directory);
-      return {
-        ...session,
-        projectName,
-        branch,
-        realTimeStatus: statusMap[session.id]?.type || 'idle',
-        waitingForUser: false,
-        children: [],
-      };
-    });
-
-    const parentById = new Map(enrichedSessions.map((session) => [session.id, session]));
-
-    const now = Date.now();
-    const unresolvedChildren: Array<{ parentId: string; child: SessionLike; childUpdatedAt: number }> = [];
-
-    // Enrich and nest child sessions under parents
-    for (const child of childSessions) {
-      // Find parent by parentID
-      let parent = child.parentID
-        ? enrichedSessions.find((session) => session.id === child.parentID)
-        : null;
-
-      if (!parent) {
-        const candidates = enrichedSessions
-          .filter((session) => session.directory === child.directory)
-          .sort((a, b) => getUpdatedAt(b) - getUpdatedAt(a));
-
-        parent =
-          candidates.find((session) => session.realTimeStatus === 'busy' || session.realTimeStatus === 'retry') ||
-          candidates[0];
-      }
-
-      if (!parent) {
-        continue;
-      }
-
-      const statusFromMap = statusMap[child.id]?.type;
-      const childUpdatedAt = getUpdatedAt(child);
-      const isRecent = childUpdatedAt > 0 && now - childUpdatedAt <= CHILD_ACTIVE_WINDOW_MS;
-      const shouldSkipArchivedChild = !!child.time?.archived && !statusFromMap && !isRecent;
-
-      if (shouldSkipArchivedChild) {
-        continue;
-      }
-
-      if (statusFromMap && statusFromMap !== 'idle') {
-        parent.children.push(toChildEntry(child, statusFromMap));
-      } else if (isRecent) {
-        if (unresolvedChildren.length < CHILD_STATUS_MESSAGE_CHECK_LIMIT) {
-          unresolvedChildren.push({ parentId: parent.id, child, childUpdatedAt });
-        }
-      } else {
-        continue;
-      }
-    }
-
-    if (unresolvedChildren.length > 0) {
-      const unresolvedChecks = await Promise.allSettled(
-        unresolvedChildren.map(async ({ parentId, child, childUpdatedAt }) => {
-          const port = sessionPortMap[child.id] ?? sessionPortMap[parentId];
-          const client = port ? clientByPort[port] : undefined;
-          const assumeBusyForUnknown =
-            childUpdatedAt > 0 && now - childUpdatedAt <= CHILD_UNKNOWN_STATE_BUSY_WINDOW_MS;
-          if (!client) {
-            return {
-              parentId,
-              child,
-              childStatus: assumeBusyForUnknown ? 'busy' as const : 'idle' as const,
-            };
-          }
-
-          try {
-            const partStatuses = await fetchPartStatuses(client, child.id, sessionMessagesTimeoutMs);
-            const hasRunningState = partStatuses.some((status) => status === 'running');
-            const hasWaitingState = !hasRunningState && partStatuses.some(isWaitingPartStatus);
-            const hasActiveState = hasWaitingState || hasRunningState;
-            const recentlyActive = childUpdatedAt > 0 && now - childUpdatedAt <= 5 * 60 * 1000;
-
-            return {
-              parentId,
-              child,
-              childWaitingForUser: hasWaitingState,
-              childStatus: hasActiveState
-                ? 'busy' as const
-                : recentlyActive || assumeBusyForUnknown
-                  ? 'busy' as const
-                  : 'idle' as const,
-            };
-          } catch {
-            return {
-              parentId,
-              child,
-              childWaitingForUser: false,
-              childStatus: assumeBusyForUnknown ? 'busy' as const : 'idle' as const,
-            };
-          }
-        })
-      );
-
-      for (const check of unresolvedChecks) {
-        if (check.status !== 'fulfilled') continue;
-        if (check.value.childStatus === 'idle') continue;
-        const parent = parentById.get(check.value.parentId);
-        if (!parent) continue;
-        parent.children.push(toChildEntry(check.value.child, check.value.childStatus, check.value.childWaitingForUser));
-      }
-    }
-
-    const parentStatusFallbackCandidates = enrichedSessions
-      .filter((session) => {
-        if (session.realTimeStatus !== 'idle') return false;
-        const updatedAt = getUpdatedAt(session);
-        if (updatedAt > 0 && now - updatedAt <= CHILD_ACTIVE_WINDOW_MS) return true;
-        return !!session.time?.archived;
-      })
-      .sort((a, b) => getUpdatedAt(b) - getUpdatedAt(a))
-      .slice(0, CHILD_STATUS_MESSAGE_CHECK_LIMIT);
-
-    if (parentStatusFallbackCandidates.length > 0) {
-      const parentFallbackChecks = await Promise.allSettled(
-        parentStatusFallbackCandidates.map(async (session) => {
-          const updatedAt = getUpdatedAt(session);
-          const assumeBusyForUnknown =
-            updatedAt > 0 && now - updatedAt <= CHILD_UNKNOWN_STATE_BUSY_WINDOW_MS;
-          const port = sessionPortMap[session.id];
-          const client = port ? clientByPort[port] : undefined;
-
-          if (!client) {
-            return {
-              sessionId: session.id,
-              status: assumeBusyForUnknown ? 'busy' as const : 'idle' as const,
-              waitingForUser: false,
-            };
-          }
-
-          try {
-            const partStatuses = await fetchPartStatuses(client, session.id, sessionMessagesTimeoutMs);
-            const hasRunningState = partStatuses.some((status) => status === 'running');
-            const hasWaitingState = !hasRunningState && partStatuses.some(isWaitingPartStatus);
-            const hasCompletedState =
-              partStatuses.length > 0 && partStatuses.every((status) => status === 'completed');
-            const recentlyActive = hasRecentActivity(session, now);
-
-            return {
-              sessionId: session.id,
-              status: hasRunningState || hasWaitingState
-                ? 'busy' as const
-                : hasCompletedState && !recentlyActive
-                  ? 'idle' as const
-                  : assumeBusyForUnknown || recentlyActive
-                    ? 'busy' as const
-                    : 'idle' as const,
-              waitingForUser: hasWaitingState,
-            };
-          } catch {
-            return {
-              sessionId: session.id,
-              status: assumeBusyForUnknown ? 'busy' as const : 'idle' as const,
-              waitingForUser: false,
-            };
-          }
-        })
-      );
-
-      for (const check of parentFallbackChecks) {
-        if (check.status !== 'fulfilled') continue;
-        if (check.value.status === 'idle') continue;
-        const session = parentById.get(check.value.sessionId);
-        if (!session) continue;
-        session.realTimeStatus = check.value.status;
-        if (check.value.waitingForUser) {
-          session.waitingForUser = true;
-        }
-      }
-    }
-
-    // Sort children for each parent: active first, then by updated time
-    for (const session of enrichedSessions) {
-      if (session.children.length > 0) {
-        sortChildEntries(session.children);
-      }
-    }
-
-    const sessionsForInteractionChecks = enrichedSessions.filter(
-      (session) =>
-        session.realTimeStatus === 'busy' ||
-        !!session.time?.archived ||
-        session.children.some((child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry')
-    );
-    if (sessionsForInteractionChecks.length > 0) {
-      const pendingChecks = await Promise.allSettled(
-        sessionsForInteractionChecks.map(async (session) => {
-          const port = sessionPortMap[session.id];
-          const client = port ? clientByPort[port] : undefined;
-          if (!client) {
-            return {
-              sessionId: session.id,
-              parentWaiting: false,
-              waiting: false,
-              running: false,
-              waitingChildIds: new Set<string>(),
-            };
-          }
-
-          try {
-            const partStatuses = await fetchPartStatuses(client, session.id, sessionMessagesTimeoutMs);
-            const hasRunning = partStatuses.some((status) => status === 'running');
-            const hasInteractionWait = !hasRunning && partStatuses.some(isWaitingPartStatus);
-
-            const childStateChecks = await Promise.allSettled(
-              session.children
-                .filter((child) => child.realTimeStatus === 'busy' || child.realTimeStatus === 'retry')
-                .map(async (child) => {
-                  const childPort = sessionPortMap[child.id] ?? sessionPortMap[session.id];
-                  const childClient = childPort ? clientByPort[childPort] : undefined;
-                  if (!childClient) {
-                    return { childId: child.id, waiting: false };
-                  }
-                  try {
-                    const childStatuses = await fetchPartStatuses(childClient, child.id, sessionMessagesTimeoutMs);
-                    const childHasRunning = childStatuses.some((status) => status === 'running');
-                    return {
-                      childId: child.id,
-                      waiting: !childHasRunning && childStatuses.some(isWaitingPartStatus),
-                    };
-                  } catch {
-                    return { childId: child.id, waiting: false };
-                  }
-                })
-            );
-
-            const waitingChildIds = new Set(
-              childStateChecks
-                .filter((result): result is PromiseFulfilledResult<{ childId: string; waiting: boolean }> => result.status === 'fulfilled')
-                .filter((result) => result.value.waiting)
-                .map((result) => result.value.childId)
-            );
-
-            const hasWaitingChildren =
-              waitingChildIds.size > 0 ||
-              session.children.some((child) => child.waitingForUser || child.realTimeStatus === 'retry');
-
-            return {
-              sessionId: session.id,
-              parentWaiting: hasInteractionWait,
-              waiting: hasInteractionWait || hasWaitingChildren,
-              running: hasRunning,
-              waitingChildIds,
-            };
-          } catch {
-            return {
-              sessionId: session.id,
-              parentWaiting: false,
-              waiting: false,
-              running: false,
-              waitingChildIds: new Set<string>(),
-            };
-          }
-        })
-      );
-
-      for (const result of pendingChecks) {
-        if (result.status === 'fulfilled') {
-          const session = enrichedSessions.find((candidate) => candidate.id === result.value.sessionId);
-          if (!session) continue;
-          for (const child of session.children) {
-            if (result.value.waitingChildIds.has(child.id)) {
-              child.waitingForUser = true;
-            }
-          }
-          if (result.value.running) {
-            session.realTimeStatus = 'busy';
-          }
-          if (result.value.parentWaiting) {
-            session.waitingForUser = true;
-          }
-        }
-      }
-    }
-
-    const stickyNow = Date.now();
-    const activeStickyIds = new Set<string>();
-
-    for (const session of enrichedSessions) {
-      activeStickyIds.add(session.id);
-      for (const child of session.children) {
-        activeStickyIds.add(`child:${child.id}`);
-      }
-    }
-
-    for (const session of enrichedSessions) {
-      if (shouldSkipSessionStatusStabilization(session, stickyNow)) {
-        continue;
-      }
-
-      applyStickyStatusStabilization(session, stickyNow, stickyBusyDelayMs);
-    }
-    pruneStickyState(stickyNow, activeStickyIds);
-
-    const knownDirectories = new Set<string>();
-    for (const session of sessions) {
-      if (session.directory) {
-        knownDirectories.add(session.directory);
-      }
-    }
-
-    const processHints = Array.from(processHintsByDirectory.values()).filter(
-      (hint) => !knownDirectories.has(hint.directory)
-    );
-
-    const payload: SessionsSuccessPayload = {
-      sessions: enrichedSessions,
-      processHints,
-    };
-
-    if (failedPorts.length > 0) {
-      payload.failedPorts = failedPorts;
-      payload.degraded = true;
-    }
-
-    return {
-      payload,
-      sourceMeta: {
-        online: true,
-        ...(failedPorts.length > 0 ? { degraded: true } : {}),
-      },
-    };
-  } catch (error) {
-    console.error('Error fetching sessions:', error);
-    return {
-      payload: {
-        error: 'Failed to fetch sessions',
-        details: error instanceof Error ? error.message : String(error),
-        hint: 'Make sure OpenCode is running with an exposed API port. Example: opencode --port <PORT> (VibePulse auto-detects active ports).'
-      },
-      status: 500,
-      sourceMeta: {
-        online: false,
-        degraded: true,
-        reason: 'Failed to fetch sessions',
-      },
-    };
-  }
-}
-
 async function handleGet() {
   const stickyBusyDelayMs = await readStickyBusyDelayMs();
-  return toRouteResponse(await getLocalSessionsResult(stickyBusyDelayMs));
+  return toRouteResponse(await getLocalSessionsResult({ stickyBusyDelayMs, providers: [...LOCAL_POLLING_PROVIDERS] }));
 }
 
 async function handlePost(request: Request) {
@@ -1568,7 +952,7 @@ async function handlePost(request: Request) {
 
   if (enabledSources.length === 1 && enabledSources[0].hostKind === 'local') {
     const stickyBusyDelayMs = await readStickyBusyDelayMs();
-    const localResult = await getLocalSessionsResult(stickyBusyDelayMs);
+    const localResult = await getLocalSessionsResult({ stickyBusyDelayMs, providers: [...LOCAL_POLLING_PROVIDERS] });
     const rawLocalMeta = localResult.sourceMeta ?? {
       online: !localResult.status,
       ...(localResult.status ? { degraded: true } : {}),
@@ -1634,7 +1018,7 @@ async function handlePost(request: Request) {
     resolvedSources.map(async (source) => ({
       source,
       result: source.hostKind === 'local'
-        ? await getLocalSessionsResult(stickyBusyDelayMs)
+        ? await getLocalSessionsResult({ stickyBusyDelayMs, providers: [...LOCAL_POLLING_PROVIDERS] })
         : await getRemoteNodeSessionsResult(source, nodeRecordsById.get(source.hostId)),
     }))
   );
@@ -1686,7 +1070,7 @@ async function handlePost(request: Request) {
   }
 
   return Response.json({
-    sessions: aggregateSessions,
+    sessions: rebuildAggregateClaudeTopology(aggregateSessions),
     processHints: aggregateProcessHints,
     hosts: hostStatuses,
     hostStatuses,

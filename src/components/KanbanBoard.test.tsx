@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as TestingLibraryReact from '@testing-library/react';
-import { KanbanBoard } from './KanbanBoard';
+import { KanbanBoard, detectStatusTransitionSounds } from './KanbanBoard';
 import { useHostSources } from '@/hooks/useHostSources';
 
 type RenderFn = (ui: React.ReactElement) => unknown;
@@ -10,6 +10,7 @@ type Screen = {
     getByText: (text: RegExp | string) => HTMLElement;
     getAllByText: (text: RegExp | string) => HTMLElement[];
     getByTitle: (title: RegExp | string) => HTMLElement;
+    queryByTitle: (title: RegExp | string) => HTMLElement | null;
     queryAllByTitle: (title: RegExp | string) => HTMLElement[];
 };
 type FireEventFn = {
@@ -33,6 +34,7 @@ vi.mock('@tanstack/react-query', () => ({
 
 vi.mock('@/lib/notificationSound', () => ({
     playCompleteSound: vi.fn(),
+    playAttentionSound: vi.fn(),
 }));
 
 import { useQuery } from '@tanstack/react-query';
@@ -77,6 +79,21 @@ function createHostSourcesState(overrides: Partial<HostSourcesState> = {}): Host
 
 function renderBoard(filterDays = 7, hostSources = createHostSourcesState(), isNodeMode = false) {
     return render(<KanbanBoard filterDays={filterDays} hostSources={hostSources} isNodeMode={isNodeMode} />);
+}
+
+function getSessionsQueryOptions(): { refetchInterval?: (query: { state: { fetchStatus: string; data?: unknown } }) => number | false } | undefined {
+    const useQueryMock = useQuery as unknown as {
+        mock: {
+            calls: Array<[Record<string, unknown>]>;
+        };
+    };
+
+    const matchedCall = useQueryMock.mock.calls.find(([options]) => (
+        Array.isArray(options.queryKey)
+        && (options.queryKey as unknown[])[0] === 'sessions'
+    ));
+
+    return matchedCall?.[0] as { refetchInterval?: (query: { state: { fetchStatus: string; data?: unknown } }) => number | false } | undefined;
 }
 
 describe('KanbanBoard Host Filter', () => {
@@ -289,6 +306,34 @@ describe('KanbanBoard Host Filter', () => {
         const localStatus = screen.getByTestId('host-status-local');
         expect(localStatus.className).toContain('bg-emerald-500');
         expect(localStatus.getAttribute('title')).toBe('Online');
+    });
+});
+
+describe('KanbanBoard sounds', () => {
+    it('detects review sound transition when card moves into review', () => {
+        const previous = {
+            'session-1': 'busy',
+        } as const;
+
+        const next = {
+            'session-1': 'review',
+        } as const;
+
+        const transitions = detectStatusTransitionSounds(previous, next);
+        expect(transitions).toEqual({ shouldPlayReview: true, shouldPlayComplete: false });
+    });
+
+    it('detects completion sound transition when card moves into idle', () => {
+        const previous = {
+            'session-1': 'review',
+        } as const;
+
+        const next = {
+            'session-1': 'idle',
+        } as const;
+
+        const transitions = detectStatusTransitionSounds(previous, next);
+        expect(transitions).toEqual({ shouldPlayReview: false, shouldPlayComplete: true });
     });
 });
 
@@ -551,6 +596,10 @@ describe('KanbanBoard Fetch Behavior and Error UX', () => {
         });
 
         expect(screen.getByTestId('host-filter')).toBeTruthy();
+        const openButton = screen.getByTitle('Open project') as HTMLButtonElement;
+        expect(openButton.disabled).toBe(true);
+        expect(screen.queryByTitle('Batch actions')).toBeNull();
+        expect(screen.queryAllByTitle('Actions')).toHaveLength(0);
     });
 
     it('dedupes legacy raw Local snapshot sessions against degraded namespaced Local sessions', async () => {
@@ -625,6 +674,263 @@ describe('KanbanBoard Fetch Behavior and Error UX', () => {
         await waitFor(() => {
             expect(screen.getAllByText('Local duplicate candidate')).toHaveLength(1);
         });
+    });
+
+    it('keeps descendant-carrying intermediate cards when child-id deduplicating board cards', async () => {
+        const now = Date.now();
+        mockUseQuery.mockReturnValue({
+            data: {
+                sessions: [
+                    {
+                        id: 'local:root-session',
+                        sourceSessionKey: 'local:root-session',
+                        rawSessionId: 'root-session',
+                        slug: 'session_root_agent',
+                        title: 'Root Session',
+                        directory: '/tmp/local',
+                        projectName: 'Shared Project',
+                        hostId: 'local',
+                        hostLabel: 'Local',
+                        hostKind: 'local',
+                        readOnly: false,
+                        time: { created: now - 3_000, updated: now - 2_000 },
+                        realTimeStatus: 'busy',
+                        waitingForUser: false,
+                        children: [
+                            {
+                                id: 'local:intermediate-session',
+                                parentID: 'local:root-session',
+                                rawSessionId: 'intermediate-session',
+                                sourceSessionKey: 'local:intermediate-session',
+                                title: 'Intermediate Child Row',
+                                realTimeStatus: 'busy',
+                                waitingForUser: false,
+                                time: { created: now - 2_000, updated: now - 1_500 },
+                            },
+                        ],
+                    },
+                    {
+                        id: 'local:intermediate-session',
+                        sourceSessionKey: 'local:intermediate-session',
+                        rawSessionId: 'intermediate-session',
+                        slug: 'session_intermediate_agent',
+                        title: 'Intermediate Top-level Session',
+                        directory: '/tmp/local',
+                        projectName: 'Shared Project',
+                        hostId: 'local',
+                        hostLabel: 'Local',
+                        hostKind: 'local',
+                        readOnly: false,
+                        time: { created: now - 2_000, updated: now - 1_000 },
+                        realTimeStatus: 'busy',
+                        waitingForUser: false,
+                        children: [
+                            {
+                                id: 'local:grandchild-session',
+                                parentID: 'local:intermediate-session',
+                                rawSessionId: 'grandchild-session',
+                                sourceSessionKey: 'local:grandchild-session',
+                                title: 'Grandchild Session',
+                                realTimeStatus: 'busy',
+                                waitingForUser: false,
+                                time: { created: now - 1_000, updated: now - 500 },
+                            },
+                        ],
+                    },
+                ],
+                processHints: [],
+                hostStatuses: [
+                    { hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true },
+                ],
+            },
+            isLoading: false,
+            error: null,
+            isFetching: false,
+            failureCount: 0,
+            dataUpdatedAt: now,
+            refetch: vi.fn(),
+        });
+
+        renderBoard(7, hostSourcesState);
+
+        await waitFor(() => {
+            expect(screen.getByText('Root Session')).toBeTruthy();
+            expect(screen.getByText('Intermediate Top-level Session')).toBeTruthy();
+            expect(screen.getByText('Grandchild Session')).toBeTruthy();
+        });
+    });
+
+    it('uses faster polling while Claude waiting sessions are present', () => {
+        mockUseQuery.mockImplementation((opts: unknown) => {
+            const options = opts as { queryKey: string[] };
+            if (options.queryKey[0] === 'opencode-config') {
+                return {
+                    data: { vibepulse: { sessionsRefreshIntervalMs: 5000 } },
+                    isLoading: false,
+                };
+            }
+
+            if (options.queryKey[0] === 'sessions') {
+                return {
+                    data: {
+                        sessions: [],
+                        processHints: [],
+                        hostStatuses: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+                    },
+                    isLoading: false,
+                    error: null,
+                    dataUpdatedAt: Date.now(),
+                    refetch: vi.fn(),
+                    isFetching: false,
+                    failureCount: 0,
+                };
+            }
+
+            return {
+                data: undefined,
+                isLoading: false,
+            };
+        });
+
+        renderBoard(7, hostSourcesState);
+
+        const queryOptions = getSessionsQueryOptions();
+        const refetchInterval = queryOptions?.refetchInterval;
+
+        expect(refetchInterval).toBeTypeOf('function');
+        expect(refetchInterval?.({
+            state: {
+                fetchStatus: 'idle',
+                data: {
+                    sessions: [{ id: 'local:claude~abc', provider: 'claude-code', waitingForUser: true }],
+                },
+            },
+        })).toBe(1500);
+        expect(refetchInterval?.({
+            state: {
+                fetchStatus: 'idle',
+                data: {
+                    sessions: [{ id: 'local:abc', provider: 'opencode', waitingForUser: true }],
+                },
+            },
+        })).toBe(5000);
+        expect(refetchInterval?.({
+            state: {
+                fetchStatus: 'fetching',
+                data: {
+                    sessions: [{ id: 'local:claude~abc', provider: 'claude-code', waitingForUser: true }],
+                },
+            },
+        })).toBe(false);
+    });
+
+    it('uses faster polling when Claude waiting appears in nested child sessions', () => {
+        mockUseQuery.mockImplementation((opts: unknown) => {
+            const options = opts as { queryKey: string[] };
+            if (options.queryKey[0] === 'opencode-config') {
+                return {
+                    data: { vibepulse: { sessionsRefreshIntervalMs: 5000 } },
+                    isLoading: false,
+                };
+            }
+
+            if (options.queryKey[0] === 'sessions') {
+                return {
+                    data: {
+                        sessions: [],
+                        processHints: [],
+                        hostStatuses: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+                    },
+                    isLoading: false,
+                    error: null,
+                    dataUpdatedAt: Date.now(),
+                    refetch: vi.fn(),
+                    isFetching: false,
+                    failureCount: 0,
+                };
+            }
+
+            return {
+                data: undefined,
+                isLoading: false,
+            };
+        });
+
+        renderBoard(7, hostSourcesState);
+
+        const queryOptions = getSessionsQueryOptions();
+        const refetchInterval = queryOptions?.refetchInterval;
+
+        expect(refetchInterval).toBeTypeOf('function');
+        expect(refetchInterval?.({
+            state: {
+                fetchStatus: 'idle',
+                data: {
+                    sessions: [
+                        {
+                            id: 'local:parent',
+                            provider: 'opencode',
+                            waitingForUser: false,
+                            children: [
+                                {
+                                    id: 'local:claude~child',
+                                    provider: 'claude-code',
+                                    waitingForUser: true,
+                                },
+                            ],
+                        },
+                    ],
+                },
+            },
+        })).toBe(1500);
+    });
+
+    it('keeps configured fast polling when it is already faster than the Claude waiting boost', () => {
+        mockUseQuery.mockImplementation((opts: unknown) => {
+            const options = opts as { queryKey: string[] };
+            if (options.queryKey[0] === 'opencode-config') {
+                return {
+                    data: { vibepulse: { sessionsRefreshIntervalMs: 1000 } },
+                    isLoading: false,
+                };
+            }
+
+            if (options.queryKey[0] === 'sessions') {
+                return {
+                    data: {
+                        sessions: [],
+                        processHints: [],
+                        hostStatuses: [{ hostId: 'local', hostLabel: 'Local', hostKind: 'local', online: true }],
+                    },
+                    isLoading: false,
+                    error: null,
+                    dataUpdatedAt: Date.now(),
+                    refetch: vi.fn(),
+                    isFetching: false,
+                    failureCount: 0,
+                };
+            }
+
+            return {
+                data: undefined,
+                isLoading: false,
+            };
+        });
+
+        renderBoard(7, hostSourcesState);
+
+        const queryOptions = getSessionsQueryOptions();
+        const refetchInterval = queryOptions?.refetchInterval;
+
+        expect(refetchInterval).toBeTypeOf('function');
+        expect(refetchInterval?.({
+            state: {
+                fetchStatus: 'idle',
+                data: {
+                    sessions: [{ id: 'local:claude~abc', provider: 'claude-code', waitingForUser: true }],
+                },
+            },
+        })).toBe(1000);
     });
 
     it('does not repeatedly emit unchanged host statuses but emits when status values change', () => {

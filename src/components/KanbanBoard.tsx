@@ -5,7 +5,7 @@ import { KanbanColumn, KanbanCard, OpencodeSession } from '@/types';
 import { ProjectCard } from './ProjectCard';
 import { transformSessions } from '@/lib/transform';
 import { LoadingState } from './LoadingState';
-import { playCompleteSound } from '@/lib/notificationSound';
+import { playAttentionSound, playCompleteSound } from '@/lib/notificationSound';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getSseStatusSnapshot } from '@/hooks/useOpencodeSync';
 import { useHostSources } from '@/hooks/useHostSources';
@@ -19,6 +19,7 @@ const CARD_ANIMATION_DURATION_MS = 250;
 const SESSIONS_ERROR_DISPLAY_THRESHOLD = 3;
 const DEGRADED_MERGE_MAX_SNAPSHOT_AGE_MS = 10 * 60 * 1000;
 const WAITING_PERSIST_MAX_AGE_MS = 10 * 60 * 1000;
+const CLAUDE_WAITING_FAST_REFRESH_INTERVAL_MS = 1500;
 
 const LOCAL_SOURCE = {
     hostId: 'local',
@@ -117,9 +118,30 @@ function areHostStatusesEqual(
     return true;
 }
 
+export function detectStatusTransitionSounds(
+    previous: Record<string, KanbanColumn>,
+    next: Record<string, KanbanColumn>
+): { shouldPlayReview: boolean; shouldPlayComplete: boolean } {
+    const shouldPlayReview = Object.entries(next).some(([id, currentStatus]) => {
+        const previousStatus = previous[id];
+        return !!previousStatus && previousStatus !== 'review' && currentStatus === 'review';
+    });
+
+    const shouldPlayComplete = Object.entries(next).some(([id, currentStatus]) => {
+        const previousStatus = previous[id];
+        return !!previousStatus && previousStatus !== 'idle' && currentStatus === 'idle';
+    });
+
+    return { shouldPlayReview, shouldPlayComplete };
+}
+
 function getLocalWaitingPersistenceKey(
-    session: Pick<OpencodeSession, 'id' | 'sourceSessionKey' | 'hostId' | 'hostKind'>
+    session: Pick<OpencodeSession, 'id' | 'sourceSessionKey' | 'hostId' | 'hostKind' | 'provider'>
 ): string | null {
+    if (session.provider === 'claude-code') {
+        return null;
+    }
+
     const sourceKey = session.sourceSessionKey || session.id;
     if (session.hostKind === 'local' || session.hostId === 'local' || sourceKey.startsWith('local:')) {
         return sourceKey;
@@ -148,6 +170,45 @@ function getCanonicalSessionIdentity(
     }
 
     return session.id;
+}
+
+function hasWaitingClaudeSession(data: unknown): boolean {
+    if (!data || typeof data !== 'object') {
+        return false;
+    }
+
+    const maybeSessions = (data as { sessions?: unknown }).sessions;
+    if (!Array.isArray(maybeSessions) || maybeSessions.length === 0) {
+        return false;
+    }
+
+    const queue: Array<{ provider?: string; waitingForUser?: boolean; children?: unknown[] }> = [];
+    for (const session of maybeSessions) {
+        if (session && typeof session === 'object') {
+            queue.push(session as { provider?: string; waitingForUser?: boolean; children?: unknown[] });
+        }
+    }
+
+    while (queue.length > 0) {
+        const current = queue.shift();
+        if (!current) {
+            continue;
+        }
+
+        if (current.provider === 'claude-code' && current.waitingForUser === true) {
+            return true;
+        }
+
+        if (Array.isArray(current.children) && current.children.length > 0) {
+            for (const child of current.children) {
+                if (child && typeof child === 'object') {
+                    queue.push(child as { provider?: string; waitingForUser?: boolean; children?: unknown[] });
+                }
+            }
+        }
+    }
+
+    return false;
 }
 
 export function KanbanBoard({
@@ -245,7 +306,17 @@ export function KanbanBoard({
                 throw fetchError;
             }
         },
-        refetchInterval: (query) => query.state.fetchStatus === 'fetching' ? false : refreshIntervalMs,
+        refetchInterval: (query) => {
+            if (query.state.fetchStatus === 'fetching') {
+                return false;
+            }
+
+            if (hasWaitingClaudeSession(query.state.data)) {
+                return Math.min(refreshIntervalMs, CLAUDE_WAITING_FAST_REFRESH_INTERVAL_MS);
+            }
+
+            return refreshIntervalMs;
+        },
         refetchIntervalInBackground: true,
         refetchOnReconnect: true,
         retry: false,
@@ -490,7 +561,22 @@ export function KanbanBoard({
 
     const cards: KanbanCard[] = useMemo(() => {
         const allCards = transformSessions(enrichedSessions);
-        let filtered = allCards;
+        
+        const childSessionIds = new Set<string>();
+        for (const card of allCards) {
+            for (const child of card.children || []) {
+                childSessionIds.add(child.id);
+            }
+        }
+        
+        let filtered = allCards.filter((card) => {
+            if (!childSessionIds.has(card.id)) {
+                return true;
+            }
+
+            return (card.children?.length ?? 0) > 0;
+        });
+        
         if (filteredHostIds) {
             filtered = filtered.filter(card => {
                 const cardHostId = card.hostId || 'local';
@@ -529,12 +615,16 @@ export function KanbanBoard({
             return;
         }
 
-        const shouldPlayComplete = Object.entries(nextCardStatus).some(([id, currentStatus]) => {
-            const previousStatus = cardStatusStateRef.current[id];
-            return !!previousStatus && previousStatus !== 'idle' && currentStatus === 'idle';
-        });
+        const { shouldPlayReview, shouldPlayComplete } = detectStatusTransitionSounds(
+            cardStatusStateRef.current,
+            nextCardStatus
+        );
 
         cardStatusStateRef.current = nextCardStatus;
+
+        if (shouldPlayReview && !isShowingStaleData) {
+            setTimeout(() => playAttentionSound(), CARD_ANIMATION_DURATION_MS);
+        }
 
         if (shouldPlayComplete && !isShowingStaleData) {
             setTimeout(() => playCompleteSound(), CARD_ANIMATION_DURATION_MS);
@@ -753,7 +843,6 @@ export function KanbanBoard({
             projectName: string;
             branch?: string;
             hostLabel?: string;
-            readOnly: boolean;
             cards: KanbanCard[];
         }>();
 
@@ -767,14 +856,12 @@ export function KanbanBoard({
                     projectName,
                     branch: card.branch,
                     hostLabel: card.hostLabel,
-                    readOnly: !!card.readOnly,
                     cards: [],
                 });
             }
 
             const group = groups.get(key)!;
             group.cards.push(card);
-            group.readOnly = group.readOnly || !!card.readOnly;
 
             if (!group.branch && card.branch) {
                 group.branch = card.branch;
@@ -832,13 +919,13 @@ export function KanbanBoard({
                                     {Array.from(projectGroups.entries()).map(([groupKey, group]) => (
                                          <ProjectCard
                                             key={groupKey}
-                                            projectName={group.projectName}
-                                            branch={group.branch}
-                                            cards={group.cards}
-                                            readOnly={isShowingStaleData || group.readOnly}
-                                             hostLabel={group.hostLabel}
-                                             multipleHostsEnabled={requestSources.length > 1}
-                                          />
+                                             projectName={group.projectName}
+                                             branch={group.branch}
+                                             cards={group.cards}
+                                            readOnly={isShowingStaleData}
+                                              hostLabel={group.hostLabel}
+                                              multipleHostsEnabled={requestSources.length > 1}
+                                           />
                                       ))}
                                 </div>
                             </div>

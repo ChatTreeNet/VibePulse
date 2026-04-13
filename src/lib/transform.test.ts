@@ -33,6 +33,8 @@ function makeSession(overrides: SessionOverrides = {}): OpencodeSession {
     rawSessionId: overrides.rawSessionId,
     sourceSessionKey: overrides.sourceSessionKey,
     readOnly: overrides.readOnly,
+    provider: overrides.provider,
+    providerRawId: overrides.providerRawId,
   };
 }
 
@@ -117,5 +119,256 @@ describe('transformSession archive precedence', () => {
     expect(card.agents).toEqual([]);
     expect(card.hostId).toBe('remote-1');
     expect(card.readOnly).toBe(false);
+  });
+});
+
+describe('transformSession provider propagation', () => {
+  it('defaults provider to opencode when not specified', () => {
+    const session = makeSession();
+
+    const card = transformSession(session);
+
+    expect(card.provider).toBe('opencode');
+  });
+
+  it('defaults readOnly to false for OpenCode sessions', () => {
+    const session = makeSession();
+
+    const card = transformSession(session);
+
+    expect(card.readOnly).toBe(false);
+    expect(card.capabilities).toEqual({
+      openProject: true,
+      openEditor: true,
+      archive: true,
+      delete: true,
+    });
+  });
+
+  it('preserves explicit claude-code provider', () => {
+    const session = makeSession({
+      provider: 'claude-code',
+      providerRawId: '550e8400-e29b-41d4-a716-446655440000',
+    });
+
+    const card = transformSession(session);
+
+    expect(card.provider).toBe('claude-code');
+    expect(card.providerRawId).toBe('550e8400-e29b-41d4-a716-446655440000');
+  });
+
+  it('preserves explicit readOnly true', () => {
+    const session = makeSession({ readOnly: true });
+
+    const card = transformSession(session);
+
+    expect(card.readOnly).toBe(true);
+  });
+
+  it('falls back to rawSessionId when providerRawId not specified', () => {
+    const session = makeSession({ rawSessionId: 'ses_123' });
+
+    const card = transformSession(session);
+
+    expect(card.providerRawId).toBe('ses_123');
+  });
+
+  it('uses providerRawId over rawSessionId when both specified', () => {
+    const session = makeSession({
+      rawSessionId: 'ses_123',
+      providerRawId: 'claude~550e8400-e29b-41d4-a716-446655440000',
+    });
+
+    const card = transformSession(session);
+
+    expect(card.providerRawId).toBe('claude~550e8400-e29b-41d4-a716-446655440000');
+  });
+
+  it('correctly handles Claude-backed sessions from provider properties', () => {
+    const session = makeSession({
+      provider: 'claude-code',
+      readOnly: true,
+      providerRawId: '550e8400-e29b-41d4-a716-446655440000',
+    });
+
+    const card = transformSession(session);
+
+    expect(card.provider).toBe('claude-code');
+    expect(card.readOnly).toBe(true);
+    expect(card.capabilities).toEqual({
+      openProject: true,
+      openEditor: false,
+      archive: true,
+      delete: true,
+    });
+    expect(card.providerRawId).toBe('550e8400-e29b-41d4-a716-446655440000');
+  });
+});
+
+describe('transformSession child roll-up semantics', () => {
+  it('pulls a Claude parent into busy when a verified Claude child is active', () => {
+    const now = Date.now();
+    const child = makeSession({
+      id: 'claude-child-1',
+      provider: 'claude-code',
+      parentID: 'claude-parent-1',
+      realTimeStatus: 'busy',
+      time: {
+        created: now - 10_000,
+        updated: now - 2_000,
+      },
+    });
+
+    const parent = makeSession({
+      id: 'claude-parent-1',
+      provider: 'claude-code',
+      realTimeStatus: 'idle',
+      children: [child],
+    });
+
+    const card = transformSession(parent);
+
+    expect(card.status).toBe('busy');
+    expect(card.opencodeStatus).toBe('busy');
+    expect(card.waitingForUser).toBe(false);
+    expect(card.debugReason).toBe('child_recent_activity');
+  });
+
+  it('pulls a Claude parent into review when a verified Claude child is idle but waiting for user', () => {
+    const now = Date.now();
+    const child = makeSession({
+      id: 'claude-child-2',
+      provider: 'claude-code',
+      parentID: 'claude-parent-2',
+      realTimeStatus: 'idle',
+      waitingForUser: true,
+      time: {
+        created: now - 12_000,
+        updated: now - 3_000,
+      },
+    });
+
+    const parent = makeSession({
+      id: 'claude-parent-2',
+      provider: 'claude-code',
+      realTimeStatus: 'idle',
+      children: [child],
+    });
+
+    const card = transformSession(parent);
+    const firstChild = card.children?.[0];
+
+    expect(card.status).toBe('review');
+    expect(card.opencodeStatus).toBe('busy');
+    expect(card.waitingForUser).toBe(true);
+    expect(card.debugReason).toBe('waiting_for_user');
+    expect(firstChild?.waitingForUser).toBe(true);
+  });
+
+  it('ignores malformed Claude child rows so unrelated parents stay idle', () => {
+    const now = Date.now();
+    const childWithoutParent = makeSession({
+      id: 'claude-child-missing-parent',
+      provider: 'claude-code',
+      realTimeStatus: 'busy',
+      waitingForUser: true,
+      time: {
+        created: now - 10_000,
+        updated: now - 1_000,
+      },
+    });
+    const childWithWrongParent = makeSession({
+      id: 'claude-child-wrong-parent',
+      provider: 'claude-code',
+      parentID: 'different-parent',
+      realTimeStatus: 'busy',
+      time: {
+        created: now - 10_000,
+        updated: now - 1_000,
+      },
+    });
+    const childWithoutTime = {
+      ...makeSession({
+        id: 'claude-child-without-time',
+        provider: 'claude-code',
+        parentID: 'claude-parent-3',
+        realTimeStatus: 'busy',
+        waitingForUser: true,
+      }),
+      time: undefined,
+    } as unknown as OpencodeSession;
+
+    const parent = makeSession({
+      id: 'claude-parent-3',
+      provider: 'claude-code',
+      realTimeStatus: 'idle',
+      children: [childWithoutParent, childWithWrongParent, childWithoutTime],
+    });
+
+    const card = transformSession(parent);
+
+    expect(card.status).toBe('idle');
+    expect(card.opencodeStatus).toBe('idle');
+    expect(card.waitingForUser).toBe(false);
+    expect(card.debugReason).toBeUndefined();
+    expect(card.children).toEqual([]);
+  });
+
+  it('keeps existing OpenCode child roll-up behavior intact', () => {
+    const now = Date.now();
+    const child = makeSession({
+      id: 'opencode-child-1',
+      realTimeStatus: 'busy',
+      time: {
+        created: now - 10_000,
+        updated: now - 2_000,
+      },
+    });
+
+    const parent = makeSession({
+      id: 'opencode-parent-1',
+      realTimeStatus: 'idle',
+      children: [child],
+    });
+
+    const card = transformSession(parent);
+
+    expect(card.status).toBe('busy');
+    expect(card.opencodeStatus).toBe('busy');
+    expect(card.debugReason).toBe('child_recent_activity');
+    expect(card.children).toEqual([
+      expect.objectContaining({
+        id: 'opencode-child-1',
+      }),
+    ]);
+  });
+
+  it('does not promote an OpenCode parent when a child is idle but waiting', () => {
+    const now = Date.now();
+    const child = makeSession({
+      id: 'opencode-child-idle-waiting',
+      realTimeStatus: 'idle',
+      waitingForUser: true,
+      time: {
+        created: now - 10_000,
+        updated: now - 2_000,
+      },
+    });
+
+    const parent = makeSession({
+      id: 'opencode-parent-idle-waiting',
+      realTimeStatus: 'idle',
+      children: [child],
+    });
+
+    const card = transformSession(parent);
+    const firstChild = card.children?.[0];
+
+    expect(card.status).toBe('idle');
+    expect(card.opencodeStatus).toBe('idle');
+    expect(card.waitingForUser).toBe(false);
+    expect(card.debugReason).toBeUndefined();
+    expect(firstChild?.waitingForUser).toBe(false);
+    expect(firstChild?.debugReason).toBeUndefined();
   });
 });
