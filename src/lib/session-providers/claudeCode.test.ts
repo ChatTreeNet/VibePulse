@@ -391,6 +391,414 @@ describe('discoverClaudeCodeSessions', () => {
     expect(sessionsWithDeadPid[0]?.startedAt).toBeUndefined();
   });
 
+  it('skips noisy IDE-opened-file narration when deriving Claude session titles', async () => {
+    const fixture = await createFixture();
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: [
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:21:00.000Z',
+          message: {
+            role: 'user',
+            content: '<ide_opened_file>The user opened /repo/project-one/ga4_analysis.py</ide_opened_file>',
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:22:00.000Z',
+          message: {
+            role: 'user',
+            content: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况',
+          },
+        }),
+      ].join('\n'),
+    });
+
+    const sessions = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: SESSION_ONE,
+      title: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况',
+    });
+  });
+
+  it('skips noisy IDE-opened-file narration when user content is emitted as text parts array', async () => {
+    const fixture = await createFixture();
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: [
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:21:00.000Z',
+          message: {
+            role: 'user',
+            content: [
+              { type: 'text', text: '<ide_opened_file>The user opened /repo/project-one/ga4_analysis.py</ide_opened_file>' },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:22:00.000Z',
+          message: {
+            role: 'user',
+            content: [
+              { type: 'text', text: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况（array）' },
+            ],
+          },
+        }),
+      ].join('\n'),
+    });
+
+    const sessions = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: SESSION_ONE,
+      title: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况（array）',
+    });
+  });
+
+  it('uses meaningful text from the same first user event when that event also contains noisy ide_opened_file text', async () => {
+    const fixture = await createFixture();
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: [
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:21:00.000Z',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: '<ide_opened_file>The user opened the file /Users/admin/code/labs/ai-workers/data-analysis/ga4_analysis.py in the IDE. This may or may not be related to the current task.</ide_opened_file>',
+              },
+              {
+                type: 'text',
+                text: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况（same-event-part）',
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:22:00.000Z',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: '营收情况呢' }],
+          },
+        }),
+      ].join('\n'),
+    });
+
+    const sessions = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: SESSION_ONE,
+      title: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况（same-event-part）',
+    });
+  });
+
+  it('skips multiple consecutive noisy IDE narration events before using first meaningful user title', async () => {
+    const fixture = await createFixture();
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: [
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:21:00.000Z',
+          message: {
+            role: 'user',
+            content: '<ide_opened_file>The user opened /repo/project-one/ga4_analysis.py</ide_opened_file>',
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:21:30.000Z',
+          message: {
+            role: 'user',
+            content: '<ide_opened_file>The user opened /repo/project-one/config.yaml</ide_opened_file>',
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:22:00.000Z',
+          message: {
+            role: 'user',
+            content: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况（real-title）',
+          },
+        }),
+      ].join('\n'),
+    });
+
+    const sessions = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: SESSION_ONE,
+      title: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况（real-title）',
+    });
+  });
+
+  it('keeps the first meaningful user input as Claude session title', async () => {
+    const fixture = await createFixture();
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: [
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:20:00.000Z',
+          message: {
+            role: 'user',
+            content: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况',
+          },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:21:00.000Z',
+          message: {
+            role: 'assistant',
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: '这是阶段性分析结果' }],
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:22:00.000Z',
+          message: {
+            role: 'user',
+            content: '继续',
+          },
+        }),
+      ].join('\n'),
+    });
+
+    const sessions = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: SESSION_ONE,
+      title: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况',
+    });
+  });
+
+  it('ignores a noisy latest user event and keeps the previous meaningful user title', async () => {
+    const fixture = await createFixture();
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: [
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:20:00.000Z',
+          message: {
+            role: 'user',
+            content: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况（fallback-previous）',
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:21:00.000Z',
+          message: {
+            role: 'user',
+            content: '<ide_opened_file>The user opened /repo/project-one/ga4_analysis.py</ide_opened_file>',
+          },
+        }),
+      ].join('\n'),
+    });
+
+    const sessions = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: SESSION_ONE,
+      title: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况（fallback-previous）',
+    });
+  });
+
+  it('keeps legitimate prompts that start with "The user opened" when they are not path narration', async () => {
+    const fixture = await createFixture();
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: [
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:20:00.000Z',
+          message: {
+            role: 'user',
+            content: 'The user opened discussion about GA4 revenue anomalies this month',
+          },
+        }),
+      ].join('\n'),
+    });
+
+    const sessions = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: SESSION_ONE,
+      title: 'The user opened discussion about GA4 revenue anomalies this month',
+    });
+  });
+
+  it('recovers title from expanded head scan when default head window only contains noisy IDE narration', async () => {
+    const fixture = await createFixture();
+
+    const fillerEvents = Array.from({ length: 120 }, (_, index) => JSON.stringify({
+      type: 'assistant',
+      cwd: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      gitBranch: 'feature/current',
+      timestamp: `2026-04-09T18:21:${String(index % 60).padStart(2, '0')}.000Z`,
+      message: {
+        role: 'assistant',
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: `filler-${index}` }],
+      },
+    }));
+
+    await writeProjectArtifact({
+      projectsDir: fixture.projectsDir,
+      repoPath: fixture.repoDir,
+      sessionId: SESSION_ONE,
+      jsonlContent: [
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:20:00.000Z',
+          message: {
+            role: 'user',
+            content: '<ide_opened_file>The user opened /repo/project-one/ga4_analysis.py</ide_opened_file>',
+          },
+        }),
+        ...fillerEvents,
+        JSON.stringify({
+          type: 'user',
+          cwd: fixture.repoDir,
+          sessionId: SESSION_ONE,
+          gitBranch: 'feature/current',
+          timestamp: '2026-04-09T18:23:00.000Z',
+          message: {
+            role: 'user',
+            content: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况（head-recovered）',
+          },
+        }),
+      ].join('\n'),
+    });
+
+    const sessions = await discoverClaudeCodeSessions({
+      repoPath: fixture.repoDir,
+      homeDir: fixture.homeDir,
+      isPidAlive: () => false,
+      jsonlHeadLimitBytes: 256,
+    });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: SESSION_ONE,
+      title: '研究近 90 天 chatree 话树趣聊（非 mix）的趋势情况（head-recovered）',
+    });
+  });
+
   it('ignores malformed or unreadable Claude artifacts without throwing', async () => {
     const fixture = await createFixture();
 

@@ -8,6 +8,7 @@ import { namespaceClaudeRawId, READONLY_PROVIDER_CONTEXT } from './providerIds';
 
 const DEFAULT_SMALL_FILE_LIMIT_BYTES = 128 * 1024;
 const DEFAULT_JSONL_HEAD_LIMIT_BYTES = 64 * 1024;
+const DEFAULT_JSONL_HEAD_RETRY_LIMIT_BYTES = 256 * 1024;
 const DEFAULT_SESSION_TITLE_MAX_CHARS = 72;
 const DEFAULT_BUSY_ACTIVITY_WINDOW_MS = 10 * 1000;
 const DEFAULT_WAITING_FOR_USER_WINDOW_MS = 10 * 60 * 1000;
@@ -15,6 +16,10 @@ const CLAUDE_PROJECTS_DIR = 'projects';
 const CLAUDE_SESSIONS_DIR = 'sessions';
 const PROJECT_INDEX_FILE = 'sessions-index.json';
 const CLAUDE_TITLE_WRAPPER_TAGS = ['command-message', 'local-command-caveat'] as const;
+const CLAUDE_TITLE_NOISE_PATTERNS = [
+  /^\s*<ide_[a-z0-9_-]+(?=[\s>/]|$)/i,
+  /^the\s+user\s+opened\s+(?:\.\.\/|\.\/|~\/|\/|[a-zA-Z]:[\\/])/i,
+] as const;
 
 function stripKnownClaudeTitleWrappers(title: string): string {
   let normalized = title;
@@ -36,6 +41,27 @@ function normalizeSessionTitle(title: string): string {
   }
 
   return `${compact.slice(0, DEFAULT_SESSION_TITLE_MAX_CHARS - 3)}...`;
+}
+
+function toClaudeTitleCandidate(rawText: string): string | null {
+  const normalizedTitle = normalizeSessionTitle(rawText);
+  if (!normalizedTitle) {
+    return null;
+  }
+
+  if (isNoisyClaudeSessionTitle(rawText, normalizedTitle)) {
+    return null;
+  }
+
+  return normalizedTitle;
+}
+
+function isNoisyClaudeSessionTitle(rawTitle: string, normalizedTitle: string): boolean {
+  if (!normalizedTitle) {
+    return true;
+  }
+
+  return CLAUDE_TITLE_NOISE_PATTERNS.some((pattern) => pattern.test(rawTitle) || pattern.test(normalizedTitle));
 }
 
 function composeClaudeCodeSessionFallbackTitle(sessionId: string): string {
@@ -616,6 +642,30 @@ async function readFileTail(filePath: string, byteLimit: number): Promise<string
   }
 }
 
+async function readJsonlSessionHeadWithTitleRetry(filePath: string, byteLimit: number): Promise<JsonlSessionHead | null> {
+  const headReadLimits = Array.from(
+    new Set([
+      Math.max(1, byteLimit),
+      Math.max(byteLimit * 4, DEFAULT_JSONL_HEAD_RETRY_LIMIT_BYTES),
+    ])
+  );
+
+  let headMetadata: JsonlSessionHead | null = null;
+  for (const headReadLimit of headReadLimits) {
+    const scanned = await readJsonlSessionHead(filePath, headReadLimit);
+    if (!scanned) {
+      continue;
+    }
+
+    headMetadata = scanned;
+    if (headMetadata.title) {
+      break;
+    }
+  }
+
+  return headMetadata;
+}
+
 function extractTextMessage(content: unknown): string | null {
   if (typeof content === 'string') {
     const compact = content.trim();
@@ -645,12 +695,41 @@ function extractTitleFromSessionEvent(entry: Record<string, unknown>): string | 
   const content = message && typeof message === 'object'
     ? (message as Record<string, unknown>).content
     : entry.content;
-  const text = extractTextMessage(content);
-  if (!text) {
+
+  if (typeof content === 'string') {
+    return toClaudeTitleCandidate(content);
+  }
+
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (!part || typeof part !== 'object') {
+        continue;
+      }
+
+      const typedPart = part as Record<string, unknown>;
+      if (typeof typedPart.type === 'string' && typedPart.type !== 'text') {
+        continue;
+      }
+
+      const text = typeof typedPart.text === 'string'
+        ? typedPart.text
+        : typeof typedPart.content === 'string'
+          ? typedPart.content
+          : null;
+      if (!text) {
+        continue;
+      }
+
+      const titleCandidate = toClaudeTitleCandidate(text);
+      if (titleCandidate) {
+        return titleCandidate;
+      }
+    }
+
     return null;
   }
 
-  return normalizeSessionTitle(text);
+  return null;
 }
 
 function extractExplicitParentSessionId(entry: Record<string, unknown>): string | null {
@@ -881,7 +960,7 @@ export async function discoverClaudeCodeSessions(
         continue;
       }
 
-      const headMetadata = await readJsonlSessionHead(artifactPath, jsonlHeadLimitBytes);
+      const headMetadata = await readJsonlSessionHeadWithTitleRetry(artifactPath, jsonlHeadLimitBytes);
       if (headMetadata === null) {
         continue;
       }
@@ -910,6 +989,8 @@ export async function discoverClaudeCodeSessions(
       if (!isSidechainArtifact && resolvedSessionId !== artifactSessionId) {
         continue;
       }
+
+      const discoveredTitle = headMetadata.title;
 
       const sessionId = sidechainParentSessionId
         ? toScopedSidechainSessionId(sidechainParentSessionId, artifactSessionId)
@@ -951,7 +1032,7 @@ export async function discoverClaudeCodeSessions(
 
       discoveredSessions.set(sessionId, {
         sessionId,
-        ...(headMetadata.title ? { title: headMetadata.title } : {}),
+        ...(discoveredTitle ? { title: discoveredTitle } : {}),
         cwd: scopedCwd,
         projectPath: scopedCwd,
         projectName: basename(scopedCwd),
